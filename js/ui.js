@@ -500,6 +500,12 @@ var UI = (function () {
 
     U.$('#btnSettings').addEventListener('click', modelStatus);
 
+    U.$('#btnReset').addEventListener('click', function () {
+      var s = U.$('#modelStatus');
+      s.className = 'status wait'; s.textContent = 'CLEARING…';
+      window.SL_RESET();
+    });
+
     U.$('#optFaces').addEventListener('change', function () { SET.set('faces', this.checked); });
     U.$('#optConf').addEventListener('input', function () {
       SET.set('conf', parseFloat(this.value));

@@ -15,7 +15,7 @@
    Model weights, the API and Wikipedia are never cached here - a stale
    answer must never be served. */
 
-const VERSION = 'sightline-v2';
+const VERSION = 'sightline-v3';
 const SHELL = [
   './', './index.html', './css/app.css', './manifest.json', './icon.svg',
   './js/util.js', './js/settings.js', './js/wiki.js', './js/camera.js',

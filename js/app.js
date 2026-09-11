@@ -291,13 +291,54 @@
     }
   });
 
-  /* Offline shell. Registration failing is not an error worth surfacing -
-     the app works exactly the same without it. */
+  /* Offline shell, and an escape hatch from it.
+
+     A cache-first service worker can strand a device on an old build: it
+     serves the stale files before the new worker can take over, so a release
+     is invisible until something forces an update. That happened here - a
+     deploy sat unseen for an hour. This does three things about it:
+
+       1. asks for an update on every load,
+       2. when a new worker takes control, reloads ONCE so the fresh files
+          are actually the ones running,
+       3. leaves window.SL_RESET() as a manual clear of last resort.
+
+     The reload is guarded by a session flag so it can never loop. */
   if ('serviceWorker' in navigator && window.isSecureContext) {
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('sw.js').catch(function () {});
+      navigator.serviceWorker.register('sw.js').then(function (reg) {
+        reg.update();
+        setInterval(function () { reg.update(); }, 60 * 60 * 1000);
+      }).catch(function () { /* the app works the same without it */ });
+    });
+
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      var once = 'sl_swreload';
+      try {
+        if (sessionStorage.getItem(once)) return;
+        sessionStorage.setItem(once, '1');
+      } catch (e) { return; }          // no storage, no reload: never risk a loop
+      location.reload();
     });
   }
+
+  /* Clears every cache and worker, then reloads. For when a device is stuck
+     on a build that should no longer exist. */
+  window.SL_RESET = function () {
+    var jobs = [];
+    if (window.caches) jobs.push(caches.keys().then(function (ks) {
+      return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+    }));
+    if (navigator.serviceWorker) jobs.push(
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        return Promise.all(rs.map(function (r) { return r.unregister(); }));
+      })
+    );
+    return Promise.all(jobs).then(function () {
+      try { sessionStorage.clear(); } catch (e) { /* ignore */ }
+      location.reload(true);
+    });
+  };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
