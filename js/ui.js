@@ -379,6 +379,19 @@ var UI = (function () {
 
   /* ---------- settings ---------- */
 
+  /* Say plainly which half is running. "Detector down, labelling fine" is a
+     very different message from "nothing works", and the app treats them
+     differently, so the screen must too. */
+  function modelStatus() {
+    var el = U.$('#modelStatus');
+    if (!el || !window.SL_DIAG) return;
+    var d = window.SL_DIAG();
+    var okC = d.classifier === 'ok', okD = d.detector === 'ok';
+    if (okC && okD) { el.className = 'status ok'; el.textContent = 'READY / ' + String(d.backend || '').toUpperCase(); }
+    else if (okC) { el.className = 'status wait'; el.textContent = 'LIVE LABELLING OK / NO MULTI-OBJECT BOXES'; }
+    else { el.className = 'status bad'; el.textContent = String(d.classifier).toUpperCase(); }
+  }
+
   function buildSettings() {
     var from = U.$('#optCapFrom'), to = U.$('#optCapTo');
     from.appendChild(U.el('option', { value: 'auto', text: 'Auto (device language)' }));
@@ -434,6 +447,14 @@ var UI = (function () {
         });
     });
 
+    U.$('#btnReload').addEventListener('click', function () {
+      var s = U.$('#modelStatus');
+      s.className = 'status wait'; s.textContent = 'LOADING…';
+      window.SL_RELOAD().then(function () { modelStatus(); });
+    });
+
+    U.$('#btnSettings').addEventListener('click', modelStatus);
+
     U.$('#optFaces').addEventListener('change', function () { SET.set('faces', this.checked); });
     U.$('#optConf').addEventListener('input', function () {
       SET.set('conf', parseFloat(this.value));
@@ -476,7 +497,7 @@ var UI = (function () {
     });
   }
 
-  return { init: init, draw: draw, dirty: dirty, resize: resize, tele: tele,
+  return { init: init, draw: draw, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
            refreshOpen: refreshOpen, sceneLabel: sceneLabel, openScene: openScene,

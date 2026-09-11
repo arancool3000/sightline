@@ -52,21 +52,54 @@
     loadModel();
   }
 
+  /* The two models are INDEPENDENT and must load that way.
+     They did not: LOCAL.load() used to sit inside the detector's .then(), so a
+     single failed detector fetch also stopped the classifier - and the
+     classifier is the realtime path the whole app rests on. One bad request
+     took out everything instead of just the boxes. */
+  var detectorErr = '';
+
   function loadModel() {
-    if (model || !window.cocoSsd) return Promise.resolve(null);
-    return cocoSsd.load({ base: 'lite_mobilenet_v2' })
-      .then(function (m) {
-        model = m;
-        /* The fine-grained classifier loads in parallel. Detection works
-           without it; labels are just coarser until it arrives. */
-        LOCAL.load();
-        return m;
-      })
-      .catch(function () {
-        U.toast('Could not load the local detector - tap anywhere to identify instead');
-        return null;
-      });
+    var jobs = [];
+
+    if (!model && window.cocoSsd) {
+      jobs.push(
+        cocoSsd.load({ base: 'lite_mobilenet_v2' })
+          .then(function (m) { model = m; detectorErr = ''; })
+          .catch(function (e) {
+            detectorErr = String(e && e.message || e).slice(0, 120);
+            model = null;                       // the app keeps working without it
+          })
+      );
+    }
+
+    /* Started here, not after the detector resolves. */
+    jobs.push(LOCAL.load());
+
+    return Promise.all(jobs).then(function () {
+      var haveScene = LOCAL.ready();
+      if (!haveScene) {
+        U.toast('Could not load the recogniser. ' + (LOCAL.lastError() || detectorErr || 'Check your connection.') + ' Tap CFG to retry.', 7000);
+      } else if (!model) {
+        /* Boxes are gone, live labelling is not. Say exactly that rather than
+           implying the app is broken. */
+        U.toast('Multi-object boxes unavailable. Live labelling is working.', 4500);
+      }
+      UI.tele('#tGpu', (LOCAL.timing().backend || '--').toUpperCase());
+      return model;
+    });
   }
+
+  window.SL_RELOAD = function () { model = null; return loadModel(); };
+  window.SL_DIAG = function () {
+    return {
+      detector: model ? 'ok' : ('failed: ' + (detectorErr || 'not attempted')),
+      classifier: LOCAL.ready() ? 'ok' : ('failed: ' + (LOCAL.lastError() || 'not attempted')),
+      libs: { tf: !!window.tf, cocoSsd: !!window.cocoSsd, mobilenet: !!window.mobilenet },
+      backend: LOCAL.timing().backend,
+      secure: window.isSecureContext
+    };
+  };
 
   function start() {
     var btn = U.$('#btnStart');
@@ -74,13 +107,18 @@
     btn.textContent = 'Starting…';
 
     CAM.start(SET.get('facing'))
-      .then(function () { return loadModel(); })
       .then(function () {
+        /* Show the camera the INSTANT it is live. The models are tens of
+           megabytes on a first run and waiting for them here left the user
+           staring at the start screen with no feedback; labels simply appear
+           once the weights arrive. */
         U.$('#gate').classList.add('hidden');
         UI.resize();
         running = true;
         UI.tele('#tEng', SET.hasApi() ? 'CLOUD' : 'LOCAL');
+        UI.tele('#tGpu', 'LOAD');
         loop();
+        loadModel();                    // deliberately not awaited
       })
       .catch(function (e) {
         btn.disabled = false;

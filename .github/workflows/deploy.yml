@@ -41,7 +41,7 @@ jobs:
       - name: Assemble the site
         run: |
           mkdir -p dist
-          cp -R index.html manifest.json sw.js icon.svg icon-maskable.svg _headers css js dist/
+          cp -R index.html manifest.json sw.js icon.svg icon-maskable.svg _headers css js vendor dist/
           echo "--- publishing ---"
           find dist -type f | sort
 

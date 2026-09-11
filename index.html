@@ -107,6 +107,13 @@
       </div>
 
       <div class="sgroup">
+        <div class="stitle">ON-DEVICE RECOGNISER</div>
+        <p class="shelp">Runs entirely on this device with no key and no limit. If it failed to start, retry here.</p>
+        <div id="modelStatus" class="status"></div>
+        <button id="btnReload" class="obtn">RELOAD MODELS</button>
+      </div>
+
+      <div class="sgroup">
         <div class="srow">
           <div><div class="stitle">NAME PUBLIC FIGURES</div><div class="shelp">Only living, notable people with a Wikipedia page. Private individuals are never identified.</div></div>
           <label class="switch"><input type="checkbox" id="optFaces" checked><span></span></label>
@@ -143,10 +150,12 @@
   <div id="toast" hidden></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu@4.20.0/dist/tf-backend-webgpu.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+<!-- Self-hosted. A CDN is one more thing that can be blocked, slow, or down,
+     and this app cannot start without these four files. -->
+<script src="vendor/tf.min.js"></script>
+<script src="vendor/coco-ssd.min.js"></script>
+<script src="vendor/mobilenet.min.js"></script>
+<script src="vendor/imagenet-classes.js"></script>
 <script src="js/util.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/wiki.js"></script>

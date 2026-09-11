@@ -6,6 +6,8 @@
   "license": "MIT",
   "scripts": {
     "test": "node tests/gate_test.cjs",
+    "test:loader": "node tests/loader_test.cjs",
+    "test:rail": "node tests/rail_test.cjs",
     "test:browser": "node tests/smoke_test.cjs",
     "serve": "npx --yes serve ."
   }

@@ -16,7 +16,7 @@
 
 var LOCAL = (function () {
 
-  var net = null, loading = null, backend = '', variant = 'v2';
+  var net = null, loading = null, backend = '', variant = 'v2', lastErr = '';
   var pad = document.createElement('canvas');
   pad.width = pad.height = 224;
   var pctx = pad.getContext('2d', { willReadFrequently: true });
@@ -71,13 +71,20 @@ var LOCAL = (function () {
 
     loading = pickBackend()
       .then(function () {
-        /* v2 is the better classifier, but it is served from a different host
-           to v1 and some networks block it. Falling back to v1 keeps the
-           realtime tier working rather than losing it entirely. */
+        if (!window.mobilenet) throw new Error('classifier library did not load');
+        /* The packaged loader fetches from tfhub.dev, which Google has
+           deprecated in favour of Kaggle and which some networks block
+           outright. Try it, then fall back to the storage.googleapis.com
+           mirror, which is a Keras LayersModel and so needs its own
+           classify path (mirrorClassify below). */
         return mobilenet.load({ version: 2, alpha: alpha })
           .catch(function () {
             variant = 'v1';
             return mobilenet.load({ version: 1, alpha: alpha });
+          })
+          .catch(function (e) {
+            lastErr = 'tfhub unreachable (' + String(e && e.message || e).slice(0, 60) + ')';
+            return loadMirror();
           });
       })
       .then(function (m) {
@@ -88,13 +95,47 @@ var LOCAL = (function () {
         pctx.fillRect(0, 0, 224, 224);
         return net.classify(pad, 1).catch(function () { return null; });
       })
-      .then(function () { return net; })
-      .catch(function () { net = null; return null; });
+      .then(function () { lastErr = ''; return net; })
+      .catch(function (e) {
+        net = null;
+        lastErr = String(e && e.message || e).slice(0, 140);
+        loading = null;              // allow a retry
+        return null;
+      });
 
     return loading;
   }
 
+  /* A LayersModel mirror wrapped to answer like the packaged classifier, so
+     every call site keeps using net.classify(canvas, k) and knows nothing
+     about which source it came from. */
+  function loadMirror() {
+    if (!window.tf || !window.KH_IMAGENET) throw new Error('no classifier mirror available');
+    var url = 'https://storage.googleapis.com/tfjs-models/tfjs/mobilenet_v1_' +
+              (alpha === 0.5 ? '0.50' : '1.0') + '_224/model.json';
+    return tf.loadLayersModel(url).then(function (lm) {
+      variant = 'v1-mirror';
+      return {
+        classify: function (canvas, k) {
+          return new Promise(function (res) {
+            var probs = tf.tidy(function () {
+              var x = tf.browser.fromPixels(canvas).toFloat().div(127.5).sub(1).expandDims(0);
+              return lm.predict(x).dataSync();
+            });
+            var top = [];
+            for (var i = 0; i < probs.length; i++) top.push([probs[i], i]);
+            top.sort(function (a, b) { return b[0] - a[0]; });
+            res(top.slice(0, k || 3).map(function (p) {
+              return { className: window.KH_IMAGENET[p[1]] || 'unknown', probability: p[0] };
+            }));
+          });
+        }
+      };
+    });
+  }
+
   function ready() { return !!net; }
+  function lastError() { return lastErr; }
   function backendName() { return backend; }
 
   /* ---- label tidying -------------------------------------------------- */
@@ -274,7 +315,7 @@ var LOCAL = (function () {
 
   function setBudget(n) { perFrame = U.clamp(n | 0, 1, 8); }
 
-  return { load: load, ready: ready, label: label, sweep: sweep, age: age,
+  return { load: load, ready: ready, lastError: lastError, label: label, sweep: sweep, age: age,
            scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
            timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget };
 })();

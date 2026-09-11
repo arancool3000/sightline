@@ -1,0 +1,71 @@
+/* Proves the two models load INDEPENDENTLY.
+   The bug this pins: LOCAL.load() used to sit inside the detector's .then(),
+   so one failed detector fetch also stopped the classifier - and the
+   classifier is the realtime path the whole app depends on. */
+const http=require('http'),fs=require('fs'),path=require('path');
+const ROOT=path.join(__dirname,'..');
+const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.svg':'image/svg+xml'};
+const server=http.createServer((q,res)=>{
+  let p=decodeURIComponent(q.url.split('?')[0]); if(p==='/')p='/index.html';
+  const f=path.join(ROOT,p);
+  if(!f.startsWith(ROOT)||!fs.existsSync(f)||fs.statSync(f).isDirectory()){res.writeHead(404);return res.end('no');}
+  res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});
+  res.end(fs.readFileSync(f));
+});
+
+(async()=>{
+  await new Promise(r=>server.listen(8731,r));
+  const {chromium}=require('playwright');
+  const browser=await chromium.launch({args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--autoplay-policy=no-user-gesture-required']});
+  const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
+  const page=await ctx.newPage();
+  const errs=[];
+  page.on('pageerror',e=>errs.push(e.message.slice(0,120)));
+
+  /* Both model loaders are stubbed BEFORE any script runs: the detector
+     always fails, the classifier always succeeds. Whether the classifier is
+     even asked is the whole question. */
+  await page.addInitScript(() => {
+    window.__calls = { detector: 0, classifier: 0 };
+    Object.defineProperty(window, 'cocoSsd', {
+      configurable: true,
+      get() { return { load: () => { window.__calls.detector++; return Promise.reject(new Error('simulated network failure')); } }; }
+    });
+    Object.defineProperty(window, 'mobilenet', {
+      configurable: true,
+      get() {
+        return { load: () => { window.__calls.classifier++;
+          return Promise.resolve({ classify: () => Promise.resolve([{className:'golden retriever',probability:0.9}]) }); } };
+      }
+    });
+  });
+
+  await page.goto('http://localhost:8731/',{waitUntil:'domcontentloaded'});
+  await page.click('#btnStart');
+  await page.waitForTimeout(3500);
+
+  const R=[]; const t=(n,c,x)=>R.push({n,p:!!c,x:x===undefined?'':String(x)});
+  const r = await page.evaluate(() => ({
+    calls: window.__calls,
+    diag: window.SL_DIAG(),
+    ready: LOCAL.ready(),
+    sceneShown: !document.querySelector('#sceneChip').hidden
+  }));
+
+  t('the detector was attempted', r.calls.detector >= 1, r.calls.detector);
+  t('THE CLASSIFIER WAS STILL ATTEMPTED after the detector failed', r.calls.classifier >= 1, r.calls.classifier);
+  t('the classifier is ready despite the detector failing', r.ready === true, r.ready);
+  t('diagnostics report the detector as failed', /failed/.test(r.diag.detector), r.diag.detector);
+  t('diagnostics report the classifier as ok', r.diag.classifier === 'ok', r.diag.classifier);
+  t('a live label is still shown', r.sceneShown === true, r.sceneShown);
+  /* CONTROLS - these pass either way and stop the fix over-reaching. */
+  t('CONTROL - the page did not throw', errs.length === 0, errs.join('|').slice(0,120));
+  t('CONTROL - libs are served same-origin', await page.evaluate(() =>
+      [...document.scripts].every(s => !s.src || s.src.startsWith(location.origin))), '');
+
+  await browser.close(); server.close();
+  const bad=R.filter(x=>!x.p);
+  R.forEach(x=>console.log((x.p?'PASS  ':'FAIL  ')+x.n+(x.x?'   ['+x.x+']':'')));
+  console.log('\n'+(R.length-bad.length)+'/'+R.length+' passed');
+  process.exit(bad.length?1:0);
+})();
