@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Sightline</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<div id="stage">
+  <video id="cam" playsinline autoplay muted></video>
+  <canvas id="overlay"></canvas>
+
+  <!-- Top bar -->
+  <header id="topbar">
+    <div class="brand">Sightline</div>
+    <div id="fps" class="pill mono" title="Detection rate">--</div>
+    <button id="btnSettings" class="icon" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- Live captions -->
+  <div id="captionBar" hidden>
+    <div id="capSource" class="cap-src"></div>
+    <div id="capMain" class="cap-main"></div>
+    <div id="capMeta" class="cap-meta"></div>
+  </div>
+
+  <!-- Start / permission gate -->
+  <div id="gate">
+    <div class="gate-card">
+      <div class="gate-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </div>
+      <h1>Sightline</h1>
+      <p class="gate-sub">Point your camera at anything. It names what it sees &mdash; people, plants, animals, insects, vehicles, objects &mdash; and can caption and translate speech live.</p>
+      <button id="btnStart" class="primary big">Start camera</button>
+      <p class="gate-note" id="gateNote">Frames are analysed and discarded. Nothing is recorded or stored.</p>
+    </div>
+  </div>
+
+  <!-- Bottom controls -->
+  <nav id="dock">
+    <button class="dockbtn" data-mode="all" aria-pressed="true">
+      <span class="dot"></span>Everything
+    </button>
+    <button class="dockbtn" data-mode="nature">Nature</button>
+    <button class="dockbtn" data-mode="vehicles">Vehicles</button>
+    <button class="dockbtn" data-mode="people">People</button>
+    <button id="btnCaptions" class="dockbtn cc" aria-pressed="false">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 12h3M14 12h3"/></svg>
+      Captions
+    </button>
+    <button id="btnFlip" class="dockbtn" aria-label="Switch camera">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+    </button>
+  </nav>
+
+  <!-- Detail sheet -->
+  <section id="sheet" hidden aria-live="polite">
+    <div class="sheet-grab"></div>
+    <button id="sheetClose" class="sheet-close" aria-label="Close">&times;</button>
+    <div id="sheetBody"></div>
+  </section>
+
+  <!-- Settings -->
+  <section id="settings" hidden>
+    <div class="settings-inner">
+      <header class="sh">
+        <h2>Settings</h2>
+        <button id="settingsClose" class="icon" aria-label="Close">&times;</button>
+      </header>
+
+      <div class="sgroup">
+        <label class="slabel" for="apiBase">Analysis endpoint</label>
+        <input id="apiBase" type="url" placeholder="https://sightline-api.yourname.workers.dev" autocomplete="off" spellcheck="false">
+        <p class="shelp">Your Cloudflare Worker. It holds the API keys so they never reach the browser. See <code>docs/SETUP.md</code>. Leave blank to run local detection only.</p>
+        <div id="apiStatus" class="status"></div>
+        <button id="btnTest" class="ghost">Test connection</button>
+      </div>
+
+      <div class="sgroup">
+        <div class="srow">
+          <div><div class="stitle">Name public figures</div><div class="shelp">Labels people only when there is a strong match to someone notable with a Wikipedia page, and who is alive. Private individuals are never identified.</div></div>
+          <label class="switch"><input type="checkbox" id="optFaces" checked><span></span></label>
+        </div>
+        <div class="srow">
+          <div><div class="stitle">Confidence threshold</div><div class="shelp">Higher means fewer labels, but fewer wrong ones. <b id="confVal">0.75</b></div></div>
+          <input type="range" id="optConf" min="0.4" max="0.95" step="0.05" value="0.75">
+        </div>
+        <div class="srow">
+          <div><div class="stitle">Detail level</div><div class="shelp">How often crops are sent for fine identification.</div></div>
+          <select id="optPace">
+            <option value="900">Fast</option>
+            <option value="1400" selected>Balanced</option>
+            <option value="2400">Frugal</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sgroup">
+        <div class="stitle">Captions</div>
+        <div class="srow">
+          <div><div class="shelp">Spoken language</div></div>
+          <select id="optCapFrom"></select>
+        </div>
+        <div class="srow">
+          <div><div class="shelp">Translate into</div></div>
+          <select id="optCapTo"></select>
+        </div>
+        <div class="srow">
+          <div><div class="shelp">Show the original line above the translation</div></div>
+          <label class="switch"><input type="checkbox" id="optCapBoth" checked><span></span></label>
+        </div>
+      </div>
+
+      <div class="sgroup">
+        <div class="stitle">About</div>
+        <p class="shelp">Sightline analyses frames in memory and discards them. No video, audio or face data is stored or sent anywhere except the single cropped frame needed for one lookup.</p>
+        <p class="shelp" id="buildLine"></p>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" hidden></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script src="js/util.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/wiki.js"></script>
+<script src="js/camera.js"></script>
+<script src="js/track.js"></script>
+<script src="js/identify.js"></script>
+<script src="js/captions.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

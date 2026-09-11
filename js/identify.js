@@ -1,0 +1,222 @@
+/* Sightline - fine-grained identification.
+
+   The local detector answers "there is a dog there". This module answers
+   "that is a Border Collie", "that is Quercus robur", "that is a 1998 Impreza",
+   "that is Ada Lovelace" - by sending ONE small crop to the worker and then
+   enriching the answer from Wikipedia/Wikidata.
+
+   Two entry points:
+     forTrack(t)   - something the local detector already boxed
+     atPoint(x,y)  - anywhere the user tapped. This is the one that covers
+                     insects, trees and wild flowers, because COCO-SSD has no
+                     class for any of them. */
+'use strict';
+
+var IDENT = (function () {
+
+  /* COCO-SSD class -> what we ask the model to do with it. */
+  var ROUTE = {
+    person: 'person',
+    bird: 'animal', cat: 'animal', dog: 'animal', horse: 'animal', sheep: 'animal',
+    cow: 'animal', elephant: 'animal', bear: 'animal', zebra: 'animal', giraffe: 'animal',
+    'potted plant': 'plant',
+    car: 'vehicle', truck: 'vehicle', bus: 'vehicle', motorcycle: 'vehicle',
+    bicycle: 'vehicle', airplane: 'vehicle', train: 'vehicle', boat: 'vehicle'
+  };
+
+  var KICKER = {
+    person: 'Person', animal: 'Animal', plant: 'Plant',
+    insect: 'Insect', vehicle: 'Vehicle', object: 'Object'
+  };
+
+  var queue = [];
+  var inFlight = 0;
+  var MAX_FLIGHT = 1;
+  var lastSent = 0;
+  var quotaBlockedUntil = 0;
+
+  function kindOf(cls) { return ROUTE[cls] || 'object'; }
+
+  function busy() { return inFlight > 0 || queue.length > 0; }
+
+  /* ---- queueing ------------------------------------------------------- */
+
+  function enqueue(job) {
+    if (!SET.hasApi()) { job.fail('no-endpoint'); return; }
+    if (Date.now() < quotaBlockedUntil) { job.fail('quota'); return; }
+    queue.push(job);
+    pump();
+  }
+
+  function pump() {
+    if (inFlight >= MAX_FLIGHT || !queue.length) return;
+    var wait = SET.get('pace') - (Date.now() - lastSent);
+    if (wait > 0) { setTimeout(pump, wait); return; }
+
+    var job = queue.shift();
+    if (job.dead && job.dead()) { pump(); return; }   // the track vanished while queued
+
+    inFlight++;
+    lastSent = Date.now();
+
+    post('/v1/identify', { image: job.image, hint: job.hint })
+      .then(function (r) {
+        if (!r || !r.ok) throw new Error((r && r.error) || 'bad-response');
+        return enrich(r, job.hint);
+      })
+      .then(function (rec) { job.done(rec); })
+      .catch(function (e) {
+        var msg = String(e && e.message || e);
+        if (/429|quota|exhaust/i.test(msg)) {
+          /* Back off for a minute rather than burning the rest of the day's
+             free allowance on retries. */
+          quotaBlockedUntil = Date.now() + 60000;
+          queue.length = 0;
+          U.toast('Daily free limit reached - identification paused for a minute');
+        }
+        job.fail(msg);
+      })
+      .then(function () { inFlight--; setTimeout(pump, 60); });
+  }
+
+  function post(path, body) {
+    return U.fetchT(SET.api(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }, 20000).then(function (r) {
+      if (r.status === 429) throw new Error('429 quota');
+      return r.json().catch(function () { throw new Error('HTTP ' + r.status); });
+    });
+  }
+
+  /* ---- enrichment ------------------------------------------------------ */
+
+  /* Take the model's raw answer and turn it into the record the sheet draws.
+     For a person this is where the living-public-figure gate is applied; a
+     failed gate returns a record that deliberately carries NO name. */
+  function enrich(r, hint) {
+    var kind = r.kind || hint || 'object';
+    var name = String(r.name || '').trim();
+    var conf = typeof r.confidence === 'number' ? r.confidence : 0;
+
+    var base = {
+      kind: kind, name: name, confidence: conf,
+      scientific: r.scientific || '', note: r.note || '',
+      alt: r.alt || [], wiki: null, gated: ''
+    };
+
+    if (!name || conf < SET.get('conf')) {
+      base.gated = 'low-confidence';
+      base.name = '';
+      return Promise.resolve(base);
+    }
+
+    if (kind === 'person') {
+      if (!SET.get('faces')) { base.gated = 'faces-off'; base.name = ''; return Promise.resolve(base); }
+      return WIKI.person(name).then(function (p) {
+        if (!p.ok) {
+          base.gated = p.reason;                 // deceased | no-article | not-a-person
+          base.deceasedName = (p.reason === 'deceased') ? (p.name || name) : '';
+          base.diedYear = p.diedYear || null;
+          base.name = '';                        // never draw an ungated name
+          return base;
+        }
+        base.wiki = p;
+        base.name = p.name;
+        return base;
+      });
+    }
+
+    if (kind === 'plant' || kind === 'animal' || kind === 'insect') {
+      return WIKI.taxon(r.scientific || name).then(function (t) {
+        if (!t && r.scientific) return WIKI.taxon(name);
+        return t;
+      }).then(function (t) {
+        base.wiki = t;
+        if (t && t.scientific) base.scientific = t.scientific;
+        return base;
+      });
+    }
+
+    return WIKI.thing(name).then(function (t) { base.wiki = t; return base; });
+  }
+
+  /* ---- entry points ---------------------------------------------------- */
+
+  function forTrack(t) {
+    if (t.state !== 'new') return;
+    var hint = kindOf(t.cls);
+
+    /* People are opt-out; everything else always identifies. */
+    if (hint === 'person' && !SET.get('faces')) {
+      t.state = 'skipped'; t.reason = 'faces-off';
+      t.kicker = 'Person';
+      return;
+    }
+
+    var img = CAM.crop(t.raw, hint === 'person' ? 384 : 512, hint === 'person' ? 0.25 : 0.12);
+    if (!img) { t.state = 'failed'; t.reason = 'no-frame'; return; }
+
+    t.state = 'queued';
+    t.kicker = KICKER[hint] || 'Object';
+    t.tries++;
+
+    enqueue({
+      image: img,
+      hint: hint,
+      dead: function () { return !TRACK.byId(t.id); },
+      done: function (rec) {
+        t.state = 'done';
+        t.data = rec;
+        t.label = rec.name || '';
+        t.reason = rec.gated || '';
+        if (rec.kind && KICKER[rec.kind]) t.kicker = KICKER[rec.kind];
+        UI.dirty();
+      },
+      fail: function (why) {
+        t.state = 'failed';
+        t.reason = why;
+        UI.dirty();
+      }
+    });
+  }
+
+  /* Tap anywhere: identify a square region around the tap. This is how
+     insects, trees, flowers, fungi and anything else outside the 80 local
+     classes get named. */
+  function atPoint(sx, sy) {
+    if (!SET.hasApi()) { UI.needEndpoint(); return; }
+    var m = CAM.coverMap();
+    var fx = (SET.get('facing') === 'user' ? (m.ew - sx) : sx);
+    var x = (fx - m.dx) / m.scale;
+    var y = (sy - m.dy) / m.scale;
+
+    var side = Math.min(m.vw, m.vh) * 0.42;
+    var box = [
+      U.clamp(x - side / 2, 0, m.vw - 1),
+      U.clamp(y - side / 2, 0, m.vh - 1),
+      side, side
+    ];
+    box[2] = Math.min(side, m.vw - box[0]);
+    box[3] = Math.min(side, m.vh - box[1]);
+
+    var img = CAM.crop(box, 640, 0.02, 0.78);
+    if (!img) return;
+
+    UI.openPending('Looking…', box);
+    enqueue({
+      image: img,
+      hint: 'auto',
+      done: function (rec) { UI.openRecord(rec, box); },
+      fail: function (why) { UI.openError(why); }
+    });
+  }
+
+  function status() {
+    return { queued: queue.length, inFlight: inFlight, blocked: Date.now() < quotaBlockedUntil };
+  }
+
+  return { forTrack: forTrack, atPoint: atPoint, kindOf: kindOf, busy: busy,
+           status: status, KICKER: KICKER, post: post };
+})();

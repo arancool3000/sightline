@@ -1,0 +1,12 @@
+{
+  "name": "sightline",
+  "version": "1.0.0",
+  "description": "Live camera identification of people, plants, animals, insects, vehicles and objects, with live captions and translation.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/gate_test.cjs",
+    "test:browser": "node tests/smoke_test.cjs",
+    "serve": "npx --yes serve ."
+  }
+}
