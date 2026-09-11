@@ -215,6 +215,10 @@ var UI = (function () {
     var body = w.extract || rec.note || '';
     if (body) html += '<p class="sh-body">' + U.esc(body.slice(0, 520)) + (body.length > 520 ? '…' : '') + '</p>';
 
+    if (rec.source === 'on-device') {
+      html += '<p class="sh-note" style="margin-top:0;border:0;padding:0">Recognised on your device, offline. ' +
+        'For a more exact identification, tap it again with an analysis endpoint set.</p>';
+    }
     html += '<div class="sh-actions">';
     html += linkBtn(w.url, 'Wikipedia', true);
     html += linkBtn(w.website, 'Official site');
@@ -232,6 +236,17 @@ var UI = (function () {
   function openTrack(t) {
     openTrackId = t.id;
     if (t.state === 'done' && t.data) { showSheet(record(t.data)); return; }
+
+    /* An on-device label is a real answer, not a placeholder: look its page
+       up straight from Wikipedia, which needs no key and no endpoint. */
+    if (t.local && t.state !== 'queued') {
+      openPending(t.local.name);
+      IDENT.fromLocal(t).then(function (rec) {
+        if (openTrackId === t.id) showSheet(record(rec));
+      });
+      if (t.state === 'skipped' || !SET.hasApi()) return;
+    }
+
     if (t.state === 'queued') { openPending('Identifying ' + U.titleCase(t.cls) + '…'); return; }
     if (t.state === 'skipped' && t.reason === 'faces-off') { showSheet(gatedPerson({ kind: 'person', gated: 'faces-off' })); return; }
     if (t.state === 'failed') { openError(t.reason || ''); return; }
@@ -246,6 +261,49 @@ var UI = (function () {
     if (openTrackId == null || sheet.hidden) return;
     var t = TRACK.byId(openTrackId);
     if (t && t.state === 'done' && t.data) showSheet(record(t.data));
+  }
+
+  /* ---------- live scene label ---------- */
+
+  var sceneCur = null;
+
+  function sceneLabel(r) {
+    var chip = U.$('#sceneChip'), ret = U.$('#reticle');
+    ret.hidden = false;
+
+    if (!r) {
+      if (!chip.hidden) chip.hidden = true;
+      ret.classList.remove('hot');
+      sceneCur = null;
+      return;
+    }
+    sceneCur = r;
+    ret.classList.add('hot');
+    /* Guarded writes: this runs several times a second and a blind write
+       repaints the chip every pass. */
+    var n = U.$('#sceneName');
+    if (n.textContent !== r.name) n.textContent = r.name;
+    var m = Math.round(r.score * 100) + '%  ' + r.ms + 'ms';
+    var mt = U.$('#sceneMeta');
+    if (mt.textContent !== m) mt.textContent = m;
+    if (chip.hidden) chip.hidden = false;
+  }
+
+  /* Tapping the live label resolves its encyclopedia page - keyless, so this
+     works with no endpoint configured at all. */
+  function openScene() {
+    if (!sceneCur) return;
+    var name = sceneCur.name, score = sceneCur.score, alt = sceneCur.alt || [];
+    openPending(name);
+    WIKI.taxon(name).then(function (w) {
+      return (w && w.extract) ? w : WIKI.thing(name);
+    }).then(function (w) {
+      showSheet(record({
+        kind: (w && w.scientific) ? 'plant' : 'object',
+        name: name, confidence: score, scientific: (w && w.scientific) || '',
+        alt: alt, wiki: w, source: 'on-device'
+      }));
+    });
   }
 
   /* ---------- captions ---------- */
@@ -353,9 +411,11 @@ var UI = (function () {
       });
     });
 
+    U.$('#sceneChip').addEventListener('click', function (ev) { ev.stopPropagation(); openScene(); });
+
     U.$('#btnCaptions').addEventListener('click', function () {
-      if (CAPS.running()) { CAPS.stop(); CAPS.clear(); }
-      else { CAPS.start(); }
+      if (CAPS.running()) { CAPS.stop(); CAPS.clear(); document.body.classList.remove('caps-on'); }
+      else if (CAPS.start()) { document.body.classList.add('caps-on'); }
     });
 
     U.$('#btnFlip').addEventListener('click', function () {
@@ -365,7 +425,7 @@ var UI = (function () {
     /* Tap: a track if one is under the finger, otherwise identify that spot. */
     U.$('#stage').addEventListener('click', function (ev) {
       if (!CAM.live()) return;
-      if (ev.target.closest('#dock,#topbar,#sheet,#settings,#gate,#captionBar')) return;
+      if (ev.target.closest('#dock,#topbar,#sheet,#settings,#gate,#captionBar,#sceneChip')) return;
       var r = cv.getBoundingClientRect();
       var x = ev.clientX - r.left, y = ev.clientY - r.top;
       var t = TRACK.hit(x, y);
@@ -376,6 +436,7 @@ var UI = (function () {
   return { init: init, draw: draw, dirty: dirty, resize: resize,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
-           refreshOpen: refreshOpen, captionDraw: captionDraw, captionState: captionState,
+           refreshOpen: refreshOpen, sceneLabel: sceneLabel, openScene: openScene,
+           captionDraw: captionDraw, captionState: captionState,
            get needsDraw() { return needsDraw; } };
 })();

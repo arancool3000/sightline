@@ -169,7 +169,10 @@ var IDENT = (function () {
       done: function (rec) {
         t.state = 'done';
         t.data = rec;
-        t.label = rec.name || '';
+        /* The cloud only overwrites the on-device label when it actually has
+           something better. A refusal must not blank a good local answer. */
+        if (rec.name) { t.label = rec.name; t.tier = 'cloud'; }
+        else if (t.local) { t.label = t.local.name; t.tier = 'local'; }
         t.reason = rec.gated || '';
         if (rec.kind && KICKER[rec.kind]) t.kicker = KICKER[rec.kind];
         UI.dirty();
@@ -177,6 +180,7 @@ var IDENT = (function () {
       fail: function (why) {
         t.state = 'failed';
         t.reason = why;
+        if (t.local) { t.label = t.local.name; t.tier = 'local'; }   // fall back, never blank
         UI.dirty();
       }
     });
@@ -213,10 +217,34 @@ var IDENT = (function () {
     });
   }
 
+  /* Build a full detail record from an ON-DEVICE label alone. Wikipedia and
+     Wikidata are keyless and CORS-open, so this path gives a photograph, a
+     summary and an encyclopedia link with no API key configured at all. */
+  function fromLocal(t) {
+    var kind = kindOf(t.cls);
+    var name = t.local.name;
+    var rec = {
+      kind: kind === 'person' ? 'object' : kind,
+      name: name,
+      confidence: t.local.score,
+      scientific: '',
+      note: '',
+      alt: t.local.alt || [],
+      wiki: null,
+      source: 'on-device'
+    };
+    var look = (kind === 'animal' || kind === 'plant' || kind === 'insect') ? WIKI.taxon(name) : WIKI.thing(name);
+    return look.then(function (w) {
+      rec.wiki = w;
+      if (w && w.scientific) rec.scientific = w.scientific;
+      return rec;
+    });
+  }
+
   function status() {
     return { queued: queue.length, inFlight: inFlight, blocked: Date.now() < quotaBlockedUntil };
   }
 
-  return { forTrack: forTrack, atPoint: atPoint, kindOf: kindOf, busy: busy,
+  return { forTrack: forTrack, atPoint: atPoint, kindOf: kindOf, busy: busy, fromLocal: fromLocal,
            status: status, KICKER: KICKER, post: post };
 })();

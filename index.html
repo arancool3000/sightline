@@ -17,13 +17,21 @@
   <!-- Top bar -->
   <header id="topbar">
     <div class="brand">Sightline</div>
-    <div id="fps" class="pill mono" title="Detection rate">--</div>
+    <div id="fps" class="pill mono" title="Detector rate">--</div>
+    <div id="lat" class="pill mono" title="Time from an object appearing to it being labelled">--</div>
     <button id="btnSettings" class="icon" aria-label="Settings">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
       </svg>
     </button>
   </header>
+
+  <!-- Live scene label: the realtime, on-device answer -->
+  <div id="reticle" hidden><span></span><span></span><span></span><span></span></div>
+  <button id="sceneChip" hidden>
+    <span id="sceneName"></span>
+    <span id="sceneMeta" class="mono"></span>
+  </button>
 
   <!-- Live captions -->
   <div id="captionBar" hidden>
@@ -135,12 +143,15 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu@4.20.0/dist/tf-backend-webgpu.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 <script src="js/util.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/wiki.js"></script>
 <script src="js/camera.js"></script>
 <script src="js/track.js"></script>
+<script src="js/local.js"></script>
 <script src="js/identify.js"></script>
 <script src="js/captions.js"></script>
 <script src="js/ui.js"></script>

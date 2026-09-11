@@ -188,3 +188,29 @@ input,select{font:inherit;color:inherit}
   #sheet{left:auto;right:16px;bottom:16px;width:400px;max-height:calc(100vh - 32px);border-radius:20px;border:1px solid var(--line)}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- live scene label ---------- */
+#reticle{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(66vw,66vh);height:min(66vw,66vh);z-index:4;pointer-events:none
+}
+#reticle span{position:absolute;width:26px;height:26px;border:2.5px solid rgba(255,255,255,.85)}
+#reticle span:nth-child(1){left:0;top:0;border-right:0;border-bottom:0;border-radius:8px 0 0 0}
+#reticle span:nth-child(2){right:0;top:0;border-left:0;border-bottom:0;border-radius:0 8px 0 0}
+#reticle span:nth-child(3){left:0;bottom:0;border-right:0;border-top:0;border-radius:0 0 0 8px}
+#reticle span:nth-child(4){right:0;bottom:0;border-left:0;border-top:0;border-radius:0 0 8px 0}
+#reticle.hot span{border-color:var(--accent)}
+
+#sceneChip{
+  position:absolute;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--safe-b) + 78px);z-index:7;
+  display:flex;align-items:center;gap:10px;max-width:92vw;
+  padding:12px 18px;border-radius:999px;min-height:48px;
+  background:rgba(0,0,0,.8);border:1px solid var(--line);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  animation:rise .16s ease
+}
+#sceneChip:active{transform:translateX(-50%) scale(.97)}
+#sceneName{font-size:17px;font-weight:620;letter-spacing:-.015em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sceneMeta{font-size:11px;color:var(--muted);flex:0 0 auto}
+body.caps-on #sceneChip{bottom:calc(var(--safe-b) + 150px)}
