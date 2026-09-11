@@ -19,8 +19,9 @@ const server=http.createServer((q,res)=>{
   const browser=await chromium.launch({args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--autoplay-policy=no-user-gesture-required']});
   const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
   const page=await ctx.newPage();
-  const errs=[];
+  const errs=[]; let weightsRequested=false;
   page.on('pageerror',e=>errs.push(e.message.slice(0,120)));
+  page.on('request',r=>{ if(/mobilenet|model\.json/.test(r.url())) weightsRequested=true; });
 
   /* Both model loaders are stubbed BEFORE any script runs: the detector
      always fails, the classifier always succeeds. Whether the classifier is
@@ -42,7 +43,8 @@ const server=http.createServer((q,res)=>{
 
   await page.goto('http://localhost:8731/',{waitUntil:'domcontentloaded'});
   await page.click('#btnStart');
-  await page.waitForTimeout(3500);
+  await page.waitForFunction(()=>window.LOCAL&&LOCAL.ready(),null,{timeout:90000}).catch(()=>{});
+  await page.waitForTimeout(1200);
 
   const R=[]; const t=(n,c,x)=>R.push({n,p:!!c,x:x===undefined?'':String(x)});
   const r = await page.evaluate(() => ({
@@ -53,7 +55,13 @@ const server=http.createServer((q,res)=>{
   }));
 
   t('the detector was attempted', r.calls.detector >= 1, r.calls.detector);
-  t('THE CLASSIFIER WAS STILL ATTEMPTED after the detector failed', r.calls.classifier >= 1, r.calls.classifier);
+  /* Pin the PROPERTY, not the loader. Counting mobilenet.load() calls broke
+     the moment the classifier started loading vendored weights directly -
+     a change that made it more reliable, not less. What matters is that the
+     classifier was still fetched and started while the detector was failing. */
+  t('THE CLASSIFIER WAS STILL ATTEMPTED after the detector failed',
+    weightsRequested || r.calls.classifier >= 1,
+    weightsRequested ? 'weights fetched' : ('mobilenet.load x' + r.calls.classifier));
   t('the classifier is ready despite the detector failing', r.ready === true, r.ready);
   t('diagnostics report the detector as failed', /failed/.test(r.diag.detector), r.diag.detector);
   t('diagnostics report the classifier as ok', r.diag.classifier === 'ok', r.diag.classifier);

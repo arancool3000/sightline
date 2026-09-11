@@ -73,6 +73,9 @@ var CAPS = (function () {
     rec.onstart = function () { on = true; UI.captionState('listening'); };
 
     rec.onresult = function (ev) {
+      /* Engines flush a final result AFTER stop(). Without this guard that
+         late result redraws the caption bar the user just closed. */
+      if (!wantOn) return;
       var fresh = '';
       interim = '';
       for (var i = ev.resultIndex; i < ev.results.length; i++) {
@@ -110,18 +113,29 @@ var CAPS = (function () {
     catch (e) { on = false; clearTimeout(restartTimer); restartTimer = setTimeout(spin, 600); }
   }
 
+  /* Stopping CLEARS. Leaving the text on screen after the user switched
+     captions off is the bug this fixes, and making every caller remember to
+     call clear() separately is how it would come back. */
   function stop() {
     wantOn = false;
     clearTimeout(restartTimer);
-    if (rec) { try { rec.stop(); } catch (e) { /* already stopped */ } }
+    if (rec) {
+      /* abort() discards a pending utterance; stop() delivers it, which is
+         exactly the late result that redrew the bar. */
+      try { rec.abort(); }
+      catch (e) { try { rec.stop(); } catch (e2) { /* already stopped */ } }
+    }
     on = false;
+    lines = [];
     interim = '';
+    UI.captionDraw(lines, '', null);
     UI.captionState('off');
   }
 
   function clear() { lines = []; interim = ''; UI.captionDraw(lines, '', null); }
 
   function push(text) {
+    if (!wantOn) return;
     var line = { src: text, out: '', pending: false };
     lines.push(line);
     while (lines.length > 4) lines.shift();
@@ -148,13 +162,13 @@ var CAPS = (function () {
         line.pending = false;
         if (r && r.ok && r.text) { line.out = r.text; tcache.set(key, r.text); }
         else { line.out = text; line.note = 'not translated'; }
-        UI.captionDraw(lines, interim, null);
+        if (wantOn) UI.captionDraw(lines, interim, null);
       })
       .catch(function () {
         line.pending = false;
         line.out = text;
         line.note = 'translation unavailable';
-        UI.captionDraw(lines, interim, null);
+        if (wantOn) UI.captionDraw(lines, interim, null);
       });
   }
 

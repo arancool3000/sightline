@@ -37,6 +37,9 @@ var LOCAL = (function () {
 
   function considerStepDown() {
     if (stepped || stats.n < 6) return;
+    /* The vendored model IS the light one; there is nothing lighter to swap
+       to, so reloading would cost a download and change nothing. */
+    if (variant.indexOf('local') !== -1) { stepped = true; return; }
     var mean = stats.total / stats.n;
     if (mean <= BUDGET_MS) { stepped = true; return; }   // fast enough, stop checking
     stepped = true;
@@ -71,20 +74,23 @@ var LOCAL = (function () {
 
     loading = pickBackend()
       .then(function () {
-        if (!window.mobilenet) throw new Error('classifier library did not load');
-        /* The packaged loader fetches from tfhub.dev, which Google has
-           deprecated in favour of Kaggle and which some networks block
-           outright. Try it, then fall back to the storage.googleapis.com
-           mirror, which is a Keras LayersModel and so needs its own
-           classify path (mirrorClassify below). */
-        return mobilenet.load({ version: 2, alpha: alpha })
-          .catch(function () {
-            variant = 'v1';
-            return mobilenet.load({ version: 1, alpha: alpha });
-          })
+        /* RELIABILITY FIRST, and deliberately so.
+           The weights are vendored into this repo and served from our own
+           origin, so identification cannot be broken by a third-party host
+           being blocked, deprecated or down - which is what took it out
+           twice. It also means the recogniser works fully offline.
+           The remote sources remain only as a fallback if the local files
+           are somehow missing, and they are strictly better models, so a
+           future build may prefer them once this is proven stable. */
+        return loadLocal()
           .catch(function (e) {
-            lastErr = 'tfhub unreachable (' + String(e && e.message || e).slice(0, 60) + ')';
+            lastErr = 'local weights failed (' + String(e && e.message || e).slice(0, 50) + ')';
             return loadMirror();
+          })
+          .catch(function () {
+            if (!window.mobilenet) throw new Error('no classifier available');
+            variant = 'tfhub';
+            return mobilenet.load({ version: 1, alpha: alpha });
           });
       })
       .then(function (m) {
@@ -106,15 +112,24 @@ var LOCAL = (function () {
     return loading;
   }
 
-  /* A LayersModel mirror wrapped to answer like the packaged classifier, so
-     every call site keeps using net.classify(canvas, k) and knows nothing
-     about which source it came from. */
+  /* Our own copy. No third party involved at any point. */
+  function loadLocal() {
+    if (!window.tf || !window.KH_IMAGENET) return Promise.reject(new Error('tf or classes missing'));
+    return wrapLayers('vendor/models/mobilenet-v1-050/model.json', 'local');
+  }
+
   function loadMirror() {
     if (!window.tf || !window.KH_IMAGENET) throw new Error('no classifier mirror available');
-    var url = 'https://storage.googleapis.com/tfjs-models/tfjs/mobilenet_v1_' +
-              (alpha === 0.5 ? '0.50' : '1.0') + '_224/model.json';
+    return wrapLayers('https://storage.googleapis.com/tfjs-models/tfjs/mobilenet_v1_' +
+                      (alpha === 0.5 ? '0.50' : '1.0') + '_224/model.json', 'mirror');
+  }
+
+  /* A LayersModel wrapped to answer like the packaged classifier, so every
+     call site keeps using net.classify(canvas, k) and knows nothing about
+     which source it came from. */
+  function wrapLayers(url, tag) {
     return tf.loadLayersModel(url).then(function (lm) {
-      variant = 'v1-mirror';
+      variant = 'v1-' + tag;
       return {
         classify: function (canvas, k) {
           return new Promise(function (res) {
@@ -195,6 +210,7 @@ var LOCAL = (function () {
     if (!drawCrop(video, t.raw || t.box)) return Promise.resolve(null);
 
     t.localState = 'busy';
+    t.scan = 'scanning';
     var t0 = performance.now();
 
     return net.classify(pad, 3).then(function (preds) {
@@ -212,6 +228,12 @@ var LOCAL = (function () {
 
       if (top.probability < MIN_SCORE || JUNK.test(name)) {
         t.local = null;                       // keep the generic COCO word
+        /* A verdict, not a silence: the target is marked dismissed with the
+           reason, so the screen shows it was considered and rejected rather
+           than just never labelled. */
+        t.scan = 'dismissed';
+        t.why = JUNK.test(name) ? 'NOT A SUBJECT' : 'LOW CONFIDENCE';
+        t.settled = performance.now();
         return null;
       }
 
@@ -223,9 +245,15 @@ var LOCAL = (function () {
       };
       /* Only the cloud tier may overwrite a label it has already sharpened. */
       if (t.tier !== 'cloud') { t.label = name; t.tier = 'local'; }
+      t.scan = 'relevant';
+      t.why = '';
+      t.settled = performance.now();
       return t.local;
     }).catch(function () {
       t.localState = 'failed';
+      t.scan = 'dismissed';
+      t.why = 'SCAN FAILED';
+      t.settled = performance.now();
       return null;
     });
   }
@@ -247,7 +275,10 @@ var LOCAL = (function () {
      first seen half out of frame. */
   function age(tracks, now) {
     tracks.forEach(function (t) {
-      if (t.localState === 'done' && t.localAt && (now - t.localAt) > 3000) t.localState = 'stale';
+      if (t.localState === 'done' && t.localAt && (now - t.localAt) > 3000) {
+        t.localState = 'stale';
+        if (t.scan === 'dismissed') t.scan = 'plotted';   // give it another look
+      }
     });
   }
 
@@ -305,7 +336,7 @@ var LOCAL = (function () {
   function timing() {
     return {
       backend: backend,
-      model: variant + ' a' + alpha,
+      model: variant + (variant.indexOf('local') !== -1 ? ' a0.5' : ' a' + alpha),
       last: Math.round(stats.last),
       mean: stats.n ? Math.round(stats.total / stats.n) : 0,
       worst: Math.round(stats.worst),

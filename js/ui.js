@@ -70,7 +70,14 @@ var UI = (function () {
   function draw(tracks) {
     if (!ctx) return;
     var w = cv.clientWidth, h = cv.clientHeight;
+    var now = performance.now();
     ctx.clearRect(0, 0, w, h);
+
+    /* Plotted / scanned counter, so the sweep is legible as a process. */
+    var plotted = tracks.length;
+    var settled = 0;
+    tracks.forEach(function (t) { if (t.scan === 'relevant' || t.scan === 'dismissed') settled++; });
+    tele('#tTgt', plotted ? settled + '/' + plotted : '--');
 
     tracks.forEach(function (t) {
       var s = CAM.toScreen(t.box);
@@ -87,13 +94,21 @@ var UI = (function () {
       var vy = Math.max(0, Math.min(y + bh, h) - Math.max(y, 0));
       if (vx * vy < bw * bh * 0.35) return;
 
+      /* A dismissed target has said what it needed to; stop drawing it after
+         a moment so the screen does not fill with rejections. */
+      if (t.scan === 'dismissed' && t.settled && (now - t.settled) > 2600) return;
+
       /* Bracketed target. Corner ticks only - a full box hides the subject,
          which is the thing the user is actually trying to look at. */
       var c = Math.min(18, bw * 0.26, bh * 0.26);
+      var dismissed = t.scan === 'dismissed' && !named;
+      var scanning = (t.scan === 'scanning' || t.state === 'queued') && !named;
+
       ctx.save();
-      ctx.strokeStyle = col;
+      ctx.strokeStyle = dismissed ? 'rgba(230,236,241,.5)' : col;
       ctx.lineWidth = named ? 1.6 : 1.1;
-      ctx.globalAlpha = named ? 0.95 : 0.5;
+      ctx.globalAlpha = named ? 0.95 : dismissed ? 0.3 : scanning ? 0.75 : 0.5;
+      if (dismissed) ctx.setLineDash([3, 4]);
       [[x, y, 1, 1], [x + bw, y, -1, 1], [x, y + bh, 1, -1], [x + bw, y + bh, -1, -1]]
         .forEach(function (p) {
           ctx.beginPath();
@@ -102,13 +117,32 @@ var UI = (function () {
           ctx.lineTo(p[0], p[1] + c * p[3]);
           ctx.stroke();
         });
+      ctx.setLineDash([]);
+
+      /* A scan line crossing the target: the one piece of motion in the
+         interface, and it only runs while something is genuinely being
+         analysed. */
+      if (scanning) {
+        var phase = (now % 1100) / 1100;
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(x + 2, y + bh * phase);
+        ctx.lineTo(x + bw - 2, y + bh * phase);
+        ctx.stroke();
+      }
       ctx.restore();
 
-      var text = named ? t.label
-               : t.state === 'queued' ? 'SCANNING'
-               : String(t.cls).toUpperCase();
+      /* A target is not simply labelled or blank. It is PLOTTED, then
+         SCANNING, then given a verdict - relevant or dismissed with a
+         reason. Showing the rejection is the point: it is visible that the
+         thing was considered, not overlooked. */
+      var text;
+      if (named) text = t.label;
+      else if (t.scan === 'scanning' || t.state === 'queued') text = 'SCANNING';
+      else if (t.scan === 'dismissed') text = t.why || 'DISMISSED';
+      else text = String(t.cls).toUpperCase();
       if (t.state === 'skipped' && kind === 'person' && !named) text = 'PERSON';
-      text = text.toUpperCase();
+      text = String(text).toUpperCase();
 
       /* Leader line out of the top-right corner to a plate. This is what
          makes it read as instrumentation rather than a floating chip. */
@@ -352,7 +386,18 @@ var UI = (function () {
   function captionDraw(lines, interim) {
     var bar = U.$('#captionBar');
     var src = U.$('#capSource'), main = U.$('#capMain'), meta = U.$('#capMeta');
-    if (!lines.length && !interim) { src.textContent = ''; main.textContent = ''; return; }
+    /* THE chokepoint. Several call sites reach here after an async gap - a
+       translation resolving, a late recognition result - and this function
+       ends by unhiding the bar. Without this one check any of them can
+       reopen captions the user has switched off. */
+    if (!CAPS.running()) {
+      src.textContent = ''; main.textContent = ''; meta.textContent = '';
+      bar.hidden = true;
+      document.body.classList.remove('caps-on');
+      return;
+    }
+
+    if (!lines.length && !interim) { src.textContent = ''; main.textContent = ''; meta.textContent = ''; return; }
 
     var last = lines[lines.length - 1];
     var showBoth = SET.get('capBoth');
@@ -479,7 +524,7 @@ var UI = (function () {
     U.$('#sceneChip').addEventListener('click', function (ev) { ev.stopPropagation(); openScene(); });
 
     U.$('#btnCaptions').addEventListener('click', function () {
-      if (CAPS.running()) { CAPS.stop(); CAPS.clear(); document.body.classList.remove('caps-on'); }
+      if (CAPS.running()) { CAPS.stop(); document.body.classList.remove('caps-on'); }
       else if (CAPS.start()) { document.body.classList.add('caps-on'); }
     });
 

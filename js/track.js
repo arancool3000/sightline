@@ -59,6 +59,9 @@ var TRACK = (function () {
         misses: 0,
         state: 'new',       // CLOUD state: new -> queued -> done | skipped | failed
         localState: '',     // ON-DEVICE state: '' -> busy -> done | stale | failed
+        scan: 'plotted',    // plotted -> scanning -> relevant | dismissed
+        why: '',            // why it was dismissed, shown on the target
+        settled: 0,         // when the verdict landed, for the fade
         local: null,        // the on-device label, when one is confident enough
         tier: '',           // which tier owns the label showing right now
         labelMs: 0,         // ms from first sighting to first real label
