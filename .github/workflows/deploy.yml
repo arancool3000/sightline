@@ -1,0 +1,104 @@
+name: Deploy
+
+# Publishes the site to Cloudflare Pages and the API to Cloudflare Workers.
+#
+# Requires ONE repository secret:
+#   CLOUDFLARE_API_TOKEN  - Pages:Edit + Workers Scripts:Edit
+# Optional, and what turns identification on:
+#   GEMINI_KEY            - ai.google.dev, free tier
+#   PLANTNET_KEY          - my.plantnet.org, free 500/day
+#   VISION_KEY            - Google Cloud Vision, free to 1,000/month
+#   CLOUDFLARE_ACCOUNT_ID - only needed if the token can see several accounts
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  site:
+    name: Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the token is present
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not set. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      # Only the site ships. Worker source, tests and docs are not served.
+      - name: Assemble the site
+        run: |
+          mkdir -p dist
+          cp -R index.html manifest.json sw.js icon.svg icon-maskable.svg _headers css js dist/
+          echo "--- publishing ---"
+          find dist -type f | sort
+
+      - name: Syntax-check every shipped script
+        run: |
+          for f in dist/js/*.js dist/sw.js; do
+            node --check "$f" || exit 1
+          done
+
+      - name: Create the Pages project if it does not exist
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 pages project create sightline --production-branch=main || true
+
+      - name: Deploy to Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=sightline --branch=main --commit-dirty=true
+
+      - name: Where it went
+        run: echo "### Live at https://sightline.pages.dev" >> $GITHUB_STEP_SUMMARY
+
+  api:
+    name: Worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy the worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy
+
+      # Each key is pushed only when it is actually set, so a missing optional
+      # key leaves the others working rather than failing the whole deploy.
+      - name: Push the API keys as worker secrets
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          PLANTNET_KEY: ${{ secrets.PLANTNET_KEY }}
+          VISION_KEY: ${{ secrets.VISION_KEY }}
+        run: |
+          push () {
+            if [ -n "$2" ]; then
+              printf '%s' "$2" | npx --yes wrangler@4 secret put "$1"
+              echo "set $1"
+            else
+              echo "skipped $1 (not set)"
+            fi
+          }
+          push GEMINI_KEY   "$GEMINI_KEY"
+          push PLANTNET_KEY "$PLANTNET_KEY"
+          push VISION_KEY   "$VISION_KEY"
