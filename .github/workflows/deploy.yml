@@ -8,7 +8,9 @@ name: Deploy
 #   GEMINI_KEY            - ai.google.dev, free tier
 #   PLANTNET_KEY          - my.plantnet.org, free 500/day
 #   VISION_KEY            - Google Cloud Vision, free to 1,000/month
-#   CLOUDFLARE_ACCOUNT_ID - only needed if the token can see several accounts
+#   CLOUDFLARE_ACCOUNT_ID - optional override; a default is set below because
+#                           without it wrangler calls /memberships, which a
+#                           narrowly-scoped token cannot reach (error 10000)
 
 on:
   push:
@@ -52,19 +54,19 @@ jobs:
       - name: Create the Pages project if it does not exist
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || '8438b711b9b30251e3afe37cfb08aa05' }}
         run: |
-          npx --yes wrangler@4 pages project create sightline --production-branch=main || true
+          npx --yes wrangler@4 pages project create getsightline --production-branch=main || true
 
       - name: Deploy to Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=sightline --branch=main --commit-dirty=true
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || '8438b711b9b30251e3afe37cfb08aa05' }}
+          command: pages deploy dist --project-name=getsightline --branch=main --commit-dirty=true
 
       - name: Where it went
-        run: echo "### Live at https://sightline.pages.dev" >> $GITHUB_STEP_SUMMARY
+        run: echo "### Live at https://getsightline.pages.dev" >> $GITHUB_STEP_SUMMARY
 
   api:
     name: Worker
@@ -76,7 +78,7 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || '8438b711b9b30251e3afe37cfb08aa05' }}
           workingDirectory: worker
           command: deploy
 
@@ -86,7 +88,7 @@ jobs:
         working-directory: worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || '8438b711b9b30251e3afe37cfb08aa05' }}
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
           PLANTNET_KEY: ${{ secrets.PLANTNET_KEY }}
           VISION_KEY: ${{ secrets.VISION_KEY }}
