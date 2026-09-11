@@ -312,7 +312,14 @@
       }).catch(function () { /* the app works the same without it */ });
     });
 
+    /* controllerchange fires for TWO different things: a worker taking
+       control for the first time (a first visit - nothing stale, nothing to
+       refresh) and a NEW worker replacing an old one (the case this exists
+       for). Reloading on the first would refresh every new visitor for no
+       reason, so the presence of an existing controller is the test. */
+    var hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController) return;
       var once = 'sl_swreload';
       try {
         if (sessionStorage.getItem(once)) return;

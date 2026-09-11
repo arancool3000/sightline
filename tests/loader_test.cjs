@@ -19,9 +19,10 @@ const server=http.createServer((q,res)=>{
   const browser=await chromium.launch({args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--autoplay-policy=no-user-gesture-required']});
   const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
   const page=await ctx.newPage();
-  const errs=[]; let weightsRequested=false;
+  const errs=[]; let weightsRequested=false, navigations=0;
   page.on('pageerror',e=>errs.push(e.message.slice(0,120)));
   page.on('request',r=>{ if(/mobilenet|model\.json/.test(r.url())) weightsRequested=true; });
+  page.on('framenavigated',f=>{ if(f===page.mainFrame()) navigations++; });
 
   /* Both model loaders are stubbed BEFORE any script runs: the detector
      always fails, the classifier always succeeds. Whether the classifier is
@@ -67,6 +68,10 @@ const server=http.createServer((q,res)=>{
   t('diagnostics report the classifier as ok', r.diag.classifier === 'ok', r.diag.classifier);
   t('a live label is still shown', r.sceneShown === true, r.sceneShown);
   /* CONTROLS - these pass either way and stop the fix over-reaching. */
+  /* The service-worker self-heal must refresh an UPDATED build, never a first
+     visit. Reloading every new visitor once is a real cost and it destroyed
+     the recogniser suite's page mid-test. */
+  t('a first visit is not reloaded by the service worker', navigations <= 1, navigations + ' navigation(s)');
   t('CONTROL - the page did not throw', errs.length === 0, errs.join('|').slice(0,120));
   t('CONTROL - libs are served same-origin', await page.evaluate(() =>
       [...document.scripts].every(s => !s.src || s.src.startsWith(location.origin))), '');
