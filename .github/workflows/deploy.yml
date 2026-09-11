@@ -56,17 +56,17 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || '8438b711b9b30251e3afe37cfb08aa05' }}
         run: |
-          npx --yes wrangler@4 pages project create getsightline --production-branch=main || true
+          npx --yes wrangler@4 pages project create sightline-ai --production-branch=main || true
 
       - name: Deploy to Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || '8438b711b9b30251e3afe37cfb08aa05' }}
-          command: pages deploy dist --project-name=getsightline --branch=main --commit-dirty=true
+          command: pages deploy dist --project-name=sightline-ai --branch=main --commit-dirty=true
 
       - name: Where it went
-        run: echo "### Live at https://getsightline.pages.dev" >> $GITHUB_STEP_SUMMARY
+        run: echo "### Live at https://sightline-ai.pages.dev" >> $GITHUB_STEP_SUMMARY
 
   api:
     name: Worker
