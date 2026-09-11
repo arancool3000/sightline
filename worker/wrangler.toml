@@ -2,10 +2,16 @@ name = "sightline-api"
 main = "index.js"
 compatibility_date = "2026-01-01"
 
-# Keys are SECRETS, never vars. Set them after the first deploy:
-#   wrangler secret put GEMINI_KEY        (required - ai.google.dev, free tier)
-#   wrangler secret put PLANTNET_KEY      (optional - my.plantnet.org, free 500/day)
-#   wrangler secret put VISION_KEY        (optional - Google Cloud Vision web detection)
+# NO KEYS ARE REQUIRED. Identification and translation run on Workers AI,
+# which is a binding on this worker - part of the free plan, nothing to sign
+# up for, nothing that can be billed.
+[ai]
+binding = "AI"
+
+# Optional upgrades, all with free tiers. Set as SECRETS, never vars:
+#   wrangler secret put GEMINI_KEY        (ai.google.dev - sharper answers, esp. people)
+#   wrangler secret put PLANTNET_KEY      (my.plantnet.org - plant specialist, 500/day)
+#   wrangler secret put VISION_KEY        (Google Cloud Vision - real reverse image search)
 [vars]
 MODEL = "gemini-2.0-flash"
 ALLOW_ORIGIN = "*"      # tighten to your Pages origin once deployed

@@ -8,17 +8,22 @@
  *   POST /v1/identify    { image: dataURL, hint } -> a named identification
  *   POST /v1/translate   { text, from, to }       -> translated text
  *
- * Everything it depends on has a free tier:
- *   GEMINI_KEY     ai.google.dev  - free tier, required for identification
- *   PLANTNET_KEY   my.plantnet.org - free 500/day, optional plant specialist
- *   VISION_KEY     Google Cloud Vision - optional; enables true reverse image
- *                  search for public figures (free for 1,000 units/month)
+ * NO KEYS ARE REQUIRED. By default identification and translation run on
+ * Cloudflare Workers AI (the `AI` binding in wrangler.toml): part of the free
+ * plan, no signup, no card, nothing that can be billed.
+ *
+ * Optional upgrades, each with a free tier, picked up automatically if set:
+ *   GEMINI_KEY     ai.google.dev  - sharper answers, notably for public figures
+ *   PLANTNET_KEY   my.plantnet.org - free 500/day, plant specialist
+ *   VISION_KEY     Google Cloud Vision - true reverse image search (1,000/mo free)
  *
  * Set them with:  wrangler secret put GEMINI_KEY
  */
 
 const DEFAULTS = {
   MODEL: 'gemini-2.0-flash',
+  CF_VISION_MODEL: '@cf/meta/llama-3.2-11b-vision-instruct',
+  CF_TRANSLATE_MODEL: '@cf/meta/m2m100-1.2b',
   ALLOW_ORIGIN: '*',
   RL_BURST: '40',        // requests per IP per window
   RL_WINDOW: '60',       // seconds
@@ -96,7 +101,8 @@ const SCHEMA = {
     scientific:  { type: 'STRING' },
     confidence:  { type: 'NUMBER' },
     note:        { type: 'STRING' },
-    alt:         { type: 'ARRAY', items: { type: 'STRING' } }
+    alt:         { type: 'ARRAY', items: { type: 'STRING' } },
+    specs:       { type: 'ARRAY', items: { type: 'OBJECT', properties: { k: { type: 'STRING' }, v: { type: 'STRING' } } } }
   },
   required: ['kind', 'name', 'confidence']
 };
@@ -137,9 +143,18 @@ function promptFor(hint) {
     return common + 'This crop shows a vehicle. Give make, model and generation in "name" (for example ' +
       '"Subaru Impreza WRX (GC8)"). Put the production years and body style in "note". Set kind to "vehicle".';
   }
+  if (hint === 'object') {
+    return common +
+      'This crop shows a manufactured object, device or machine. Identify it as specifically as you can: ' +
+      'make and model if visible (for example "Prusa MK4 3D printer", "MacBook Pro 14-inch", "Boston Dynamics Spot"). ' +
+      'Put what it is for in "note". Fill "specs" with up to six short facts a curious person would want - ' +
+      'maker, type, released, key capability, typical price band, what it is commonly used for - as {k, v} pairs. ' +
+      'Set kind to "object".';
+  }
   return common +
     'Work out for yourself what the subject is and set "kind" accordingly. It may be a plant, an animal, ' +
-    'an insect, a vehicle, a manufactured object, or a person.\n' +
+    'an insect, a vehicle, a manufactured object or machine, or a person.\n' +
+    'For a manufactured object give make and model where visible and fill "specs" with up to six {k, v} facts.\n' +
     'If it is a person, the strict rule applies: name them only if they are a widely photographed public ' +
     'figure, otherwise return an empty name with confidence 0.\n' +
     'For living things give the binomial in "scientific".';
@@ -212,8 +227,87 @@ async function gemini(env, image, hint) {
     scientific: String(parsed.scientific || '').trim(),
     confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
     note: String(parsed.note || '').slice(0, 400),
-    alt: Array.isArray(parsed.alt) ? parsed.alt.slice(0, 3).map(String) : []
+    alt: Array.isArray(parsed.alt) ? parsed.alt.slice(0, 3).map(String) : [],
+    specs: normalise(parsed, hint).specs
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Cloudflare Workers AI - the keyless default                          */
+/* ------------------------------------------------------------------ */
+
+/** Pull the first JSON object out of a chatty model reply. */
+function looseJson(text) {
+  if (!text) return null;
+  try { return JSON.parse(text); } catch (e) { /* fall through */ }
+  const m = /\{[\s\S]*\}/.exec(text);
+  if (!m) return null;
+  try { return JSON.parse(m[0]); } catch (e) { return null; }
+}
+
+function normalise(parsed, hint) {
+  if (!parsed) return { ok: true, kind: hint === 'auto' ? 'object' : hint, name: '', confidence: 0, note: 'unreadable response' };
+  return {
+    ok: true,
+    kind: ['person','plant','animal','insect','vehicle','object'].indexOf(parsed.kind) >= 0
+          ? parsed.kind : (hint === 'auto' ? 'object' : hint),
+    name: String(parsed.name || '').trim(),
+    scientific: String(parsed.scientific || '').trim(),
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
+    note: String(parsed.note || '').slice(0, 400),
+    alt: Array.isArray(parsed.alt) ? parsed.alt.slice(0, 3).map(String) : [],
+    specs: Array.isArray(parsed.specs)
+      ? parsed.specs.slice(0, 6).map(x => ({ k: String(x.k || x.key || '').slice(0, 40), v: String(x.v || x.value || '').slice(0, 80) }))
+                    .filter(x => x.k && x.v)
+      : []
+  };
+}
+
+async function workersAI(env, image, hint) {
+  if (!env.AI) return { ok: false, error: 'no AI binding', status: 501 };
+  const img = parseDataUrl(image);
+  if (!img) return { ok: false, error: 'bad image' };
+
+  const prompt = promptFor(hint) +
+    '\nReply with ONLY a JSON object with keys: kind, name, scientific, confidence, note, alt, specs. No prose.';
+
+  const bytes = Uint8Array.from(atob(img.b64), c => c.charCodeAt(0));
+  const model = cfg(env, 'CF_VISION_MODEL');
+
+  let out = null;
+  /* Workers AI vision models have taken two input shapes over time; try the
+     messages form first and fall back to the older prompt+image form. */
+  try {
+    out = await env.AI.run(model, {
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: image } }
+      ] }],
+      max_tokens: 400, temperature: 0.1
+    });
+  } catch (e1) {
+    try {
+      out = await env.AI.run(model, { prompt, image: Array.from(bytes), max_tokens: 400, temperature: 0.1 });
+    } catch (e2) {
+      return { ok: false, error: 'workers ai: ' + String(e2 && e2.message || e2).slice(0, 120), status: 502 };
+    }
+  }
+
+  const text = (out && (out.response || out.description || out.text)) || '';
+  const rec = normalise(looseJson(text), hint);
+  rec.source = 'workers-ai';
+  return rec;
+}
+
+async function workersAITranslate(env, text, from, to) {
+  if (!env.AI) return null;
+  try {
+    const r = await env.AI.run(cfg(env, 'CF_TRANSLATE_MODEL'), {
+      text, source_lang: from || 'en', target_lang: to
+    });
+    const out = r && r.translated_text;
+    return out ? { ok: true, text: out, via: 'workers-ai' } : null;
+  } catch (e) { return null; }
 }
 
 /* ------------------------------------------------------------------ */
@@ -337,6 +431,9 @@ async function translate(env, text, from, to) {
     }
   } catch (e) { /* fall through to the model */ }
 
+  const viaCf = await workersAITranslate(env, text, from, to);
+  if (viaCf) return viaCf;
+
   const key = cfg(env, 'GEMINI_KEY');
   if (!key) return { ok: false, error: 'translation unavailable' };
 
@@ -377,7 +474,8 @@ export default {
         ok: true,
         service: 'sightline',
         features: {
-          identify: !!cfg(env, 'GEMINI_KEY'),
+          identify: !!(env.AI || cfg(env, 'GEMINI_KEY')),
+          engine: cfg(env, 'GEMINI_KEY') ? 'gemini' : (env.AI ? 'workers-ai' : 'none'),
           plants: !!cfg(env, 'PLANTNET_KEY'),
           webSearch: !!cfg(env, 'VISION_KEY'),
           translate: true
@@ -416,7 +514,16 @@ export default {
           if (p && p.name) return json(p, 200, env);
         }
 
-        const g = await gemini(env, image, hint);
+        /* The keyless default is Workers AI. A free Gemini key, if present,
+           is used instead because its answers are sharper - but nothing here
+           requires one. */
+        let g;
+        if (cfg(env, 'GEMINI_KEY')) {
+          g = await gemini(env, image, hint);
+          if (!g.ok && g.status !== 429) g = await workersAI(env, image, hint);
+        } else {
+          g = await workersAI(env, image, hint);
+        }
         if (!g.ok) return err(g.error, g.status || 502, env, { detail: g.detail });
         g.source = g.source || 'gemini';
         return json(g, 200, env);

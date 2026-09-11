@@ -40,13 +40,15 @@ const server = http.createServer((req, res) => {
   await page.waitForTimeout(2500);
 
   // --- modules present
-  const mods = await page.evaluate(() => ['U','SET','WIKI','CAM','TRACK','IDENT','CAPS','UI']
+  const mods = await page.evaluate(() => ['U','SET','WIKI','CAM','TRACK','LOCAL','IDENT','CAPS','UI']
     .map(n => [n, typeof window[n]]));
   mods.forEach(([n, ty]) => t('module ' + n + ' defined', ty === 'object', ty));
 
   // --- start gate visible before any camera use
   t('start gate visible', await page.isVisible('#gate'));
-  t('dock rendered', (await page.$$('.dockbtn')).length >= 5);
+  t('mode rail rendered', (await page.$$('.mbtn[data-mode]')).length >= 5);
+  t('objects mode present', (await page.$$('.mbtn[data-mode="objects"]')).length === 1);
+  t('telemetry present', (await page.$$('#tFps,#tLat,#tGpu,#tEng')).length === 4);
 
   // --- the living-person gate: real Wikidata calls
   const gate = await page.evaluate(async () => {
@@ -93,6 +95,15 @@ const server = http.createServer((req, res) => {
   });
   t('deceased match explains itself', /no longer alive/i.test(gatedHtml), gatedHtml.slice(0,80));
   t('deceased match draws no name as a label', !/^Wolfgang/.test(gatedHtml.trim()));
+
+  // --- object specs render into the dossier (the 3D-printer case)
+  const specs = await page.evaluate(() => {
+    UI.openRecord({ kind:'object', name:'Prusa MK4', confidence:0.9, source:'workers-ai',
+      specs:[{k:'Maker',v:'Prusa Research'},{k:'Type',v:'FDM 3D printer'}], wiki:null });
+    return document.querySelector('#sheetBody').textContent;
+  });
+  t('object specs are rendered', /Prusa Research/.test(specs) && /FDM 3D printer/.test(specs), specs.slice(0,70));
+  t('object name shown', /Prusa MK4/.test(specs));
 
   // --- start the camera for real (fake device)
   await page.click('#btnStart');

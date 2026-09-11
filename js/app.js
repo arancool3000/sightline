@@ -13,6 +13,7 @@
 
   var MODE_KINDS = {
     all: null,                                   // null means everything
+    objects: { object: 1 },
     nature: { animal: 1, plant: 1, insect: 1 },
     vehicles: { vehicle: 1 },
     people: { person: 1 }
@@ -29,8 +30,10 @@
     CAM.attach(U.$('#cam'));
 
     /* Restore the last-used dock mode. */
-    U.$$('.dockbtn[data-mode]').forEach(function (b) {
-      b.setAttribute('aria-pressed', b.dataset.mode === SET.get('mode') ? 'true' : 'false');
+    U.$$('.mbtn[data-mode]').forEach(function (b) {
+      var on = b.dataset.mode === SET.get('mode');
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (on) UI.tele('#tMode', b.textContent.trim());
     });
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -76,12 +79,8 @@
         U.$('#gate').classList.add('hidden');
         UI.resize();
         running = true;
+        UI.tele('#tEng', SET.hasApi() ? 'CLOUD' : 'LOCAL');
         loop();
-        if (!SET.hasApi()) {
-          setTimeout(function () {
-            U.toast('Add your analysis endpoint in Settings to name what you see', 4200);
-          }, 1200);
-        }
       })
       .catch(function (e) {
         btn.disabled = false;
@@ -185,17 +184,13 @@
       while (frameTimes.length > 20) frameTimes.shift();
       if (frameTimes.length > 4) {
         var span = (frameTimes[frameTimes.length - 1] - frameTimes[0]) / 1000;
-        var v = U.$('#fps');
-        var txt = span > 0 ? Math.round((frameTimes.length - 1) / span) + ' fps' : '--';
-        if (v.textContent !== txt) v.textContent = txt;
+        UI.tele('#tFps', span > 0 ? String(Math.round((frameTimes.length - 1) / span)) : '--');
 
         var rep = latencyReport();
-        var l = U.$('#lat');
-        var ltxt = rep ? (rep.median + 'ms') : '--';
-        if (l.textContent !== ltxt) {
-          l.textContent = ltxt;
-          l.style.color = rep && rep.median > 500 ? '#ffcf5d' : '';
-        }
+        UI.tele('#tLat', rep ? rep.median + 'ms' : '--');
+
+        var ti = LOCAL.timing();
+        UI.tele('#tGpu', (ti.backend || '--').toUpperCase());
       }
 
       var dets = preds

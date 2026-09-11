@@ -42,7 +42,8 @@ var IDENT = (function () {
   /* ---- queueing ------------------------------------------------------- */
 
   function enqueue(job) {
-    if (!SET.hasApi()) { job.fail('no-endpoint'); return; }
+    if (!SET.hasApi()) { job.fail('no-endpoint'); return; }   // on-device already answered
+
     if (Date.now() < quotaBlockedUntil) { job.fail('quota'); return; }
     queue.push(job);
     pump();
@@ -190,7 +191,6 @@ var IDENT = (function () {
      insects, trees, flowers, fungi and anything else outside the 80 local
      classes get named. */
   function atPoint(sx, sy) {
-    if (!SET.hasApi()) { UI.needEndpoint(); return; }
     var m = CAM.coverMap();
     var fx = (SET.get('facing') === 'user' ? (m.ew - sx) : sx);
     var x = (fx - m.dx) / m.scale;
@@ -205,15 +205,41 @@ var IDENT = (function () {
     box[2] = Math.min(side, m.vw - box[0]);
     box[3] = Math.min(side, m.vh - box[1]);
 
-    var img = CAM.crop(box, 640, 0.02, 0.78);
-    if (!img) return;
+    /* ON-DEVICE FIRST, ALWAYS. This is the unlimited path: no key, no quota,
+       no account, works with the network off. The cloud is only asked when an
+       endpoint exists, and only to sharpen what the device already said. */
+    UI.openPending('Looking…');
 
-    UI.openPending('Looking…', box);
-    enqueue({
-      image: img,
-      hint: 'auto',
-      done: function (rec) { UI.openRecord(rec, box); },
-      fail: function (why) { UI.openError(why); }
+    var fake = { id: -1, cls: 'object', box: box, raw: box, localState: '', local: null, tier: '', label: '' };
+    LOCAL.label(U.$('#cam'), fake).then(function () {
+      if (fake.local) {
+        var kind = 'object';
+        var look = WIKI.taxon(fake.local.name).then(function (w) {
+          return (w && w.extract) ? w : WIKI.thing(fake.local.name);
+        });
+        look.then(function (w) {
+          if (w && w.scientific) kind = 'plant';
+          UI.openRecord({
+            kind: kind, name: fake.local.name, confidence: fake.local.score,
+            scientific: (w && w.scientific) || '', alt: fake.local.alt || [],
+            wiki: w, source: 'on-device'
+          });
+        });
+      }
+
+      if (!SET.hasApi()) {
+        if (!fake.local) UI.openError('nothing-found');
+        return;
+      }
+
+      var img = CAM.crop(box, 640, 0.02, 0.78);
+      if (!img) return;
+      enqueue({
+        image: img,
+        hint: 'auto',
+        done: function (rec) { if (rec && rec.name) UI.openRecord(rec); },
+        fail: function (why) { if (!fake.local) UI.openError(why); }
+      });
     });
   }
 

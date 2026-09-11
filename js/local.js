@@ -101,6 +101,20 @@ var LOCAL = (function () {
 
   /* ImageNet class names are a mess: "tabby, tabby cat", "sports car, sport
      car", "Border collie". Take the first synonym and title-case it. */
+  /* A rough category for the live readout. ImageNet has no kind field, so
+     this is derived from the label itself - good enough for a one-word
+     kicker, and never used for anything that matters. */
+  var KINDS = [
+    [/\b(dog|retriever|terrier|spaniel|hound|poodle|collie|shepherd|cat|tabby|bird|finch|owl|eagle|fish|shark|snake|lizard|frog|bear|wolf|fox|horse|cow|sheep|monkey|ape|rabbit|mouse|squirrel)\b/i, 'animal'],
+    [/\b(beetle|butterfly|moth|bee|wasp|ant|spider|dragonfly|grasshopper|cricket|mantis|weevil|cicada|ladybug|centipede|scorpion)\b/i, 'insect'],
+    [/\b(flower|daisy|orchid|rose|tree|oak|pine|maple|fern|moss|fungus|mushroom|corn|cabbage|broccoli|cactus|palm|yellow lady)\b/i, 'plant'],
+    [/\b(car|truck|jeep|van|bus|limousine|convertible|minivan|ambulance|motorcycle|moped|bicycle|tricycle|train|locomotive|airliner|aircraft|boat|canoe|ship|tractor)\b/i, 'vehicle']
+  ];
+  function kindOfLabel(name) {
+    for (var i = 0; i < KINDS.length; i++) if (KINDS[i][0].test(name)) return KINDS[i][1];
+    return 'object';
+  }
+
   function tidy(s) {
     var first = String(s || '').split(',')[0].trim();
     return first.replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); })
@@ -237,6 +251,7 @@ var LOCAL = (function () {
         return;
       }
       scenePrev = { name: name, score: top.probability, ms: Math.round(ms),
+                    kind: kindOfLabel(name),
                     alt: preds.slice(1).map(function (p) { return tidy(p.className); }) };
       sceneHold = performance.now();
       cb(scenePrev);
@@ -260,6 +275,6 @@ var LOCAL = (function () {
   function setBudget(n) { perFrame = U.clamp(n | 0, 1, 8); }
 
   return { load: load, ready: ready, label: label, sweep: sweep, age: age,
-           scene: scene, sceneLast: sceneLast,
+           scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
            timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget };
 })();

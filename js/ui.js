@@ -1,4 +1,13 @@
-/* Sightline - everything that draws. */
+/* Sightline - everything that draws.
+
+   The design is a heads-up display: thin lines, one accent, monospace for
+   anything that is data. Labels are bracketed targets with a leader line to
+   a plate, not chat bubbles floating over the scene.
+
+   Everything here works with NO endpoint configured. On-device labels are
+   real answers and resolve real encyclopedia pages, because Wikipedia and
+   Wikidata are keyless. The cloud tier only ever sharpens what is already
+   on screen. */
 'use strict';
 
 var UI = (function () {
@@ -18,6 +27,7 @@ var UI = (function () {
     window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
     wire();
     buildSettings();
+    startClock();
   }
 
   function resize() {
@@ -31,25 +41,31 @@ var UI = (function () {
 
   function dirty() { needsDraw = true; }
 
+  /* ---------- telemetry ---------- */
+
+  function startClock() {
+    function tick() {
+      var d = new Date();
+      var v = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+      var el = U.$('#tClock');
+      if (el && el.textContent !== v) el.textContent = v;   // guarded: this runs forever
+    }
+    tick();
+    setInterval(tick, 10000);
+  }
+
+  /* One shared writer so no readout ever repaints without changing. */
+  function tele(id, value) {
+    var el = U.$(id);
+    if (el && el.textContent !== value) el.textContent = value;
+  }
+
   /* ---------- overlay ---------- */
 
-  /* One hue per category. Every label also carries the category word in
-     the sheet, so colour is never the only thing distinguishing them. */
   var COLOR = {
-    person: '#8ab4ff', animal: '#f5a3d0', plant: '#5ddc8c',
-    insect: '#ffcf5d', vehicle: '#ff9f6b', object: '#d7d7de'
+    person: '#8ab4ff', animal: '#ff8fd0', plant: '#5ddc8c',
+    insect: '#ffb347', vehicle: '#ff9f6b', object: '#4fe3ff'
   };
-
-  function roundRect(x, y, w, h, r) {
-    r = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
-  }
 
   function draw(tracks) {
     if (!ctx) return;
@@ -60,110 +76,125 @@ var UI = (function () {
       var s = CAM.toScreen(t.box);
       var kind = IDENT.kindOf(t.cls);
       var col = COLOR[kind] || COLOR.object;
-      var known = t.state === 'done' && t.label;
+      var named = !!t.label;
 
-      /* Corner brackets rather than a full box - lighter, and it does not
-         hide the subject. A solid outline only once we know what it is. */
+      var x = s[0], y = s[1], bw = s[2], bh = s[3];
+      if (bw < 24 || bh < 24) return;              // too small to annotate legibly
+
+      /* Skip anything barely in frame: a plate with its leader line running
+         off the edge reads as a glitch, not as instrumentation. */
+      var vx = Math.max(0, Math.min(x + bw, w) - Math.max(x, 0));
+      var vy = Math.max(0, Math.min(y + bh, h) - Math.max(y, 0));
+      if (vx * vy < bw * bh * 0.35) return;
+
+      /* Bracketed target. Corner ticks only - a full box hides the subject,
+         which is the thing the user is actually trying to look at. */
+      var c = Math.min(18, bw * 0.26, bh * 0.26);
       ctx.save();
       ctx.strokeStyle = col;
-      ctx.lineWidth = known ? 2.5 : 1.8;
-      ctx.globalAlpha = known ? 1 : 0.62;
-
-      if (known) {
-        roundRect(s[0], s[1], s[2], s[3], 12);
-        ctx.stroke();
-      } else {
-        var c = Math.min(20, s[2] * 0.3, s[3] * 0.3);
-        [[s[0], s[1], 1, 1], [s[0] + s[2], s[1], -1, 1],
-         [s[0], s[1] + s[3], 1, -1], [s[0] + s[2], s[1] + s[3], -1, -1]].forEach(function (p) {
+      ctx.lineWidth = named ? 1.6 : 1.1;
+      ctx.globalAlpha = named ? 0.95 : 0.5;
+      [[x, y, 1, 1], [x + bw, y, -1, 1], [x, y + bh, 1, -1], [x + bw, y + bh, -1, -1]]
+        .forEach(function (p) {
           ctx.beginPath();
           ctx.moveTo(p[0] + c * p[2], p[1]);
           ctx.lineTo(p[0], p[1]);
           ctx.lineTo(p[0], p[1] + c * p[3]);
           ctx.stroke();
         });
-      }
       ctx.restore();
 
-      /* Label chip */
-      var text = known ? t.label
-               : t.state === 'queued' ? '…'
-               : U.titleCase(t.cls);
-      if (t.state === 'skipped' && kind === 'person') text = 'Person';
+      var text = named ? t.label
+               : t.state === 'queued' ? 'SCANNING'
+               : String(t.cls).toUpperCase();
+      if (t.state === 'skipped' && kind === 'person' && !named) text = 'PERSON';
+      text = text.toUpperCase();
 
+      /* Leader line out of the top-right corner to a plate. This is what
+         makes it read as instrumentation rather than a floating chip. */
       ctx.save();
-      ctx.font = '600 13px -apple-system,system-ui,sans-serif';
-      var pad = 8;
+      ctx.font = '500 11px ui-monospace,SFMono-Regular,Menlo,monospace';
       var tw = ctx.measureText(text).width;
-      var chipW = tw + pad * 2, chipH = 24;
-      var cx = U.clamp(s[0], 4, w - chipW - 4);
-      var cy = s[1] - chipH - 6;
-      if (cy < 4) cy = U.clamp(s[1] + 6, 4, h - chipH - 4);
+      var padX = 8, plateH = 22;
+      var leader = 14;
 
-      ctx.fillStyle = known ? col : 'rgba(0,0,0,.66)';
-      roundRect(cx, cy, chipW, chipH, 7);
-      ctx.fill();
-      if (!known) { ctx.strokeStyle = 'rgba(255,255,255,.2)'; ctx.lineWidth = 1; ctx.stroke(); }
+      var px = x + bw + leader;
+      var py = y - plateH - 6;
+      var flip = px + tw + padX * 2 > w - 6;       // not enough room on the right
+      if (flip) px = x - leader - (tw + padX * 2);
+      if (px < 6) { px = U.clamp(x, 6, w - tw - padX * 2 - 6); }
+      if (py < 6) py = y + 6;
 
-      ctx.fillStyle = known ? '#08130c' : '#fff';
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = named ? 0.8 : 0.4;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(flip ? x : x + bw, y);
+      ctx.lineTo(flip ? px + tw + padX * 2 : px, py + plateH / 2);
+      ctx.stroke();
+
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(5,6,7,.82)';
+      ctx.fillRect(px, py, tw + padX * 2, plateH);
+      ctx.fillStyle = col;
+      ctx.fillRect(px, py, 2, plateH);             // accent spine
+      ctx.strokeStyle = 'rgba(230,236,241,.18)';
+      ctx.strokeRect(px + 0.5, py + 0.5, tw + padX * 2 - 1, plateH - 1);
+
+      ctx.fillStyle = named ? '#e6ecf1' : 'rgba(230,236,241,.66)';
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, cx + pad, cy + chipH / 2 + 0.5);
+      ctx.fillText(text, px + padX, py + plateH / 2 + 0.5);
       ctx.restore();
     });
 
     needsDraw = false;
   }
 
-  /* ---------- detail sheet ---------- */
+  /* ---------- dossier ---------- */
 
-  function showSheet(html) {
-    sheetBody.innerHTML = html;
-    sheet.hidden = false;
-  }
+  function showSheet(html) { sheetBody.innerHTML = html; sheet.hidden = false; }
   function closeSheet() { sheet.hidden = true; openTrackId = null; }
 
   function confBar(c) {
     var pct = Math.round(U.clamp(c, 0, 1) * 100);
-    return '<div class="sh-conf"><span>Confidence</span><span class="bar"><i style="width:' + pct + '%"></i></span><span>' + pct + '%</span></div>';
+    return '<div class="d-conf"><span>CONFIDENCE</span><span class="bar"><i style="width:' + pct + '%"></i></span><span>' + pct + '%</span></div>';
   }
 
-  function facts(pairs) {
+  function grid(pairs) {
     var live = pairs.filter(function (p) { return p[1]; });
     if (!live.length) return '';
-    return '<dl class="sh-facts">' + live.map(function (p) {
-      return '<div class="fact"><dt>' + U.esc(p[0]) + '</dt><dd>' + U.esc(p[1]) + '</dd></div>';
+    return '<dl class="d-grid">' + live.map(function (p) {
+      return '<div><dt>' + U.esc(p[0]) + '</dt><dd>' + U.esc(p[1]) + '</dd></div>';
     }).join('') + '</dl>';
   }
 
-  function linkBtn(href, label, solid) {
+  function linkBtn(href, label, acc) {
     if (!href) return '';
-    return '<a class="ghost' + (solid ? ' solid' : '') + '" target="_blank" rel="noopener noreferrer" href="' +
+    return '<a class="obtn' + (acc ? ' acc' : '') + '" target="_blank" rel="noopener noreferrer" href="' +
       U.esc(href) + '">' + U.esc(label) +
-      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M8 7h9v9"/></svg></a>';
+      '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M8 7h9v9"/></svg></a>';
   }
 
   function openPending(msg) {
-    showSheet('<div class="sh-kicker">Identifying</div>' +
-      '<h3 class="sh-title">' + U.esc(msg) + '</h3>' +
-      '<div class="skel" style="width:88%"></div><div class="skel" style="width:72%"></div><div class="skel" style="width:80%"></div>');
+    showSheet('<div class="d-kicker">ANALYSING</div>' +
+      '<h3 class="d-title">' + U.esc(msg) + '</h3>' +
+      '<div class="skel" style="width:86%"></div><div class="skel" style="width:70%"></div><div class="skel" style="width:78%"></div>');
   }
 
   function openError(why) {
-    var human = /no-endpoint/.test(why) ? 'No analysis endpoint is set. Open Settings and paste your Worker URL.'
-              : /quota|429/.test(why) ? 'The free daily allowance is used up. It resets at midnight UTC.'
-              : /Failed to fetch|NetworkError/i.test(why) ? 'Could not reach the analysis endpoint. Check the URL and your connection.'
-              : 'That could not be identified. Try getting closer, or steadier light.';
-    showSheet('<div class="sh-kicker">No result</div><h3 class="sh-title">Nothing identified</h3>' +
-      '<p class="sh-body">' + U.esc(human) + '</p>' +
-      '<div class="sh-actions"><button class="ghost" onclick="UI.close()">Close</button></div>');
+    var human = /no-endpoint/.test(why)
+        ? 'No analysis endpoint is set, so only on-device identification is available. That works with no key and no limit, but it cannot name a specific make and model. Add a Worker in CONFIG for that.'
+      : /quota|429/.test(why) ? 'The optional cloud tier is rate limited right now. On-device labelling is unaffected and keeps working.'
+      : /Failed to fetch|NetworkError/i.test(why) ? 'Could not reach the analysis endpoint. On-device labelling still works.'
+      : 'Nothing could be identified there. Try getting closer, or steadier light.';
+    showSheet('<div class="d-kicker">NO RESULT</div><h3 class="d-title">Not identified</h3>' +
+      '<p class="d-body">' + U.esc(human) + '</p>' +
+      '<div class="d-actions"><button class="obtn" onclick="UI.close()">CLOSE</button></div>');
   }
 
-  function needEndpoint() {
-    openError('no-endpoint');
-  }
+  function needEndpoint() { openError('no-endpoint'); }
 
-  /* The honest explanation when the person gate refused a name.
-     This is the Mozart case: we say what happened rather than guessing. */
+  /* The honest explanation when the person gate refused a name. */
   function gatedPerson(rec) {
     var why;
     if (rec.gated === 'deceased') {
@@ -171,63 +202,73 @@ var UI = (function () {
       var yr = rec.diedYear ? ' (died ' + U.esc(String(rec.diedYear)) + ')' : '';
       why = 'The closest match online was <b>' + who + '</b>' + yr +
             ', who is no longer alive &mdash; so this is a resemblance, not that person. ' +
-            'Sightline only ever labels living people, which is what stops a lookalike being named.';
+            'Sightline only labels living people, which is what stops a lookalike being named.';
     } else if (rec.gated === 'no-article' || rec.gated === 'not-a-person') {
       why = 'No strong match to a public figure with a Wikipedia page, so no name is shown.';
     } else if (rec.gated === 'faces-off') {
-      why = 'Naming people is switched off in Settings.';
+      why = 'Naming people is switched off in CONFIG.';
     } else {
       why = 'The match was not confident enough to put a name on screen.';
     }
-    return '<div class="sh-kicker">Person</div><h3 class="sh-title">Not identified</h3>' +
-      '<p class="sh-body">' + why + '</p>' +
-      '<p class="sh-note">Sightline never attempts to identify private individuals. It only matches against notable people who already have a public encyclopedia entry.</p>';
+    return '<div class="d-kicker">PERSON</div><h3 class="d-title">Not identified</h3>' +
+      '<p class="d-body">' + why + '</p>' +
+      '<p class="d-note">Private individuals are never identified. Only notable people who already have a public encyclopedia entry can ever be matched.</p>';
   }
 
   function record(rec) {
-    if (!rec) return '<p class="sh-body">Nothing came back.</p>';
-
+    if (!rec) return '<p class="d-body">Nothing came back.</p>';
     if (rec.kind === 'person' && (!rec.name || rec.gated)) return gatedPerson(rec);
+
+    var kicker = (IDENT.KICKER[rec.kind] || 'Object').toUpperCase();
     if (!rec.name) {
-      return '<div class="sh-kicker">' + U.esc(IDENT.KICKER[rec.kind] || 'Object') + '</div>' +
-        '<h3 class="sh-title">Not identified</h3>' +
-        '<p class="sh-body">The match was below your confidence threshold. You can lower it in Settings.</p>';
+      return '<div class="d-kicker">' + U.esc(kicker) + '</div>' +
+        '<h3 class="d-title">Not identified</h3>' +
+        '<p class="d-body">The match was below your confidence floor. Lower it in CONFIG to see weaker guesses.</p>';
     }
 
     var w = rec.wiki || {};
-    var html = '<div class="sh-kicker">' + U.esc(IDENT.KICKER[rec.kind] || 'Object') + '</div>';
-    html += '<h3 class="sh-title">' + U.esc(rec.name) + '</h3>';
-    if (rec.scientific) html += '<p class="sh-sci">' + U.esc(rec.scientific) + '</p>';
+    var html = '<div class="d-kicker">' + U.esc(kicker) +
+               (rec.source === 'on-device' ? ' / ON-DEVICE' : rec.source === 'workers-ai' ? ' / WORKERS AI' : '') +
+               '</div>';
+    html += '<h3 class="d-title">' + U.esc(rec.name) + '</h3>';
+    if (rec.scientific) html += '<p class="d-sci">' + U.esc(rec.scientific) + '</p>';
     html += confBar(rec.confidence);
-    if (w.thumb) html += '<img class="sh-hero" src="' + U.esc(w.thumb) + '" alt="" loading="lazy">';
+    if (w.thumb) html += '<div class="d-hero"><img src="' + U.esc(w.thumb) + '" alt="" loading="lazy"></div>';
+
+    /* Model-supplied specs come first for objects - that is the whole point
+       of pointing a camera at a 3D printer or a robot. */
+    if (rec.specs && rec.specs.length) {
+      html += grid(rec.specs.map(function (s) { return [s.k, s.v]; }));
+    }
 
     if (rec.kind === 'person') {
-      html += facts([
+      html += grid([
         ['Known for', (w.occupations || []).slice(0, 3).join(', ')],
         ['Born', w.bornYear ? String(w.bornYear) : '']
       ]);
     } else if (rec.kind === 'plant' || rec.kind === 'animal' || rec.kind === 'insect') {
-      html += facts([['Rank', w.rank], ['Conservation', w.conservation]]);
-    } else {
-      html += facts([['Made by', w.maker], ['Since', w.from]]);
+      html += grid([['Rank', w.rank], ['Status', w.conservation]]);
+    } else if (!rec.specs || !rec.specs.length) {
+      html += grid([['Made by', w.maker], ['Since', w.from]]);
     }
 
     var body = w.extract || rec.note || '';
-    if (body) html += '<p class="sh-body">' + U.esc(body.slice(0, 520)) + (body.length > 520 ? '…' : '') + '</p>';
+    if (body) html += '<p class="d-body">' + U.esc(body.slice(0, 520)) + (body.length > 520 ? '…' : '') + '</p>';
 
     if (rec.source === 'on-device') {
-      html += '<p class="sh-note" style="margin-top:0;border:0;padding:0">Recognised on your device, offline. ' +
-        'For a more exact identification, tap it again with an analysis endpoint set.</p>';
+      html += '<p class="d-note flat">Recognised entirely on your device &mdash; no network, no account, no limit. ' +
+              'An analysis endpoint can name an exact make and model, but is never required.</p>';
     }
-    html += '<div class="sh-actions">';
-    html += linkBtn(w.url, 'Wikipedia', true);
-    html += linkBtn(w.website, 'Official site');
+
+    html += '<div class="d-actions">';
+    html += linkBtn(w.url, 'WIKIPEDIA', true);
+    html += linkBtn(w.website, 'OFFICIAL SITE');
     html += '</div>';
 
     if (rec.alt && rec.alt.length) {
-      html += '<p class="sh-note">Other possibilities: ' + U.esc(rec.alt.slice(0, 3).join(', ')) + '</p>';
+      html += '<p class="d-note">Also possible: ' + U.esc(rec.alt.slice(0, 3).join(' / ')) + '</p>';
     }
-    if (!w.url) html += '<p class="sh-note">No encyclopedia page was found for this one, so the description comes from the model and may be less reliable.</p>';
+    if (!w.url) html += '<p class="d-note">No encyclopedia page matched this one, so the description comes from the model and is less reliable.</p>';
     return html;
   }
 
@@ -237,8 +278,8 @@ var UI = (function () {
     openTrackId = t.id;
     if (t.state === 'done' && t.data) { showSheet(record(t.data)); return; }
 
-    /* An on-device label is a real answer, not a placeholder: look its page
-       up straight from Wikipedia, which needs no key and no endpoint. */
+    /* An on-device label is a real answer: resolve its page straight from
+       Wikipedia, which needs no key and no endpoint. */
     if (t.local && t.state !== 'queued') {
       openPending(t.local.name);
       IDENT.fromLocal(t).then(function (rec) {
@@ -249,21 +290,20 @@ var UI = (function () {
 
     if (t.state === 'queued') { openPending('Identifying ' + U.titleCase(t.cls) + '…'); return; }
     if (t.state === 'skipped' && t.reason === 'faces-off') { showSheet(gatedPerson({ kind: 'person', gated: 'faces-off' })); return; }
-    if (t.state === 'failed') { openError(t.reason || ''); return; }
-    /* Not yet queued: ask for it now rather than making the user wait. */
+    if (t.state === 'failed' && !t.local) { openError(t.reason || ''); return; }
+
     t.state = 'new';
     IDENT.forTrack(t);
     openPending('Identifying ' + U.titleCase(t.cls) + '…');
   }
 
-  /* If the sheet is showing a track that has since been identified, refresh it. */
   function refreshOpen() {
     if (openTrackId == null || sheet.hidden) return;
     var t = TRACK.byId(openTrackId);
     if (t && t.state === 'done' && t.data) showSheet(record(t.data));
   }
 
-  /* ---------- live scene label ---------- */
+  /* ---------- live scene readout ---------- */
 
   var sceneCur = null;
 
@@ -279,18 +319,19 @@ var UI = (function () {
     }
     sceneCur = r;
     ret.classList.add('hot');
-    /* Guarded writes: this runs several times a second and a blind write
-       repaints the chip every pass. */
-    var n = U.$('#sceneName');
-    if (n.textContent !== r.name) n.textContent = r.name;
-    var m = Math.round(r.score * 100) + '%  ' + r.ms + 'ms';
-    var mt = U.$('#sceneMeta');
-    if (mt.textContent !== m) mt.textContent = m;
+
+    var pct = Math.round(r.score * 100);
+    tele('#sceneName', r.name);
+    tele('#scenePct', pct + '%');
+    tele('#sceneKind', (r.kind || 'TARGET').toUpperCase());
+    var bar = U.$('#sceneBar');
+    var wpc = pct + '%';
+    if (bar && bar.style.width !== wpc) bar.style.width = wpc;
     if (chip.hidden) chip.hidden = false;
   }
 
-  /* Tapping the live label resolves its encyclopedia page - keyless, so this
-     works with no endpoint configured at all. */
+  /* Tapping the live label resolves its page - keyless, so this path works
+     with nothing configured at all. */
   function openScene() {
     if (!sceneCur) return;
     var name = sceneCur.name, score = sceneCur.score, alt = sceneCur.alt || [];
@@ -323,7 +364,7 @@ var UI = (function () {
       main.textContent = out;
     }
     src.textContent = (showBoth && last && last.out && last.out !== last.src) ? last.src : '';
-    meta.textContent = last && last.pending ? 'translating…' : (last && last.note ? last.note : '');
+    meta.textContent = last && last.pending ? 'TRANSLATING' : (last && last.note ? last.note : '');
     bar.hidden = false;
   }
 
@@ -331,8 +372,8 @@ var UI = (function () {
     var btn = U.$('#btnCaptions');
     btn.setAttribute('aria-pressed', s === 'listening' || s === 'paused' ? 'true' : 'false');
     var meta = U.$('#capMeta');
-    if (s === 'denied') meta.textContent = 'microphone blocked';
-    else if (s === 'error') meta.textContent = 'caption error';
+    if (s === 'denied') meta.textContent = 'MICROPHONE BLOCKED';
+    else if (s === 'error') meta.textContent = 'CAPTION ERROR';
     if (s === 'off') U.$('#captionBar').hidden = true;
   }
 
@@ -353,10 +394,10 @@ var UI = (function () {
     from.value = SET.get('capFrom');
     to.value = SET.get('capTo');
     U.$('#optCapBoth').checked = !!SET.get('capBoth');
-    U.$('#buildLine').textContent = 'Sightline - local detection runs in this browser; only cropped regions are ever sent for identification.';
+    U.$('#buildLine').textContent = 'ON-DEVICE TIER: UNLIMITED, NO KEY, WORKS OFFLINE';
 
     if (!CAPS.supported()) {
-      U.$('#btnCaptions').style.opacity = '.45';
+      U.$('#btnCaptions').style.opacity = '.4';
       U.$('#btnCaptions').title = 'This browser has no speech recognition';
     }
   }
@@ -368,14 +409,14 @@ var UI = (function () {
 
     U.$('#apiBase').addEventListener('change', function () {
       SET.set('apiBase', this.value.trim());
-      U.$('#apiStatus').textContent = '';
-      U.$('#apiStatus').className = 'status';
+      var s = U.$('#apiStatus');
+      s.textContent = ''; s.className = 'status';
     });
 
     U.$('#btnTest').addEventListener('click', function () {
       var s = U.$('#apiStatus');
-      if (!SET.hasApi()) { s.className = 'status bad'; s.textContent = 'Enter a full https:// URL first.'; return; }
-      s.className = 'status wait'; s.textContent = 'Checking…';
+      if (!SET.hasApi()) { s.className = 'status bad'; s.textContent = 'ENTER A FULL https:// URL FIRST'; return; }
+      s.className = 'status wait'; s.textContent = 'CHECKING…';
       U.fetchT(SET.api('/v1/health'), {}, 9000)
         .then(function (r) { return r.json(); })
         .then(function (j) {
@@ -383,11 +424,13 @@ var UI = (function () {
           var f = j.features || {};
           var on = Object.keys(f).filter(function (k) { return f[k]; });
           s.className = 'status ok';
-          s.textContent = 'Connected. Available: ' + (on.length ? on.join(', ') : 'nothing configured yet');
+          s.textContent = 'CONNECTED / ' + (j.engine ? String(j.engine).toUpperCase() + ' / ' : '') +
+                          (on.length ? on.join(' ').toUpperCase() : 'NOTHING ENABLED');
+          tele('#tEng', j.engine ? String(j.engine).toUpperCase().slice(0, 10) : 'CLOUD');
         })
         .catch(function () {
           s.className = 'status bad';
-          s.textContent = 'No response. Check the URL is your deployed Worker.';
+          s.textContent = 'NO RESPONSE / CHECK THE URL';
         });
     });
 
@@ -401,11 +444,12 @@ var UI = (function () {
     U.$('#optCapTo').addEventListener('change', function () { SET.set('capTo', this.value); });
     U.$('#optCapBoth').addEventListener('change', function () { SET.set('capBoth', this.checked); });
 
-    U.$$('.dockbtn[data-mode]').forEach(function (b) {
+    U.$$('.mbtn[data-mode]').forEach(function (b) {
       b.addEventListener('click', function () {
-        U.$$('.dockbtn[data-mode]').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
+        U.$$('.mbtn[data-mode]').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
         b.setAttribute('aria-pressed', 'true');
         SET.set('mode', b.dataset.mode);
+        tele('#tMode', b.textContent.trim());
         TRACK.reset();
         dirty();
       });
@@ -422,10 +466,9 @@ var UI = (function () {
       CAM.flip().then(function () { SET.set('facing', CAM.current()); TRACK.reset(); dirty(); });
     });
 
-    /* Tap: a track if one is under the finger, otherwise identify that spot. */
     U.$('#stage').addEventListener('click', function (ev) {
       if (!CAM.live()) return;
-      if (ev.target.closest('#dock,#topbar,#sheet,#settings,#gate,#captionBar,#sceneChip')) return;
+      if (ev.target.closest('#rail,#hudTL,#hudTR,#sheet,#settings,#gate,#captionBar,#sceneChip')) return;
       var r = cv.getBoundingClientRect();
       var x = ev.clientX - r.left, y = ev.clientY - r.top;
       var t = TRACK.hit(x, y);
@@ -433,7 +476,7 @@ var UI = (function () {
     });
   }
 
-  return { init: init, draw: draw, dirty: dirty, resize: resize,
+  return { init: init, draw: draw, dirty: dirty, resize: resize, tele: tele,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
            refreshOpen: refreshOpen, sceneLabel: sceneLabel, openScene: openScene,
