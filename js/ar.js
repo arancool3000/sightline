@@ -168,8 +168,20 @@ var AR = (function () {
        these". So it earns a card, in its own quieter style. */
     if (t.torn && t.among && t.among.length > 1 && EVIDENCE.adds(t.among[0], t.cls)) return true;
     if (!t.label) return false;
-    /* An answer still being weighed is not an answer. */
-    if (t.unsure) return false;
+    /* AN ANSWER STILL BEING WEIGHED USED TO BE DROPPED OUTRIGHT.
+
+       "underconfident, under labelled."
+
+       That line was it. Everything the gate had not finished deciding
+       showed nothing at all, so the screen went quiet rather than saying
+       what it thought - and a reader cannot tell "I do not know" from "I
+       am still looking" from "this is broken". Silence is only the right
+       answer when there is no answer.
+
+       It is shown now, hedged: the name with a question mark, in the
+       unsettled style, so it reads as a guess and not as a fact. The
+       protection against the old fault is not withholding it - it is
+       never presenting it as certain. */
     if (!EVIDENCE.adds(t.label, t.cls)) return false;
     /* A guess about a square of the scene is never specific enough to
        deserve words on screen. */
@@ -203,7 +215,8 @@ var AR = (function () {
        detector gave, not a state machine. "SCANNING" and a percentage told
        the reader about our process; the noun tells them about the world. */
     var torn = !!(t.torn && t.among && t.among.length > 1);
-    var title = torn ? ('A cross of ' + sentence(t.among[0]) + '?') : sentence(t.label);
+    var title = torn ? ('A cross of ' + sentence(t.among[0]) + '?')
+              : (t.unsure ? (sentence(t.label) + '?') : sentence(t.label));
     /* What the second line says is a claim about how much to trust the
        first one. A confirmed identification gets its detail; a guess from a
        crop of the scene says so, with the number. */
@@ -225,7 +238,8 @@ var AR = (function () {
       return position(el, screen, layer);
     }
 
-    var sub = (t.species && t.species.scientific) ||
+    var sub = t.unsure ? 'still looking'
+            : (t.species && t.species.scientific) ||
               (t.data && t.data.scientific) || specLine(t.data) ||
               (named ? sentence(kind) : '');
     var dist = distance(t.cls, screen[2], screen[3], frameW);

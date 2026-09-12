@@ -813,7 +813,18 @@ var UI = (function () {
      it only gets to put a name on the screen when it is emphatic - and
      when it is not, the readout offers to ASK something that can answer,
      which is worth more than a wrong noun. */
-  var SCENE_MEAN = 0.62, SCENE_MARGIN = 0.34;
+  /* WHERE THE MIDDLE READOUT STOPS BEING SURE.
+
+     These were 0.62 and 0.34, which mobilenet clears only on a textbook
+     photograph - so in an ordinary room almost everything came back "Tap
+     to identify" and the app looked like it could not see. That was the
+     "underconfident, under labelled" half that lived here.
+
+     Lower, and the answer below the line is HEDGED rather than withheld:
+     the name with a question mark, and an invitation to ask something
+     that can do better. Saying "sewing machine?" is worth more than
+     saying nothing, and it is still not a claim. */
+  var SCENE_MEAN = 0.46, SCENE_MARGIN = 0.18;
 
   function sceneLabel(r) {
     var chip = U.$('#sceneChip');
@@ -833,10 +844,14 @@ var UI = (function () {
 
     var strong = r.score >= SCENE_MEAN && (r.margin === undefined || r.margin >= SCENE_MARGIN);
     if (!strong) {
-      /* Not a name. An offer. */
-      sceneCur = { name: '', kind: r.kind, ask: true, box: r.box };
-      tele('#sceneName', 'Tap to identify');
-      tele('#sceneKind', 'not sure');
+      /* A guess, said as a guess, with the door to a better answer still
+         open. With no guess worth repeating at all it is only the door. */
+      var hedge = r.name && EVIDENCE.adds(r.name, r.cls || '');
+      sceneCur = { name: hedge ? r.name : '', kind: r.kind, ask: true, box: r.box,
+                   score: r.score, margin: r.margin, unsure: true };
+      tele('#sceneName', hedge ? (r.name.charAt(0).toUpperCase() + r.name.slice(1) + '?')
+                               : 'Tap to identify');
+      tele('#sceneKind', hedge ? 'not sure - tap to ask' : 'not sure');
       if (chip.hidden) chip.hidden = false;
       return;
     }

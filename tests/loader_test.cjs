@@ -108,8 +108,14 @@ const server=http.createServer((q,res)=>{
   });
   t('a reading it is not sure of offers to identify, it does not go blank',
     weak.shown === true && weak.name.length > 0, JSON.stringify(weak));
-  t('and it does not state the weak guess as a fact',
-    weak.name.toLowerCase().indexOf('squash') < 0, JSON.stringify(weak));
+  /* NOT "the guess is hidden" - that was the over-correction the owner
+     called "underconfident, under labelled". The guess may be shown; what
+     it may not do is sound certain. So it must carry the mark, or the
+     second line must say it is not sure. A build that writes the bare noun
+     fails this; a build that says nothing fails the line above. */
+  t('and a weak guess is marked as one rather than stated as a fact',
+    /\?/.test(weak.name) || /not sure|possibly|still looking/i.test(weak.kind),
+    JSON.stringify(weak));
   /* CONTROLS - these pass either way and stop the fix over-reaching. */
   /* The service-worker self-heal must refresh an UPDATED build, never a first
      visit. Reloading every new visitor once is a real cost and it destroyed

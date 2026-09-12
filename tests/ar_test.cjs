@@ -143,6 +143,62 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
   ok('and the others are named', !!r.sub && /poodle/i.test(r.sub) && /maltese/i.test(r.sub), r.sub);
   ok('drawn in the unsettled style', !!r.cls && /\btorn\b/.test(r.cls), r.cls);
 
+  /* ---- SILENCE IS NOT MODESTY ----
+
+     "underconfident, under labelled."
+
+     An answer the gate had not finished weighing was dropped outright, so
+     the screen went quiet - and a reader cannot tell "I do not know" from
+     "I am still looking" from "this thing is broken". It is said now, with
+     the mark on it. The two assertions below pull in opposite directions
+     on purpose: one fails a build that goes silent, the other fails a
+     build that sounds certain. Neither passes alone. */
+  r = await page.evaluate(() => {
+    TRACK.reset();
+    TRACK.update([{ cls: 'dog', box: [60, 300, 160, 200], score: 0.9 }], performance.now());
+    const t = TRACK.all()[0];
+    t.unsure = true; t.label = 'Golden Retriever'; t.tier = 'local';
+    UI.draw(TRACK.all());
+    const card = document.querySelector('#arLayer .ar-card');
+    return { n: document.querySelectorAll('#arLayer .ar-card').length,
+             title: card && card.querySelector('.ar-title').textContent,
+             sub: card && card.querySelector('.ar-sub').textContent,
+             cls: card && card.className };
+  });
+  ok('an answer still being weighed is shown, not swallowed', r.n === 1, r.n);
+  ok('and it carries the mark instead of sounding certain',
+     !!r.title && /\?\s*$/.test(r.title), r.title);
+  ok('drawn in the unsettled style, not as a settled fact',
+     !!r.cls && /\bprov\b/.test(r.cls), r.cls);
+
+  /* CONTROL: hedging is not a licence to say the obvious. The whole reason
+     the gate exists is that "backpack" over a backpack is not an answer,
+     and a question mark does not make it one. */
+  r = await page.evaluate(() => {
+    TRACK.reset();
+    TRACK.update([{ cls: 'backpack', box: [60, 300, 140, 180], score: 0.8 }], performance.now());
+    const t = TRACK.all()[0];
+    t.unsure = true; t.label = 'Backpack'; t.tier = 'local';
+    UI.draw(TRACK.all());
+    return document.querySelectorAll('#arLayer .ar-card').length;
+  });
+  ok('CONTROL: an unsure answer that only repeats the box word still says nothing', r === 0, r);
+
+  /* CONTROL: a settled answer must NOT pick up the mark - otherwise
+     everything becomes a maybe and the mark stops meaning anything. */
+  r = await page.evaluate(() => {
+    TRACK.reset();
+    TRACK.update([{ cls: 'dog', box: [60, 300, 160, 200], score: 0.9 }], performance.now());
+    const t = TRACK.all()[0];
+    t.unsure = false; t.label = 'Golden Retriever'; t.tier = 'local';
+    UI.draw(TRACK.all());
+    const card = document.querySelector('#arLayer .ar-card');
+    return { title: card && card.querySelector('.ar-title').textContent,
+             cls: card && card.className };
+  });
+  ok('CONTROL: a settled answer is stated plainly, with no mark',
+     !!r.title && !/\?/.test(r.title), r.title);
+
   /* CONTROL: torn about nothing is still nothing. */
   r = await page.evaluate(() => {
     TRACK.reset();
