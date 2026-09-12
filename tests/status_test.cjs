@@ -24,14 +24,19 @@ const server=http.createServer((q,res)=>{
 
   /* ---- CASE 1: the weights cannot be fetched ---- */
   {
-    const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
+    /* serviceWorkers:'block' matters: the worker caches the weights and will
+       serve them straight from cache, bypassing page.route entirely. Without
+       this the case tested a cache hit rather than a failure. */
+    const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896},
+                                        serviceWorkers:'block'});
     const page=await ctx.newPage();
     await page.route('**/vendor/models/**', r=>r.abort());        // local weights blocked
     await page.route('**storage.googleapis.com**', r=>r.abort()); // and every remote source
     await page.route('**tfhub.dev**', r=>r.abort());
     await page.goto('http://localhost:8751/',{waitUntil:'domcontentloaded'});
     await page.click('#btnStart');
-    await page.waitForTimeout(9000);
+    /* Long enough for all four attempts to be exhausted. */
+    await page.waitForTimeout(22000);
 
     const st = await page.evaluate(()=>{
       const s=document.querySelector('#statusStrip');
@@ -39,12 +44,16 @@ const server=http.createServer((q,res)=>{
                cls:s.className, diag: window.SL_DIAG ? SL_DIAG() : null };
     });
     t('a failed recogniser shows the status strip', st.hidden === false, 'hidden=' + st.hidden);
-    t('the strip states it FAILED', /FAILED|ERROR/.test(st.text), st.text.slice(0,90));
+    t('the strip states it FAILED or is RETRYING', /FAILED|ERROR|RETRYING/.test(st.text), st.text.slice(0,90));
     t('the strip carries a reason, not just a label', st.text.length > 24, st.text.length + ' chars');
     t('it is styled as bad, not as normal', /bad/.test(st.cls), st.cls);
-    t('it points at the recovery action', /RELOAD MODELS|CFG/.test(st.text), st.text.slice(0,90));
+    t('it names the fault rather than sounding hopeful',
+      !/FIRST RUN DOWNLOADS/.test(st.text) && st.text.length > 24, st.text.slice(0,90));
     t('diagnostics agree the classifier failed',
       st.diag && /failed/.test(st.diag.classifier), st.diag && st.diag.classifier);
+    t('it retried before giving up, and the trace shows it',
+      (st.diag.trace || []).filter(x=>/retry/.test(x)).length >= 2,
+      (st.diag.trace || []).filter(x=>/retry/.test(x)).join(' | ') || 'no retries');
     await ctx.close();
   }
 
@@ -75,6 +84,37 @@ const server=http.createServer((q,res)=>{
     t('it used the vendored weights to do it', /local/.test(st.model || ''), st.model);
     t('and it never reports "not started"', !/not started/.test(st.detail || ''), st.detail || '(none)');
     t('no warning strip is shown, because nothing is wrong', st.strip === true, 'hidden=' + st.strip);
+    await ctx.close();
+  }
+
+  /* ---- CASE 1c: THE REPORTED FAILURE, "load() was never called".
+     Whatever stopped the call - an exception earlier in boot, a path that
+     returned first - the recogniser must not depend on another module
+     remembering to start it. UI.init is sabotaged so boot() throws before it
+     ever reaches loadModel(), and the recogniser must come up anyway. ---- */
+  {
+    const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
+    const page=await ctx.newPage();
+    await page.addInitScript(() => {
+      window.__sabotage = true;
+      document.addEventListener('DOMContentLoaded', () => {
+        if (window.UI && UI.init) {
+          const real = UI.init;
+          UI.init = function () { real.apply(this, arguments); throw new Error('sabotaged boot'); };
+        }
+      }, true);
+    });
+    await page.goto('http://localhost:8751/',{waitUntil:'domcontentloaded'});
+    const ok = await page.waitForFunction(()=>window.LOCAL&&LOCAL.ready(),null,{timeout:120000})
+      .then(()=>true).catch(()=>false);
+    const st = await page.evaluate(()=>({
+      ready: LOCAL.ready(),
+      detail: LOCAL.state().detail,
+      trace: LOCAL.trace ? LOCAL.trace().slice(0,3) : []
+    }));
+    t('the recogniser starts even when boot() never calls it', ok && st.ready === true, st.detail || 'ready');
+    t('and it never reports "was never called"', !/never called/.test(st.detail||''), st.detail || '(none)');
+    t('the trace records that load ran', st.trace.some(x=>/load\(\) called/.test(x)), JSON.stringify(st.trace));
     await ctx.close();
   }
 

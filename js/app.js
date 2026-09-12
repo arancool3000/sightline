@@ -98,7 +98,8 @@
       classifier: LOCAL.ready() ? 'ok' : ('failed: ' + (LOCAL.lastError() || 'not attempted')),
       libs: { tf: !!window.tf, cocoSsd: !!window.cocoSsd, mobilenet: !!window.mobilenet },
       backend: LOCAL.timing().backend,
-      secure: window.isSecureContext
+      secure: window.isSecureContext,
+      trace: LOCAL.trace ? LOCAL.trace() : []
     };
   };
 

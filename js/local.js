@@ -19,7 +19,7 @@ var LOCAL = (function () {
   /* fails counts CONSECUTIVE failures: any success resets it. Counting
      cumulatively left the warning stuck on after a couple of benign early
      misses, which is worse than not warning at all. */
-  var net = null, loading = null, backend = '', variant = 'v2', lastErr = '', fails = 0, lastOk = 0;
+  var net = null, loading = null, backend = '', variant = 'v2', lastErr = '', fails = 0, lastOk = 0, tries = 0, exhausted = false;
   var pad = document.createElement('canvas');
   pad.width = pad.height = 224;
   var pctx = pad.getContext('2d', { willReadFrequently: true });
@@ -70,7 +70,14 @@ var LOCAL = (function () {
     return tryNext(0).then(function (b) { backend = b || (tf.getBackend && tf.getBackend()) || ''; return backend; });
   }
 
+  var trace = [];
+  function mark(m) {
+    trace.push(Math.round(performance.now()) + 'ms ' + m);
+    if (trace.length > 24) trace.shift();
+  }
+
   function load() {
+    mark('load() called');
     if (net) return Promise.resolve(net);
     if (loading) return loading;
 
@@ -125,11 +132,12 @@ var LOCAL = (function () {
         pctx.fillRect(0, 0, 224, 224);
         return net.classify(pad, 1).catch(function () { return null; });
       })
-      .then(function () { lastErr = ''; return net; })
+      .then(function () { lastErr = ''; mark('ready ' + variant); return net; })
       .catch(function (e) {
         net = null;
         lastErr = String(e && e.message || e).slice(0, 140);
         loading = null;              // allow a retry
+        mark('failed: ' + lastErr.slice(0, 60));
         return null;
       });
 
@@ -473,6 +481,12 @@ var LOCAL = (function () {
   /* One place the UI can ask "what is actually going on", so a failure is
      never rendered as an empty screen. */
   function state() {
+    /* A retry after a failure must not be reported as a first load. Showing
+       "LOADING… FIRST RUN DOWNLOADS 6MB" while something is actually failing
+       over and over is a hopeful message covering a real fault. */
+    if (!net && (tries > 1 || exhausted) && lastErr) {
+      return { code: exhausted ? 'failed' : 'retrying', detail: lastErr, attempt: tries };
+    }
     if (net) {
       /* A recent success outranks any earlier failures. Without this an
          engine that stumbled once while the video was warming up reported
@@ -498,7 +512,36 @@ var LOCAL = (function () {
 
   function setBudget(n) { perFrame = U.clamp(n | 0, 1, 8); }
 
-  return { load: load, ready: ready, lastError: lastError, state: state, ok: function(){ return lastOk; }, label: label, sweep: sweep, age: age,
+  /* SELF-STARTING, and retrying.
+
+     "load() was never called" was a real report. Whatever stopped the call -
+     an exception earlier in boot, a path that returned first - the recogniser
+     should not depend on another module remembering to start it. It now
+     starts as soon as its own script has run, and retries with backoff if it
+     fails, so a single transient error is not permanent. Explicit calls from
+     boot() and start() are harmless: load() returns the in-flight promise. */
+  function kick(attempt) {
+    attempt = attempt || 1;
+    tries = attempt;
+    load().then(function (m) {
+      if (m) { tries = 0; return; }
+      if (attempt >= 4) { exhausted = true; return; }
+      var wait = attempt * 2500;
+      mark('retry ' + attempt + ' in ' + wait + 'ms');
+      setTimeout(function () { kick(attempt + 1); }, wait);
+    });
+  }
+
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { kick(1); });
+    } else {
+      setTimeout(function () { kick(1); }, 0);
+    }
+  }
+
+  return { load: load, ready: ready, lastError: lastError, state: state, ok: function(){ return lastOk; },
+           trace: function () { return trace.slice(); }, label: label, sweep: sweep, age: age,
            scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
            gridStep: gridStep, gridTargets: gridTargets,
            timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget };

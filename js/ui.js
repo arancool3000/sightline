@@ -211,6 +211,10 @@ var UI = (function () {
     var st = LOCAL.state();
     if (st.code === 'ready') { status('', ''); return; }
     if (st.code === 'loading') { status('LOADING RECOGNISER — FIRST RUN DOWNLOADS ~6MB', 'busy'); return; }
+    if (st.code === 'retrying') {
+      status('RECOGNISER RETRYING (' + (st.attempt || 1) + '/4) — ' + (st.detail || 'unknown'), 'bad');
+      return;
+    }
     if (st.code === 'erroring') { status('RECOGNISER ERRORING — ' + (st.detail || 'unknown'), 'bad'); return; }
     status('RECOGNISER FAILED — ' + (st.detail || 'unknown') + ' — TRY CFG > RELOAD MODELS', 'bad');
   }
