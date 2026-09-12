@@ -138,6 +138,35 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   ok('and asking without one fails plainly', noKey.ok === false && /no key/.test(noKey.error), noKey);
   ok('still nothing sent anywhere', outbound.length === 0, outbound.slice(0,3));
 
+  /* ---- which keys are let through ----
+
+     "gemini keys are sometimes AQ. and not AIza so sightline declines
+      them."
+
+     The check used to demand the AIza prefix, so a real key with any other
+     prefix was refused by us before Google ever saw it. The rule now is
+     "could this be a key", not "is this the prefix I know about" - the
+     server decides whether it works. The controls are what stops that
+     widening from accepting a pasted sentence or a URL. */
+  const keys = await page.evaluate(() => ({
+    aiza:    GEM.looksLikeKey('AIzaSyD-1234567890abcdefghijklmno'),
+    aq:      GEM.looksLikeKey('AQ.Ab8RN6JxK2mPqR7tVwX9yZ1aB3cD4eF5gH6iJ7kL8mN9oP'),
+    aqShort: GEM.looksLikeKey('AQ.abcdefghijklmnopqrstuvwxyz012345'),
+    unknown: GEM.looksLikeKey('ZZ9-some_future.prefix1234567890'),
+    empty:   GEM.looksLikeKey(''),
+    tiny:    GEM.looksLikeKey('short'),
+    url:     GEM.looksLikeKey('https://example.com/keys/abcdefghijklmnop'),
+    words:   GEM.looksLikeKey('my key is AIzaSyD1234567890abcdef'),
+    padded:  GEM.looksLikeKey('  AIzaSyD-1234567890abcdefghijklmno  ')
+  }));
+  ok('a key that starts AQ. is accepted', keys.aq === true && keys.aqShort === true, keys);
+  ok('so is a prefix nobody here has heard of', keys.unknown === true, keys);
+  ok('CONTROL: an AIza key still works', keys.aiza === true, keys);
+  ok('CONTROL: nothing there is still nothing', keys.empty === false && keys.tiny === false, keys);
+  ok('CONTROL: a pasted URL is not a key', keys.url === false, keys);
+  ok('CONTROL: nor is a sentence with a key in it', keys.words === false, keys);
+  ok('and stray spaces around a good key do not refuse it', keys.padded === true, keys);
+
   ok('no page errors throughout', errs.length===0, errs);
   console.log('\n'+pass+'/'+(pass+fail)+' passed');
   await b.close();server.close();process.exit(fail?1:0);

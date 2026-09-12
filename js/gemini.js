@@ -32,7 +32,28 @@ var GEM = (function () {
   var lastError = '';
 
   function key() { return SET.get('geminiKey') || ''; }
-  function has() { return /^AIza[\w-]{20,}$/.test(key()); }
+
+  /* WHAT COUNTS AS A KEY.
+
+     "gemini keys are sometimes AQ. and not AIza so sightline declines
+      them."
+
+     It used to require the AIza prefix - a guess about Google's issuing
+     format, written into our code, and Google issues others. A guess that
+     refuses a real key is worse than no check at all: the reader has a
+     working key in their hand and an app telling them it is wrong.
+
+     The only judge of whether a key WORKS is the server. This asks the
+     smaller question - is there something here that could be one, rather
+     than a pasted URL, a sentence, or half of one. */
+  function looksLikeKey(k) {
+    k = String(k || '').trim();
+    if (k.length < 20 || k.length > 200) return false;
+    if (/\s/.test(k)) return false;                  // a sentence, or a bad paste
+    if (k.indexOf('/') >= 0 || k.indexOf('\\') >= 0) return false;   // a URL, not a key
+    return /^[A-Za-z0-9_.\-]+$/.test(k);
+  }
+  function has() { return looksLikeKey(key()); }
 
   function state() {
     return { hasKey: has(), primary: PRIMARY, fallback: FALLBACK,
@@ -143,7 +164,7 @@ var GEM = (function () {
       });
   }
 
-  return { ask: ask, test: test, state: state, has: has,
+  return { ask: ask, test: test, state: state, has: has, looksLikeKey: looksLikeKey,
            PRIMARY: PRIMARY, FALLBACK: FALLBACK,
            _turnedAway: turnedAway, _reset: function () { blockedUntil = 0; lastError = ''; } };
 })();
