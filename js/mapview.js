@@ -24,9 +24,9 @@ var MAPVIEW = (function () {
      scrolled and the last one was off the edge, which is a control you
      cannot reach. Labels belong to places anyway - a named dot with its
      name hidden is a worse dot, not a different layer. */
-  var layers = { streets: 1, buildings: 1, places: 1, route: 1 };
+  var layers = { map: 1, places: 1, route: 1 };
   var hits = [];                // what is on screen and tappable
-  var fetched = {};             // tiles asked for this session, to stay polite
+  var fetched = {};             // road tiles asked for this session, to stay polite
 
   function state() {
     return { centre: centre, mpp: mpp, follow: follow, layers: layers,
@@ -35,19 +35,89 @@ var MAPVIEW = (function () {
 
   /* ---- projection ----
 
-     Equirectangular about the centre. Over a city that is accurate to well
-     under a pixel, and it needs no tile grid because nothing here is a
-     tile. */
-  function mPerLon(lat) { return 111320 * Math.cos(lat * Math.PI / 180); }
-  var M_PER_LAT = 111320;
+     Web Mercator, because the ground is now a picture and the picture is
+     Mercator. "map is very slow loading. it should use tiles from osm."
+     Overpass is a query service - seconds a request, two at a time, never
+     meant to draw a map. OpenStreetMap's own tile servers hand out the
+     same streets pre-rendered and CDN-cached in tens of milliseconds, so
+     the map page draws those and asks Overpass for road geometry only when
+     a route needs it.
 
+     Everything drawn on top goes through the same projection as the tiles,
+     at the same fractional zoom, so a road on the picture and the route
+     drawn over it cannot disagree by a pixel. */
+  var TILE_PX = 256;
+  function zoomFor() { return Math.log(156543.03392 * Math.cos(centre.lat * Math.PI / 180) / mpp) / Math.LN2; }
+  function tileZoom() { return Math.max(3, Math.min(19, Math.round(zoomFor()))); }
+  function merc(lat, lon, z) {
+    var n = TILE_PX * Math.pow(2, z);
+    var s = Math.sin(Math.max(-85.05, Math.min(85.05, lat)) * Math.PI / 180);
+    return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n];
+  }
+  function unmerc(x, y, z) {
+    var n = TILE_PX * Math.pow(2, z);
+    return [Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI, x / n * 360 - 180];
+  }
   function toScreen(pt, w, h) {
-    return [w / 2 + (pt[1] - centre.lon) * mPerLon(centre.lat) / mpp,
-            h / 2 - (pt[0] - centre.lat) * M_PER_LAT / mpp];
+    var z = tileZoom(), sc = Math.pow(2, zoomFor() - z);
+    var c = merc(centre.lat, centre.lon, z), p = merc(pt[0], pt[1], z);
+    return [w / 2 + (p[0] - c[0]) * sc, h / 2 + (p[1] - c[1]) * sc];
   }
   function toWorld(x, y, w, h) {
-    return [centre.lat - (y - h / 2) * mpp / M_PER_LAT,
-            centre.lon + (x - w / 2) * mpp / mPerLon(centre.lat)];
+    var z = tileZoom(), sc = Math.pow(2, zoomFor() - z);
+    var c = merc(centre.lat, centre.lon, z);
+    return unmerc(c[0] + (x - w / 2) / sc, c[1] + (y - h / 2) / sc, z);
+  }
+
+  /* ---- the tiles ----
+
+     Kept in memory, a few hundred at most, oldest out first. A tile that
+     arrives asks for one redraw; a hundred arriving in the same frame ask
+     for one redraw. Cross-origin is declared so the canvas is not tainted
+     - OpenStreetMap sends the header - and the picture is inverted into
+     the HUD's dark palette on the way in. */
+  var TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  var TILE_MAX = 400;
+  var tiles = {}, tileOrder = [], tilePending = 0, tileAsked = 0, raf = 0;
+
+  function tile(z, x, y) {
+    var n = Math.pow(2, z);
+    x = ((x % n) + n) % n;
+    if (y < 0 || y >= n) return null;
+    var k = z + '/' + x + '/' + y, t = tiles[k];
+    if (t) return t;
+    var img = new Image();
+    t = { img: img, ok: false, err: false };
+    tiles[k] = t; tileOrder.push(k); tilePending++; tileAsked++;
+    img.crossOrigin = 'anonymous';
+    img.onload = function () { t.ok = true; tilePending--; redrawSoon(); };
+    img.onerror = function () { t.err = true; tilePending--; redrawSoon(); };
+    img.src = TILE_URL.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    while (tileOrder.length > TILE_MAX) delete tiles[tileOrder.shift()];
+    return t;
+  }
+  function redrawSoon() {
+    if (raf) return;
+    raf = requestAnimationFrame(function () { raf = 0; draw(); });
+  }
+  function drawTiles(w, h) {
+    var z = tileZoom(), sc = Math.pow(2, zoomFor() - z), c = merc(centre.lat, centre.lon, z);
+    var px = TILE_PX * sc;
+    var x0 = Math.floor((c[0] - (w / 2) / sc) / TILE_PX), x1 = Math.floor((c[0] + (w / 2) / sc) / TILE_PX);
+    var y0 = Math.floor((c[1] - (h / 2) / sc) / TILE_PX), y1 = Math.floor((c[1] + (h / 2) / sc) / TILE_PX);
+    var drawn = 0;
+    ctx.save();
+    try { ctx.filter = 'invert(1) hue-rotate(180deg) brightness(.82) saturate(.7)'; } catch (e) {}
+    for (var ty = y0; ty <= y1; ty++) {
+      for (var tx = x0; tx <= x1; tx++) {
+        var t = tile(z, tx, ty);
+        if (!t || !t.ok) continue;
+        var sx = w / 2 + (tx * TILE_PX - c[0]) * sc, sy = h / 2 + (ty * TILE_PX - c[1]) * sc;
+        try { ctx.drawImage(t.img, sx, sy, px + 0.6, px + 0.6); drawn++; } catch (e) {}
+      }
+    }
+    ctx.restore();
+    return drawn;
   }
 
   /* ---- the canvas ---- */
@@ -193,31 +263,24 @@ var MAPVIEW = (function () {
      tile. */
   function feed(w, h) {
     if (!centre) return;
+    /* Road GEOMETRY is only for routing now - the picture comes from the
+       tiles. So Overpass is not asked at all until there is somewhere to
+       go, and never for footprints from this page. */
+    if (!(window.MAP && MAP.dest && MAP.dest())) return;
     var acrossM = w * mpp;
     if (acrossM > 2600) return;                  // too wide to fetch politely
     var stepLat = 0.0064, stepLon = 0.0064 / Math.max(0.2, Math.cos(centre.lat * Math.PI / 180));
     var rows = acrossM > 1200 ? 1 : 0;
-    /* The same condition that decides whether a footprint is DRAWN decides
-       whether it is fetched. Downloading boxes for a layer that is off, or
-       for a zoom that will not show them, is the slowest part of the map
-       spent on nothing. Derived from the draw gate, not written twice. */
-    var wantB = wantBuildings();
     for (var dy = -rows; dy <= rows; dy++) {
       for (var dx = -rows; dx <= rows; dx++) {
         var la = centre.lat + dy * stepLat, lo = centre.lon + dx * stepLon;
         var k = Math.floor(la / stepLat) + ',' + Math.floor(lo / stepLon);
-        /* Remember WHAT was asked, not merely that something was: turning
-           the buildings layer on afterwards has to be able to ask again. */
-        var level = wantB ? 2 : 1;
-        if (fetched[k] >= level) continue;
-        fetched[k] = level;
-        ROADS.ensure(la, lo, wantB);
+        if (fetched[k]) continue;
+        fetched[k] = 1;
+        ROADS.ensure(la, lo, false);
       }
     }
   }
-
-  /* The one place that decides whether footprints are wanted. */
-  function wantBuildings() { return !!layers.buildings && mpp < 6; }
 
   /* ---- drawing ---- */
 
@@ -247,28 +310,14 @@ var MAPVIEW = (function () {
     var pad = 80;
     function visible(x, y) { return x > -pad && x < w + pad && y > -pad && y < h + pad; }
 
-    /* Buildings under the streets, as footprints. */
-    if (wantBuildings()) {
-      var blds = ROADS.buildings();
-      ctx.fillStyle = 'rgba(70,120,170,.26)';
-      ctx.strokeStyle = 'rgba(150,200,245,.22)';
-      ctx.lineWidth = 1;
-      for (var b = 0; b < blds.length; b++) {
-        var pts = blds[b].pts, any = false;
-        ctx.beginPath();
-        for (var i = 0; i < pts.length; i++) {
-          var s = toScreen(pts[i], w, h);
-          if (visible(s[0], s[1])) any = true;
-          if (!i) ctx.moveTo(s[0], s[1]); else ctx.lineTo(s[0], s[1]);
-        }
-        if (!any) continue;
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-      }
-    }
+    /* The picture. */
+    var drawnTiles = layers.map ? drawTiles(w, h) : 0;
 
-    /* Streets, casing first so junctions read as junctions. */
+    /* The streets as lines are the fallback for when there is no picture -
+       offline, or before the first tile lands - and only then. Drawn over
+       a tile they are a second copy of the same road, slightly off. */
     var ways = ROADS.near();
-    if (layers.streets) {
+    if (layers.map && drawnTiles === 0 && ways.length) {
       [true, false].forEach(function (casing) {
         for (var k = 0; k < ways.length; k++) {
           var wy = ways[k];
@@ -372,6 +421,13 @@ var MAPVIEW = (function () {
 
     scaleBar(ctx, w, h);
     waiting(ctx, w, h);
+    /* Required by the people whose map this is. */
+    ctx.save();
+    ctx.font = '500 9px -apple-system,system-ui,sans-serif';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = 'rgba(200,225,245,.6)';
+    ctx.fillText('\u00a9 OpenStreetMap contributors', w - 8, h - 6);
+    ctx.restore();
     var note = document.getElementById('mapScale');
     if (note && note.textContent !== scaleLabel()) note.textContent = scaleLabel();
   }
@@ -380,12 +436,11 @@ var MAPVIEW = (function () {
      one of them is broken. Say which this is, and say what is missing -
      streets arriving before boxes is the design, not a fault. */
   function waiting(ctx2, w, h) {
-    var p = ROADS.pending ? ROADS.pending() : null;
-    if (!p) return;
-    var n = p.roads + p.buildings + p.queued;
+    var p = ROADS.pending ? ROADS.pending() : { roads: 0, buildings: 0, queued: 0 };
+    var n = tilePending + p.roads + p.queued;
     if (!n) return;
-    var what = p.roads ? 'Loading streets' : 'Loading buildings';
-    if (p.queued) what += ' (' + (n) + ')';
+    var what = tilePending ? 'Loading map' : 'Loading route';
+    if (n > 1) what += ' (' + n + ')';
     ctx2.save();
     ctx2.font = '600 11px ui-monospace,Menlo,monospace';
     var tw = ctx2.measureText(what).width;
@@ -450,6 +505,7 @@ var MAPVIEW = (function () {
   }
 
   return { init: init, draw: draw, size: size, state: state, frame: frame,
+           _tiles: function () { return { asked: tileAsked, pending: tilePending, held: tileOrder.length, zoom: tileZoom() }; },
            setMpp: setMpp, toScreen: function (pt) { return toScreen(pt, cv.clientWidth, cv.clientHeight); },
            _tap: tap, _centre: function (c) { if (c) { centre = c; follow = false; } return centre; } };
 })();

@@ -40,28 +40,36 @@ function roadsBody(n) {
   }
   return JSON.stringify({ version: 0.6, elements: els });
 }
-function bldBody(n) {
-  const els = [];
-  for (let i = 0; i < n; i++) {
-    const la = 51.5074 + (i % 20) * 0.00015, lo = -0.1278 + Math.floor(i / 20) * 0.00018;
-    const g = []; for (let j = 0; j < 7; j++) g.push({ lat: la + Math.sin(j) * 0.00006, lon: lo + Math.cos(j) * 0.00007 });
-    g.push(g[0]);
-    els.push({ type: 'way', id: i, tags: { building: 'yes', 'building:levels': '3' }, geometry: g });
-  }
-  return JSON.stringify({ version: 0.6, elements: els });
-}
 const isRoads = body => /highway/.test(body);
+const isBld   = body => /building/.test(body);
 
-async function open(b, plan) {
+/* A real PNG, 256 square, one flat colour - so the tile can be seen to land
+   on the canvas rather than merely be requested. */
+const zlib = require('zlib');
+function png(r, g, b) {
+  const W = 256, H = 256, raw = Buffer.alloc((W * 3 + 1) * H);
+  for (let y = 0; y < H; y++) { raw[y * (W * 3 + 1)] = 0;
+    for (let x = 0; x < W; x++) { const o = y * (W * 3 + 1) + 1 + x * 3; raw[o] = r; raw[o+1] = g; raw[o+2] = b; } }
+  const crcT = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crcT[n] = c >>> 0; }
+  const crc = buf => { let c = 0xffffffff; for (const b2 of buf) c = crcT[(c ^ b2) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+const TILE = png(200, 60, 60);
+
+async function open(b, plan, tilePlan) {
   const ctx = await b.newContext({ permissions: ['geolocation'], geolocation: { latitude: 51.5074, longitude: -0.1278 },
                                    viewport: { width: 412, height: 892 }, serviceWorkers: 'block' });
   const page = await ctx.newPage();
   page.on('crash', () => { crashed = crashed || 'the page crashed'; });
   await page.route('**/vendor/models/**', r => r.abort());
   await page.route(/overpass/, plan);
+  await page.route(/tile\.openstreetmap\.org/, tilePlan || (r => r.fulfill({ status: 200, contentType: 'image/png',
+                     headers: { 'Access-Control-Allow-Origin': '*' }, body: TILE })));
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.MAP && window.MAPVIEW && window.ROADS && window.GEO,
-                             null, { timeout: 30000 });
+  await page.waitForFunction(() => window.MAP && window.MAPVIEW && window.ROADS && window.GEO, null, { timeout: 30000 });
   await page.evaluate(() => {
     const g = document.getElementById('gate'); if (g) { g.classList.add('hidden'); g.hidden = true; }
     try { localStorage.removeItem('sightline.roads.v1'); } catch (e) {}
@@ -77,139 +85,121 @@ let BASE = '';
   const { chromium } = require('playwright');
   const b = await chromium.launch();
 
-  /* ---------- 1. two at a time, roads first ---------- */
-  console.log('\nHOW MANY AT ONCE, AND IN WHAT ORDER');
+  /* ---------- 1. the picture comes from tiles, and Overpass is not asked ---------- */
+  console.log('\nOPENING THE MAP ASKS FOR TILES, NOT OVERPASS');
+  {
+    const overpass = [], tilesAsked = [];
+    const { ctx, page } = await open(b,
+      async r => { overpass.push(r.request().postData() || ''); return r.fulfill({ status: 200, contentType: 'application/json', body: roadsBody(3) }); },
+      async r => { tilesAsked.push(r.request().url()); return r.fulfill({ status: 200, contentType: 'image/png',
+                     headers: { 'Access-Control-Allow-Origin': '*' }, body: TILE }); });
+    /* The CORNER map is live the whole time and fetches its own roads and
+       footprints for the 3D view - that is its job, not the page's. So
+       let it settle, take the count, and then open the page: what the
+       page adds is what is being measured. */
+    await page.waitForTimeout(2500);
+    const cornerAsked = overpass.length;
+    await page.evaluate(() => { MAP.setOpen(true); MAPVIEW.draw(); });
+    await page.waitForFunction(() => MAPVIEW._tiles().asked > 0 && MAPVIEW._tiles().pending === 0, null, { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(400);
+    const t = await page.evaluate(() => MAPVIEW._tiles());
+    ok('tiles are asked for', tilesAsked.length > 0, tilesAsked.length);
+    ok('only the ones on screen - a phone view is a couple of dozen, not hundreds',
+       tilesAsked.length <= 40, tilesAsked.length);
+    ok('every one is a real slippy-map address', tilesAsked.every(u => /\/\d+\/\d+\/\d+\.png$/.test(u)), tilesAsked.slice(0, 2));
+    ok('at the zoom the view is at', tilesAsked.every(u => u.indexOf('/' + t.zoom + '/') > 0), { zoom: t.zoom, sample: tilesAsked[0] });
+    ok('and opening the map page adds NO Overpass request of its own',
+       overpass.length === cornerAsked, { corner: cornerAsked, afterOpening: overpass.length });
+
+    /* The tile has to land on the canvas, not just be fetched. Its colour
+       is inverted into the dark palette, so what is checked is that the
+       middle is no longer the empty base and is fully painted. */
+    const pix = await page.evaluate(() => {
+      const c = document.getElementById('mapCanvas'), g = c.getContext('2d');
+      const d = g.getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data;
+      return { r: d[0], g: d[1], b: d[2], a: d[3] };
+    });
+    ok('the tile is painted onto the canvas', pix.a === 255 && !(pix.r === 10 && pix.g === 17 && pix.b === 24), pix);
+
+    /* Drawn again at the same view: nothing new is fetched. */
+    const before = tilesAsked.length;
+    await page.evaluate(() => { MAPVIEW.draw(); MAPVIEW.draw(); });
+    await page.waitForTimeout(300);
+    ok('drawing the same view again fetches nothing', tilesAsked.length === before, { before, after: tilesAsked.length });
+
+    /* Pan a long way: new tiles, and only new ones. */
+    await page.evaluate(() => { MAPVIEW._centre({ lat: 51.5310, lon: -0.1770 }); MAPVIEW.draw(); });
+    await page.waitForTimeout(600);
+    ok('panning somewhere new fetches the tiles for there', tilesAsked.length > before, { before, after: tilesAsked.length });
+    ok('and still no Overpass, however far you pan', overpass.length === cornerAsked, { corner: cornerAsked, now: overpass.length });
+    ok('CONTROL: the page never crashed', !crashed, crashed);
+    await ctx.close();
+  }
+
+  /* ---------- 2. roads are asked for when there is somewhere to go ---------- */
+  console.log('\nROAD GEOMETRY IS FOR ROUTING, AND COMES TWO AT A TIME');
   {
     let live = 0, peak = 0; const order = [];
     const { ctx, page } = await open(b, async r => {
       const body = r.request().postData() || '';
       live++; peak = Math.max(peak, live);
-      order.push(isRoads(body) ? 'roads' : 'bld');
-      await new Promise(s => setTimeout(s, 220));       // a round trip that is not instant
+      order.push(isRoads(body) ? 'roads' : (isBld(body) ? 'bld' : 'other'));
+      await new Promise(s => setTimeout(s, 220));
       live--;
-      await r.fulfill({ status: 200, contentType: 'application/json',
-                        body: isRoads(body) ? roadsBody(6) : bldBody(10) });
+      await r.fulfill({ status: 200, contentType: 'application/json', body: roadsBody(6) });
     });
-    /* Zoom out far enough that the view wants the 3x3 of tiles - which is
-       what used to fire nine requests at once. */
-    /* 412px across at 4 m/px is ~1650m, past the 1200m line, so the view
-       wants the 3x3 - which is the case that used to fire nine at once. */
-    const wide = await page.evaluate(() => {
-      MAP.setOpen(true); MAPVIEW.setMpp(4); MAPVIEW.draw();
-      return { mpp: MAPVIEW.state().mpp, acrossM: Math.round(412 * MAPVIEW.state().mpp) };
-    });
-    ok('SETUP: the view is wide enough to want a block of tiles',
-       wide.acrossM > 1200 && wide.acrossM <= 2600, wide);
-    await page.waitForTimeout(3500);
-    ok('SETUP: the wide view really does want several tiles', order.length >= 4, order.length);
-    ok('never more than two requests are in flight at once', peak <= 2, { peak, sent: order.length });
-    const firstBld = order.indexOf('bld');
-    ok('every street request goes out before the first building request',
-       firstBld === -1 || order.slice(0, firstBld).every(x => x === 'roads'),
-       order.slice(0, Math.min(12, order.length)));
-    await ctx.close();
-  }
-
-  /* ---------- 2. streets are on screen before the boxes ---------- */
-  console.log('\nTHE STREETS DO NOT WAIT FOR THE BOXES');
-  {
-    let releaseBld;
-    const held = new Promise(r => { releaseBld = r; });
-    const { ctx, page } = await open(b, async r => {
-      const body = r.request().postData() || '';
-      if (isRoads(body)) return r.fulfill({ status: 200, contentType: 'application/json', body: roadsBody(9) });
-      await held;                                        // the slow half
-      return r.fulfill({ status: 200, contentType: 'application/json', body: bldBody(12) });
-    });
-    await page.evaluate(() => MAP.setOpen(true));
-    await page.waitForFunction(() => ROADS.near().length > 0, null, { timeout: 20000 }).catch(() => {});
-    const mid = await page.evaluate(() => ({ roads: ROADS.near().length, bld: ROADS.buildings().length,
-                                             pending: ROADS.pending() }));
-    ok('the streets are held while the buildings are still coming',
-       mid.roads > 0 && mid.bld === 0, mid);
-    ok('and the map says which half it is still waiting for',
-       mid.pending.buildings + mid.pending.queued > 0, mid.pending);
-    releaseBld();
-    await page.waitForFunction(() => ROADS.buildings().length > 0, null, { timeout: 20000 }).catch(() => {});
-    const end = await page.evaluate(() => ({ roads: ROADS.near().length, bld: ROADS.buildings().length }));
-    ok('CONTROL: the boxes do arrive, and the streets are still there',
-       end.bld > 0 && end.roads > 0, end);
-    await ctx.close();
-  }
-
-  /* ---------- 3. nothing is fetched for a layer that is off ---------- */
-  console.log('\nWHAT IS NOT DRAWN IS NOT DOWNLOADED');
-  {
-    const sent = [];
-    const { ctx, page } = await open(b, async r => {
-      const body = r.request().postData() || '';
-      sent.push(isRoads(body) ? 'roads' : 'bld');
-      return r.fulfill({ status: 200, contentType: 'application/json',
-                         body: isRoads(body) ? roadsBody(5) : bldBody(8) });
-    });
-    /* Pressed the way a finger presses it, so a chip that stopped being
-       wired reads as a failure rather than a pass. */
-    const off = await page.evaluate(() => {
-      MAP.setOpen(true);
-      const btn = document.getElementById('layer-buildings');
-      if (!btn) return { no: 'no chip' };
-      if (MAPVIEW.state().layers.buildings) btn.click();
-      MAPVIEW.draw();
-      return { on: !!MAPVIEW.state().layers.buildings };
-    });
-    ok('SETUP: the buildings chip really turned the layer off', off.on === false, off);
-    await page.waitForTimeout(2000);
-    ok('SETUP: the streets were still asked for', sent.indexOf('roads') >= 0, sent);
-
-    /* Opening the map at all fetches the tile you are standing in, with
-       whatever the layers were then - so asking "was a footprint ever
-       requested" answers about that first tile, not about the switch.
-       Move somewhere NEW with the layer off, and watch only that. */
-    sent.length = 0;
+    await page.waitForTimeout(2500);                 // the corner map's own asks
+    const cornerN = order.length, cornerBld = order.filter(x => x === 'bld').length;
     await page.evaluate(() => {
-      MAPVIEW._centre({ lat: 51.5310, lon: -0.1770 });   // a mile away: a fresh tile
+      MAP.setOpen(true); MAPVIEW.setMpp(4);
+      MAP.setDest({ title: 'Up The Road', lat: 51.515, lon: -0.13, dist: 800, bearing: 10 });
       MAPVIEW.draw();
     });
-    await page.waitForTimeout(2500);
-    ok('SETUP: somewhere new really is asked about', sent.indexOf('roads') >= 0, sent);
-    ok('with the buildings layer off, no footprint is requested',
-       sent.indexOf('bld') < 0, sent);
-    /* CONTROL: turning it back on must ask - a memo that never expires is
-       how a switched-on layer stays empty. */
-    const on = await page.evaluate(() => {
-      document.getElementById('layer-buildings').click();
-      MAPVIEW.draw();
-      return { on: !!MAPVIEW.state().layers.buildings };
-    });
-    ok('SETUP: and back on again', on.on === true, on);
-    await page.waitForTimeout(2500);
-    ok('CONTROL: switching the layer on asks for them', sent.indexOf('bld') >= 0, sent);
+    await page.waitForTimeout(3500);
+    ok('SETUP: with a destination set the roads are asked for', order.length >= cornerN + 3, { corner: cornerN, now: order.length });
+    ok('never more than two requests are in flight at once', peak <= 2, { peak, sent: order.length });
+    ok('and the map page adds no footprint request of its own',
+       order.filter(x => x === 'bld').length === cornerBld, order.slice(cornerN));
     await ctx.close();
   }
 
-  /* ---------- 4. busy is not broken ---------- */
+  /* ---------- 3. busy is not broken ---------- */
   console.log('\nA REFUSAL IS A WAIT, NOT A VERDICT');
   {
     let roadCalls = 0;
     const { ctx, page } = await open(b, async r => {
-      const body = r.request().postData() || '';
-      if (!isRoads(body)) return r.fulfill({ status: 200, contentType: 'application/json', body: bldBody(4) });
       roadCalls++;
-      /* Overpass under load: every slot taken, on BOTH mirrors.
-         Refusing only the first is not a discriminator - a build that
-         treats 429 as a failure simply falls through to the second mirror
-         and looks fine. With both busy, only a build that waits and asks
+      /* Every slot taken, on BOTH mirrors. Only a build that waits and asks
          again ever gets the road. */
       if (roadCalls <= 2) return r.fulfill({ status: 429, contentType: 'text/plain',
                                              headers: { 'Retry-After': '3' }, body: 'slot unavailable' });
       return r.fulfill({ status: 200, contentType: 'application/json', body: roadsBody(7) });
     });
-    await page.evaluate(() => MAP.setOpen(true));
+    await page.evaluate(() => {
+      MAP.setOpen(true);
+      MAP.setDest({ title: 'Up The Road', lat: 51.51, lon: -0.128, dist: 300, bearing: 0 });
+      MAPVIEW.draw();
+    });
     const got = await page.waitForFunction(() => ROADS.near().length > 0, null, { timeout: 25000 })
                           .then(() => true).catch(() => false);
-    ok('every mirror busy still ends with the road on the map', got === true,
-       { roadCalls, roads: await page.evaluate(() => ROADS.near().length) });
+    ok('every mirror busy still ends with the road on the map', got === true, { roadCalls, got });
     ok('SETUP: it really was refused, more than once', roadCalls >= 3, roadCalls);
+    await ctx.close();
+  }
+
+  /* ---------- 4. the corner map still has its buildings ---------- */
+  console.log('\nTHE CORNER MAP STILL GETS ITS 3D BUILDINGS');
+  {
+    const asked = [];
+    const { ctx, page } = await open(b, async r => {
+      const body = r.request().postData() || '';
+      asked.push(isBld(body) ? 'bld' : 'roads');
+      return r.fulfill({ status: 200, contentType: 'application/json', body: roadsBody(2) });
+    });
+    /* The corner map draws on its own; give it a moment with a position. */
+    await page.evaluate(() => { MAP.setOpen(false); MAP.draw(); });
+    await page.waitForTimeout(2500);
+    ok('the corner map asks for footprints, because it draws them in 3D', asked.indexOf('bld') >= 0, asked);
     await ctx.close();
   }
 

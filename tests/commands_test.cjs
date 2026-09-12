@@ -80,11 +80,14 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); }
   r = await say('zoom in');
   ok('"zoom in" moves the map in', r.handled && r.mpp < before, { before, after: r.mpp });
 
-  r = await say('hide the buildings');
-  ok('"hide the buildings" turns that layer off',
-     r.handled && r.layers.buildings === 0 || r.layers.buildings === false, r.layers);
+  /* The picture is one layer now - tiles carry the buildings - so every
+     word for it lands on the same chip. */
+  /* "hide the map" closes the page - that is what the words mean - so the
+     picture layer answers to its contents: streets, tiles, buildings. */
+  r = await say('hide the streets');
+  ok('"hide the streets" turns the picture off', r.handled && !r.layers.map, r.layers);
   r = await say('show the buildings');
-  ok('CONTROL: and turns it back on', !!r.layers.buildings, r.layers);
+  ok('CONTROL: "show the buildings" turns it back on', !!r.layers.map, r.layers);
 
   r = await say('close the map');
   ok('"close the map" closes it', r.handled && r.mapOpen === false, r);

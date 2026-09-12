@@ -36,8 +36,8 @@ var CMD = (function () {
   function mapOpen() { return !!(window.MAP && MAP.isOpen && MAP.isOpen()); }
 
   /* The layer chips answer to the same four words the map draws with. */
-  var LAYERS = { building: 'buildings', buildings: 'buildings', box: 'buildings', boxes: 'buildings',
-                 street: 'streets', streets: 'streets', road: 'streets', roads: 'streets',
+  var LAYERS = { map: 'map', tiles: 'map', street: 'map', streets: 'map', road: 'map', roads: 'map',
+                 building: 'map', buildings: 'map',
                  place: 'places', places: 'places', label: 'places', labels: 'places',
                  route: 'route', path: 'route' };
 
@@ -110,7 +110,7 @@ var CMD = (function () {
       } },
 
     { name: 'layer',
-      re: /^(?:show|hide|turn\s+(?:on|off)|switch\s+(?:on|off))\s+(?:the\s+)?(buildings?|streets?|roads?|places?|labels?|route|path)\b/i,
+      re: /^(?:show|hide|turn\s+(?:on|off)|switch\s+(?:on|off))\s+(?:the\s+)?(map|tiles|buildings?|streets?|roads?|places?|labels?|route|path)\b/i,
       run: function (m) {
         var want = !/\b(?:hide|off)\b/i.test(m[0]);
         var k = setLayer(m[1], want);

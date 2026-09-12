@@ -285,7 +285,9 @@ var MAP = (function () {
     /* ---- the roads ---- */
     var drewRoads = 0;
     if (s.pos) {
-      ROADS.ensure(s.pos.lat, s.pos.lon);
+      /* The corner map draws its buildings in 3D, so it wants the
+         footprints. (The map page does not - it draws tiles.) */
+      ROADS.ensure(s.pos.lat, s.pos.lon, true);
       var ways = ROADS.near(s.pos.lat, s.pos.lon);
       var mPerLat = 111320, mPerLon = 111320 * Math.cos(s.pos.lat * Math.PI / 180);
       var toLocal = function (pt) {
