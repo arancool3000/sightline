@@ -218,7 +218,7 @@ var GEM = (function () {
       });
   }
 
-  return { ask: ask, test: test, tts: tts, state: state, has: has, looksLikeKey: looksLikeKey,
+  return { ask: ask, test: test, tts: tts, state: state, has: has, looksLikeKey: looksLikeKey, key: key,
            TTS_MODELS: TTS_MODELS,
            PRIMARY: PRIMARY, FALLBACK: FALLBACK,
            _turnedAway: turnedAway, _reset: function () { blockedUntil = 0; lastError = ''; } };

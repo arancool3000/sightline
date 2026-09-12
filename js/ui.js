@@ -1156,6 +1156,7 @@ var UI = (function () {
     /* The pill with the words on is the same door as the microphone. */
     var ask = U.$('#askChip');
     if (ask && vbtn) ask.addEventListener('click', function () { vbtn.click(); });
+    if (window.LIVE) LIVE.on(liveEvent);
 
     var fm = U.$('#optFaceMem');
     if (fm) {
@@ -1259,6 +1260,40 @@ var UI = (function () {
       : st.thinking ? 'Thinking\u2026'
       : st.awake ? 'Listening for your question\u2026'
       : 'Waiting for "hey vision". Engine: ' + st.engine + '.';
+  }
+
+  /* ---- BOTH SIDES OF THE CONVERSATION, ON SCREEN ----
+
+     "it should show captions as me and ai talk." The live session hands
+     back a transcript of each side as it goes, so they are drawn as they
+     arrive rather than after the fact. */
+  var liveYou = '', liveIt = '';
+  function liveCaption() {
+    var bar = U.$('#captionBar'), src = U.$('#capSource'), main = U.$('#capMain'), meta = U.$('#capMeta');
+    if (!bar) return;
+    if (!liveYou && !liveIt) {
+      if (!CAPS.running()) { bar.hidden = true; document.body.classList.remove('caps-on'); }
+      return;
+    }
+    src.textContent = liveYou ? 'You' : '';
+    main.innerHTML = (liveYou ? '<span class="interim">' + U.esc(liveYou) + '</span>' : '') +
+                     (liveYou && liveIt ? '<br>' : '') +
+                     (liveIt ? U.esc(liveIt) : '');
+    meta.textContent = liveIt ? 'SIGHTLINE' : 'LISTENING';
+    bar.hidden = false;
+    document.body.classList.add('caps-on');
+  }
+  function liveEvent(ev) {
+    if (ev.kind === 'you') { liveYou = ev.text; liveIt = ''; liveCaption(); }
+    else if (ev.kind === 'it') { liveIt = ev.text; liveCaption(); }
+    else if (ev.kind === 'turn') {
+      liveYou = ev.you; liveIt = ev.it; liveCaption();
+      /* Let the last exchange stand a moment, then hand the bar back. */
+      setTimeout(function () { if (liveIt === ev.it) { liveYou = ''; liveIt = ''; liveCaption(); } }, 6000);
+    }
+    else if (ev.kind === 'open') { status('LISTENING \u2014 SAY WHAT YOU WANT', 'busy', 4000); }
+    else if (ev.kind === 'closed') { liveYou = ''; liveIt = ''; liveCaption(); }
+    else if (ev.kind === 'error') { status(String(ev.error || 'the live voice failed'), 'bad', 5000); }
   }
 
   function voiceEvent(ev) {

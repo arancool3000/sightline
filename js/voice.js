@@ -67,6 +67,9 @@ var VOICE = (function () {
      asleep it is only ever compared against the wake word and dropped. */
   function heard(text) {
     if (!on) return;
+    /* While the live session is up it is hearing the person directly -
+       the on-device recogniser's copy would ask everything twice. */
+    if (window.LIVE && LIVE.running()) return;
     var line = String(text || '').trim();
     if (!line) return;
 
@@ -163,6 +166,20 @@ var VOICE = (function () {
   }
 
   function wake() {
+    /* THE LIVE SESSION IS THE REAL CONVERSATION.
+
+       On the owner's own quota page the Live models are UNLIMITED on the
+       free tier while the speech models are ten requests a DAY. So when
+       there is a key, waking opens a live socket: the microphone goes
+       straight up, the answer comes straight back as speech, and both
+       sides come back as text for the captions. The on-device recogniser
+       keeps the wake word because it costs nothing, and stays the whole
+       assistant when there is no key. */
+    if (window.LIVE && LIVE.available() && !LIVE.running()) {
+      LIVE.start().then(function (ok) {
+        if (ok && CAM && CAM.frame) LIVE.look(CAM.frame(512));
+      });
+    }
     awake = true;
     awakeUntil = performance.now() + AWAKE_MS;
     lastSaid = '';
