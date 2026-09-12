@@ -303,7 +303,7 @@ async function workersAI(env, image, hint) {
       if (out) break;
     } catch (e) {
       lastErr = String(e && e.message || e);
-      if (/\b5016\b|must submit the prompt/i.test(lastErr)) gated = true;
+      if (licenceRefused(lastErr)) gated = true;
       out = null;
     }
   }
@@ -322,6 +322,17 @@ async function workersAI(env, image, hint) {
 
 /* Workers AI vision models have taken two input shapes over time; try the
    messages form first and fall back to the older prompt+image form. */
+/* Cloudflare answers the licence agreement with code 5016 and the words
+   "Thank you for agreeing to this model's terms. You may now use the
+   model." - the same code it uses to REFUSE. So the code says nothing; the
+   sentence is what matters, and matching on the code alone reported a
+   successful acceptance as a failure. */
+function licenceRefused(e) {
+  var m = String((e && e.message) || e || '');
+  if (/thank you for agreeing|you may now use/i.test(m)) return false;
+  return /must submit the prompt|prior to using this model/i.test(m);
+}
+
 async function runVision(env, model, prompt, image, bytes) {
   try {
     return await env.AI.run(model, {
@@ -334,7 +345,7 @@ async function runVision(env, model, prompt, image, bytes) {
   } catch (e1) {
     /* A licence refusal is about the model, not the input shape, so there is
        no point trying the other one. */
-    if (/\b5016\b|must submit the prompt/i.test(String(e1 && e1.message || e1))) throw e1;
+    if (licenceRefused(e1)) throw e1;
     return await env.AI.run(model, { prompt, image: Array.from(bytes), max_tokens: 400, temperature: 0.1 });
   }
 }
@@ -625,10 +636,11 @@ export default {
         return json({ ok: true, model, accepted: true }, 200, env);
       } catch (e) {
         const m = String(e && e.message || e);
-        /* Some models answer the agreement with an ordinary completion
-           error, which still means the agreement landed. */
-        if (!/\b5016\b|must submit the prompt/i.test(m)) {
-          return json({ ok: true, model, accepted: true, note: m.slice(0, 120) }, 200, env);
+        /* Accepting a licence is not a completion, so the call throws even
+           when it worked. Only a message that is STILL asking for the
+           agreement means it did not land. */
+        if (!licenceRefused(e)) {
+          return json({ ok: true, model, accepted: true, note: m.slice(0, 140) }, 200, env);
         }
         return err('the licence was not accepted: ' + m.slice(0, 140), 502, env);
       }
