@@ -24,6 +24,15 @@ var GEO = (function () {
   var fetchedAt = 0, fetchedNear = null, busy = false;
   var listeners = [];
 
+  /* How far you have gone, how fast, and how long you have been moving.
+     All of it from the device's own GPS, none of it uploaded, and none of it
+     invented: there is no step count here because a browser cannot count
+     steps, and a number derived from distance and called "steps" would be a
+     guess wearing a fact's clothes. */
+  var trip = { metres: 0, movingMs: 0, speed: 0, best: 0, since: 0 };
+  var lastFix = null;
+  var MOVING_MS = 0.55;      // m/s below which you are standing still
+
   var NEAR_RADIUS = 3000;    // metres
   var REFETCH_MS = 240000;   // and whenever you have moved 250 m
   var REFETCH_M = 250;
@@ -54,7 +63,10 @@ var GEO = (function () {
     if (watchId) return;
     watchId = navigator.geolocation.watchPosition(function (p) {
       err = '';
-      pos = { lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy || 0) };
+      var fix = { lat: p.coords.latitude, lon: p.coords.longitude,
+                  acc: Math.round(p.coords.accuracy || 0), at: p.timestamp || Date.now() };
+      measure(fix, p.coords.speed);
+      pos = fix;
       if (typeof p.coords.heading === 'number' && !isNaN(p.coords.heading) && p.coords.speed > 0.7) {
         heading = p.coords.heading;              // moving: GPS course beats the compass
       }
@@ -104,6 +116,43 @@ var GEO = (function () {
     var D = window.DeviceOrientationEvent;
     if (!D || typeof D.requestPermission !== 'function') return Promise.resolve(true);
     return D.requestPermission().then(function (r) { return r === 'granted'; }).catch(function () { return false; });
+  }
+
+  /* A GPS fix jitters by several metres while you stand still, so distance
+     is only counted for a step that is bigger than the reported accuracy -
+     otherwise a phone on a table walks a mile overnight. */
+  function measure(fix, reported) {
+    if (!trip.since) trip.since = fix.at;
+    if (!lastFix) { lastFix = fix; return; }
+    var dt = (fix.at - lastFix.at) / 1000;
+    if (dt <= 0 || dt > 30) { lastFix = fix; return; }
+    var d = metres(lastFix, fix);
+    var hasReported = typeof reported === 'number' && reported >= 0;
+
+    /* The distance between two fixes over the time between them. This is
+       checked BEFORE anything the device claims: a fix that leapt 43 km in
+       ten seconds came with a perfectly plausible reported speed of 1.4 m/s
+       attached, and counting it put a marathon on the odometer. */
+    var apparent = d / dt;
+    if (apparent > 90) { lastFix = fix; return; }     // nothing here goes at 320 km/h
+
+    /* A GPS reports its own speed from Doppler shift, which is far steadier
+       than differencing two positions. When it says you are not moving, you
+       are not moving, whatever the positions did - that is what stops a
+       phone on a table walking a hundred metres an hour. */
+    if (hasReported && reported < MOVING_MS) { trip.speed = reported; lastFix = fix; return; }
+
+    if (d < Math.max(4, fix.acc || 10)) {
+      trip.speed = hasReported ? reported : 0;
+      lastFix = fix;
+      return;
+    }
+    var v = hasReported ? reported : apparent;
+    trip.speed = v;
+    trip.metres += d;
+    if (v > trip.best) trip.best = v;
+    if (v >= MOVING_MS) trip.movingMs += dt * 1000;
+    lastFix = fix;
   }
 
   function maybeRefresh() {
@@ -167,7 +216,8 @@ var GEO = (function () {
 
   function state() {
     return { pos: pos, heading: heading, places: places, weather: weather,
-             sky: sky(), locality: locality(), error: err, ready: !!pos };
+             sky: sky(), locality: locality(), error: err, ready: !!pos,
+             trip: trip };
   }
 
   function stop() {
@@ -175,7 +225,34 @@ var GEO = (function () {
     watchId = 0;
   }
 
+  /* Words for the readouts. km/h for anything car-like, otherwise a walking
+     pace, because "4.8 km/h" means less to a walker than "12:30 / km". */
+  function speedText() {
+    var kph = trip.speed * 3.6;
+    if (kph < 0.4) return '0.0 km/h';
+    return kph.toFixed(1) + ' km/h';
+  }
+  function paceText() {
+    if (trip.speed < MOVING_MS) return '';
+    var secPerKm = 1000 / trip.speed;
+    var m = Math.floor(secPerKm / 60), sec = Math.round(secPerKm % 60);
+    if (m > 40) return '';
+    return m + ':' + (sec < 10 ? '0' : '') + sec + ' /km';
+  }
+  function distText() {
+    return trip.metres < 1000 ? Math.round(trip.metres) + ' m'
+                              : (trip.metres / 1000).toFixed(2) + ' km';
+  }
+  function movingText() {
+    var s2 = Math.round(trip.movingMs / 1000);
+    var h = Math.floor(s2 / 3600), m = Math.floor((s2 % 3600) / 60);
+    return h ? (h + 'h ' + m + 'm') : (m + 'm ' + (s2 % 60) + 's');
+  }
+  function resetTrip() { trip = { metres: 0, movingMs: 0, speed: 0, best: 0, since: Date.now() }; lastFix = null; emit(); }
+
   return { start: start, stop: stop, state: state, refresh: refresh, on: on,
+           speedText: speedText, paceText: paceText, distText: distText,
+           movingText: movingText, resetTrip: resetTrip,
            askCompass: askCompass, metres: metres, bearing: bearing, sky: sky,
            _set: function (p, h, pl, wx) { pos = p; heading = h; if (pl) places = pl;
                                           if (wx) weather = wx; emit(); } };

@@ -33,6 +33,9 @@ var MAP = (function () {
       GEO.askCompass();
       setOpen(!open);
     });
+    var rst = document.getElementById('tripReset');
+    if (rst) rst.addEventListener('click', function () { GEO.resetTrip(); trip(); });
+
     var close = document.getElementById('mapClose');
     if (close) close.addEventListener('click', function () { setOpen(false); });
     var rng = document.getElementById('mapRange');
@@ -43,7 +46,7 @@ var MAP = (function () {
     });
     if (panel) panel.addEventListener('click', pick);
 
-    GEO.on(function () { draw(); fillList(); });
+    GEO.on(function () { draw(); fillList(); trip(); });
     ROADS.on(function () { draw(); });
     size();
     window.addEventListener('resize', function () { size(); draw(); });
@@ -66,7 +69,7 @@ var MAP = (function () {
     open = v;
     var el = document.getElementById('mapPanel');
     if (el) el.hidden = !v;
-    if (v) { size(); GEO.refresh(); fillList(); }
+    if (v) { size(); GEO.refresh(); fillList(); trip(); }
     draw();
   }
 
@@ -343,6 +346,19 @@ var MAP = (function () {
       if (d < bd) { bd = d; best = b.p; }
     });
     if (best) { sel = best; draw(); fillList(); }
+  }
+
+  /* Guarded writes: this runs on every position fix, over a live camera. */
+  function put(id, v) {
+    var el = document.getElementById(id);
+    if (el && el.textContent !== v) el.textContent = v;
+  }
+  function trip() {
+    if (!open) return;
+    put('tripSpeed', GEO.speedText().replace(' km/h', ''));
+    put('tripDist', GEO.distText());
+    put('tripMoving', GEO.movingText());
+    put('tripPace', GEO.paceText() || '--');
   }
 
   function fillList() {

@@ -65,7 +65,7 @@
   <!-- Bottom left: where you are. Tapping it opens the full map. -->
   <button id="radarPod" class="glass" aria-label="Open the map">
     <canvas id="radar" width="112" height="112"></canvas>
-    <span class="pod-txt"><b id="radarNote">Locating</b><i>Surroundings</i></span>
+    <span class="pod-txt"><b id="radarNote">Locating</b><i id="podSpeed"></i><i class="pod-sub">Surroundings</i></span>
   </button>
 
   <!-- Bottom right: what is around you, from Wikipedia's geosearch. -->
@@ -82,6 +82,18 @@
       <button id="mapClose" class="hbtn" aria-label="Close">CLOSE</button>
     </header>
     <div class="map-stage"><canvas id="mapCanvas"></canvas></div>
+
+    <!-- Measured by this device's own GPS, and nothing else. There is no
+         step count because a browser cannot count steps. -->
+    <div class="trip">
+      <div class="trip-big"><b id="tripSpeed">0.0</b><i>km/h</i></div>
+      <div class="trip-rows">
+        <div><i>Distance</i><b id="tripDist">0 m</b></div>
+        <div><i>Moving</i><b id="tripMoving">0m 0s</b></div>
+        <div><i>Pace</i><b id="tripPace">--</b></div>
+      </div>
+      <button id="tripReset" class="hbtn">RESET</button>
+    </div>
     <p class="map-note">Drawn from this device's position and Wikipedia's own geosearch. No map service, no key, no limit.</p>
     <div id="mapList" class="map-list"></div>
   </section>

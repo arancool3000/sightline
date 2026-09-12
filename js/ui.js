@@ -725,6 +725,11 @@ var UI = (function () {
       card.hidden = !w;
     }
     nearby(st);
+
+    /* The pod says where you are when you are still and how fast when you
+       are not - a speed of 0.0 sitting on a table is noise. */
+    var t = st.trip;
+    set('#podSpeed', (t && t.speed >= 0.55) ? GEO.speedText() : '');
   }
 
   /* Things nearby, from the same geosearch the map draws. Rebuilt only when
