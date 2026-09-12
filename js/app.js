@@ -60,6 +60,15 @@
   var detectorErr = '';
 
   function loadModel() {
+    /* The classifier's load() repairs a half-built tf. The detector used to
+       start at the same moment and get the broken library, so it failed
+       every time on the affected device and the app fell back to grid
+       squares - which is why a 3D printer came back as "Perfume": those
+       crops are wall and floor, not objects. */
+    return LOCAL.ensureTf().then(function () { return loadBoth(); });
+  }
+
+  function loadBoth() {
     var jobs = [];
 
     if (!model && window.cocoSsd) {
@@ -200,6 +209,11 @@
         if (o > best) { best = o; hit = hh; }
       });
       if (!hit || best < 0.3) return;
+      /* A grid region is an arbitrary square of the scene - often wall, floor
+         and part of a thing - so its guesses are far weaker than a detected
+         object's. "Refrigerator" and "Forklift" for a 3D printer came from
+         exactly this. Only a strong guess is worth showing. */
+      if (hit.score < 0.55) { t.scan = 'dismissed'; t.why = 'LOW CONFIDENCE'; t.settled = performance.now(); return; }
       t.label = hit.name;
       t.tier = 'local';
       t.scan = 'relevant';

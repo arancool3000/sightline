@@ -87,7 +87,9 @@ var UI = (function () {
       var named = !!t.label;
 
       var x = s[0], y = s[1], bw = s[2], bh = s[3];
-      if (bw < 24 || bh < 24) return;              // too small to annotate legibly
+      /* Was 24px, which threw away most objects in a cluttered scene. A small
+         target still gets its marker; only the plate needs room. */
+      if (bw < 12 || bh < 12) return;
 
       /* Skip anything barely in frame: a plate with its leader line running
          off the edge reads as a glitch, not as instrumentation. */
@@ -119,6 +121,32 @@ var UI = (function () {
           ctx.stroke();
         });
       ctx.setLineDash([]);
+
+      /* THE MARKER. A label floating near a thing is not AR; a mark ON the
+         thing is. Every target gets a dot at its centre and, once named, a
+         faint wash over its area, so several objects can be identified at
+         once and each answer is unambiguously attached to its subject. */
+      var mx = x + bw / 2, my = y + bh / 2;
+
+      if (named) {
+        ctx.globalAlpha = 0.1;
+        ctx.fillStyle = col;
+        ctx.fillRect(x, y, bw, bh);
+        ctx.globalAlpha = named ? 0.95 : 0.5;
+      }
+
+      ctx.globalAlpha = dismissed ? 0.35 : 1;
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(mx, my, named ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      if (named) {
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.arc(mx, my, 10, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = named ? 0.95 : dismissed ? 0.3 : scanning ? 0.75 : 0.5;
 
       /* A scan line crossing the target: the one piece of motion in the
          interface, and it only runs while something is genuinely being
@@ -169,7 +197,7 @@ var UI = (function () {
       ctx.globalAlpha = named ? 0.8 : 0.4;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(flip ? x : x + bw, y);
+      ctx.moveTo(mx, my);
       ctx.lineTo(flip ? px + tw + padX * 2 : px, py + plateH / 2);
       ctx.stroke();
 
@@ -197,10 +225,19 @@ var UI = (function () {
   function status(msg, cls) {
     var strip = U.$('#statusStrip');
     if (!strip) return;
+    msg = String(msg == null ? '' : msg).trim();
     var key = cls + '|' + msg;
     if (key === lastStatus) return;          // guarded: this runs every frame
     lastStatus = key;
-    if (!msg) { strip.hidden = true; return; }
+    /* An empty strip is a black bar that explains nothing and covers the
+       scene - it appeared on the owner's device and in a rendering here.
+       Hiding CLEARS the text too, so a stale message can never be revealed
+       by a later show. */
+    if (!msg) {
+      U.$('#statusText').textContent = '';
+      strip.hidden = true;
+      return;
+    }
     U.$('#statusText').textContent = msg;
     strip.className = cls || '';
     strip.hidden = false;

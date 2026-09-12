@@ -107,6 +107,16 @@ var LOCAL = (function () {
     return repairing;
   }
 
+  /* The detector needs a working tf just as much as the classifier does, and
+     it was loading in PARALLEL with the repair - so it got the half-built
+     library and died, which is the "detector unavailable" the owner saw.
+     Both must wait for this. */
+  function ensureTf() {
+    if (!window.tf) return Promise.resolve(false);
+    if (typeof tf.loadLayersModel === 'function') return Promise.resolve(true);
+    return repairTf();
+  }
+
   var trace = [];
   function mark(m) {
     trace.push(Math.round(performance.now()) + 'ms ' + m);
@@ -316,9 +326,13 @@ var LOCAL = (function () {
      inference. Falling back only at init time left the app silently dead on
      exactly those devices, so a failing inference now demotes the backend to
      CPU once and retries. Slower, but it runs. */
-  var demoted = false;
+  var demoted = false, gpuFails = 0;
   function demoteAndRetry(e) {
     if (demoted || !window.tf) return Promise.reject(e);
+    /* Dropping to CPU costs roughly twenty times the speed - the owner's
+       device ran at 1fps with 2.4s labels on it. One bad inference is not
+       enough evidence; three consecutive ones is. */
+    if (++gpuFails < 3) return Promise.reject(e);
     demoted = true;
     lastErr = 'gpu inference failed, retrying on cpu: ' + String(e && e.message || e).slice(0, 70);
     return tf.setBackend('cpu').then(function () {
@@ -345,7 +359,7 @@ var LOCAL = (function () {
 
       t.localState = 'done';
       t.localAt = performance.now();
-      fails = 0; lastOk = performance.now();   // a success clears the streak
+      fails = 0; gpuFails = 0; lastOk = performance.now();   // a success clears the streak
 
       if (!preds || !preds.length) return null;
       var top = preds[0];
@@ -624,7 +638,7 @@ var LOCAL = (function () {
     }
   }
 
-  return { load: load, ready: ready, lastError: lastError, state: state, ok: function(){ return lastOk; },
+  return { load: load, ready: ready, lastError: lastError, state: state, ensureTf: ensureTf, ok: function(){ return lastOk; },
            trace: function () { return trace.slice(); }, label: label, sweep: sweep, age: age,
            scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
            gridStep: gridStep, gridTargets: gridTargets,

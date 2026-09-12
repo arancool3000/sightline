@@ -197,6 +197,32 @@ const server=http.createServer((q,res)=>{
     await ctx.close();
   }
 
+  /* ---- CASE 3: the strip must never appear with nothing in it.
+     An empty black bar covers the scene and explains nothing; it showed on
+     the owner's device and in a local rendering. ---- */
+  {
+    const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
+    const page=await ctx.newPage();
+    await page.goto('http://localhost:8751/',{waitUntil:'domcontentloaded'});
+    await page.waitForTimeout(2500);
+    const r = await page.evaluate(() => {
+      const out = [];
+      const strip = document.querySelector('#statusStrip');
+      const txt = document.querySelector('#statusText');
+      UI.status('SOMETHING', 'bad');
+      out.push({ hidden: strip.hidden, text: txt.textContent });
+      UI.status('', '');
+      out.push({ hidden: strip.hidden, text: txt.textContent });
+      UI.status('   ', 'bad');            // whitespace only
+      out.push({ hidden: strip.hidden, text: txt.textContent });
+      return out;
+    });
+    t('a real message shows', r[0].hidden === false && r[0].text === 'SOMETHING', JSON.stringify(r[0]));
+    t('an empty message hides AND clears', r[1].hidden === true && r[1].text === '', JSON.stringify(r[1]));
+    t('a whitespace-only message never shows an empty bar', r[2].hidden === true, JSON.stringify(r[2]));
+    await ctx.close();
+  }
+
   await browser.close(); server.close();
   const bad=R.filter(x=>!x.p);
   R.forEach(x=>console.log((x.p?'PASS  ':'FAIL  ')+x.n+(x.x?'   ['+x.x+']':'')));
