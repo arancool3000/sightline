@@ -126,6 +126,24 @@ var CMD = (function () {
         return { say: 'Looking for a code.' };
       } },
 
+    /* "who is that" is the most-asked question this app has, and it used
+       to go to the model as free text - a round trip to be told to tap
+       the person. It is the same door the tap opens. */
+    { name: 'who is that',
+      re: /^who(?:'s| is| are)\s+(?:that|this|they|these|he|she|him|her)\b|^name\s+(?:that|this|the)\s+(?:person|actor|man|woman|face)\b/i,
+      run: function () {
+        if (!window.UI) return false;
+        /* The person, not the middle of the picture. Asking "who is that"
+           while a face is off to one side used to look up whatever the
+           camera happened to be pointed at. The biggest person on screen
+           is the one being asked about. */
+        var who = biggest('person');
+        if (who && UI.openTrack) { UI.openTrack(who); return { say: 'Looking them up.' }; }
+        if (!UI.openScene) return false;
+        UI.openScene();
+        return { say: 'Looking them up.' };
+      } },
+
     { name: 'select subject',
       re: /^(?:select|identify|inspect|look at)\s+(?:the\s+)?(?:subject|thing|object|this|that|it)\b|^what(?:'s| is) (?:this|that)\s*\??$/i,
       run: function () {
@@ -185,6 +203,19 @@ var CMD = (function () {
                       'hide buildings, scan this code, box the bicycle, or ask me anything.' };
       } }
   ];
+
+  /* The largest thing of a kind currently on screen, or nothing. */
+  function biggest(kind) {
+    if (!window.TRACK || !window.IDENT || !IDENT.kindOf) return null;
+    var best = null, bestArea = 0;
+    TRACK.all().forEach(function (t) {
+      if (IDENT.kindOf(t.cls) !== kind) return;
+      var b = t.box || [];
+      var a = (b[2] || 0) * (b[3] || 0);
+      if (a > bestArea) { bestArea = a; best = t; }
+    });
+    return best;
+  }
 
   function tidy(s) {
     return String(s || '')

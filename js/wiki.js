@@ -108,6 +108,25 @@ var WIKI = (function () {
     return m[1] === '-' ? -y : y;
   }
 
+  /* labelsFor answers a LIST with the misses dropped, which is fine when
+     every id is the same kind of thing and useless when they are not - you
+     cannot tell an occupation from a film in the result. This answers a
+     map, so each group can be picked out by its own ids. */
+  function labelsBy(qids) {
+    if (!qids.length) return Promise.resolve({});
+    var url = 'https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&origin=*' +
+      '&props=labels&languages=en&ids=' + qids.slice(0, 12).join('|');
+    return U.jget(url, 9000).then(function (j) {
+      var ents = (j && j.entities) || {}, out = {};
+      qids.forEach(function (q) {
+        var e = ents[q];
+        var v = e && e.labels && e.labels.en && e.labels.en.value;
+        if (v) out[q] = v;
+      });
+      return out;
+    }).catch(function () { return {}; });
+  }
+
   function labelsFor(qids) {
     if (!qids.length) return Promise.resolve([]);
     var url = 'https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&origin=*' +
@@ -146,7 +165,23 @@ var WIKI = (function () {
           return { ok: false, reason: 'deceased', page: p, name: p.title };
         }
 
-        return labelsFor(claimIds(e, 'P106')).then(function (jobs) {
+        /* WHAT SOMEBODY POINTING A CAMERA AT AN ACTOR ACTUALLY WANTS.
+
+           "must be able to easily identify movie stars" - and a name on
+           its own barely answers that. The films are the recognition:
+           nine times out of ten the question behind the question is "what
+           do I know them from". P800 is notable works, P166 awards, P27
+           nationality. All three are one extra call, batched into the
+           label lookup that was already being made. */
+        var jobIds = claimIds(e, 'P106').slice(0, 3);
+        var workIds = claimIds(e, 'P800').slice(0, 4);
+        var awardIds = claimIds(e, 'P166').slice(0, 3);
+        var natIds = claimIds(e, 'P27').slice(0, 1);
+        var all = jobIds.concat(workIds, awardIds, natIds);
+        return labelsBy(all).then(function (byId) {
+          var pick = function (ids) {
+            return ids.map(function (q) { return byId[q]; }).filter(Boolean);
+          };
           return {
             ok: true,
             name: p.title,
@@ -155,9 +190,11 @@ var WIKI = (function () {
             thumb: p.thumb,
             url: p.url,
             bornYear: born,
-            occupations: jobs,
-            website: claimValue(e, 'P856') || '',
-            country: null
+            occupations: pick(jobIds),
+            knownFor: pick(workIds),
+            awards: pick(awardIds),
+            country: pick(natIds)[0] || null,
+            website: claimValue(e, 'P856') || ''
           };
         });
       });

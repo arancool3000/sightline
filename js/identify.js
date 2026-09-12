@@ -116,6 +116,34 @@ var IDENT = (function () {
   /* Take the model's raw answer and turn it into the record the sheet draws.
      For a person this is where the living-public-figure gate is applied; a
      failed gate returns a record that deliberately carries NO name. */
+  /* The model only has to propose a person; WIKI.person decides. Below
+     this it is not a proposal, it is noise. */
+  var PERSON_FLOOR = 0.30;
+
+  /* Each candidate through the same gate, in order. The FIRST refusal is
+     what gets reported if they all fail, because that is the one about the
+     model's actual answer - "no article for the third runner-up" would
+     explain nothing. */
+  function tryPeople(names, i, base) {
+    if (i >= names.length) return Promise.resolve(base);
+    return WIKI.person(names[i]).then(function (p) {
+      if (p.ok) {
+        base.wiki = p;
+        base.name = p.name;
+        base.gated = '';
+        base.viaAlt = i > 0 ? names[0] : '';
+        return base;
+      }
+      if (i === 0) {
+        base.gated = p.reason;                   // deceased | no-article | not-a-person
+        base.deceasedName = (p.reason === 'deceased') ? (p.name || names[0]) : '';
+        base.diedYear = p.diedYear || null;
+        base.name = '';                          // never draw an ungated name
+      }
+      return tryPeople(names, i + 1, base);
+    }, function () { return tryPeople(names, i + 1, base); });
+  }
+
   function enrich(r, hint) {
     var kind = r.kind || hint || 'object';
     var name = String(r.name || '').trim();
@@ -127,7 +155,23 @@ var IDENT = (function () {
       alt: r.alt || [], wiki: null, gated: ''
     };
 
-    if (!name || conf < SET.get('conf')) {
+    /* WHY A PERSON HAS A DIFFERENT FLOOR.
+
+       "must be able to easily identify movie stars etc."
+
+       The confidence floor is the MODEL'S OWN opinion of itself, and it
+       exists because for an object nothing else checks the answer. For a
+       person something else does, and it is much stronger than a number:
+       the name has to resolve to a living human with a Wikipedia article
+       and a Wikidata entity. Requiring 0.75 of self-belief AND that check
+       is belt and braces to the point of refusing everybody - a model told
+       "never guess at a person" hedges by design and rarely says 0.75, so
+       actors were being thrown away before Wikipedia was ever asked.
+
+       So the model only has to PROPOSE here. The encyclopedia decides. A
+       name still cannot reach the screen without it. */
+    var floor = (kind === 'person') ? PERSON_FLOOR : SET.get('conf');
+    if (!name || conf < floor) {
       base.gated = 'low-confidence';
       base.name = '';
       return Promise.resolve(base);
@@ -135,18 +179,19 @@ var IDENT = (function () {
 
     if (kind === 'person') {
       if (!SET.get('faces')) { base.gated = 'faces-off'; base.name = ''; return Promise.resolve(base); }
-      return WIKI.person(name).then(function (p) {
-        if (!p.ok) {
-          base.gated = p.reason;                 // deceased | no-article | not-a-person
-          base.deceasedName = (p.reason === 'deceased') ? (p.name || name) : '';
-          base.diedYear = p.diedYear || null;
-          base.name = '';                        // never draw an ungated name
-          return base;
-        }
-        base.wiki = p;
-        base.name = p.name;
-        return base;
-      });
+      /* AND THE RUNNERS-UP GET A TURN.
+
+         A face the model is torn over comes back with the right person
+         second: it returns up to three, and only the first was ever
+         checked. Each is put to the same gate, in order, and the first
+         that is a living public figure wins. A wrong first guess is no
+         longer the end of it - and nothing gets through that the gate
+         would not have passed on its own. */
+      var tries = [name].concat(
+        (base.alt || []).map(function (a) { return String(a && a.name ? a.name : a).trim(); })
+      ).filter(Boolean).slice(0, 3);
+
+      return tryPeople(tries, 0, base);
     }
 
     if (kind === 'plant' || kind === 'animal' || kind === 'insect') {
@@ -296,5 +341,5 @@ var IDENT = (function () {
 
   return { forTrack: forTrack, atPoint: atPoint, kindOf: kindOf, busy: busy, fromLocal: fromLocal,
            health: healthOf,
-           status: status, KICKER: KICKER, post: post };
+           status: status, KICKER: KICKER, post: post, _enrich: enrich };
 })();

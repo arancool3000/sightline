@@ -123,13 +123,30 @@ function promptFor(hint) {
     '- "alt" holds up to three runner-up possibilities.\n';
 
   if (hint === 'person') {
+    /* THE MODEL PROPOSES; THE ENCYCLOPEDIA DECIDES.
+
+       This used to end with "never guess", and the client then ALSO
+       required 0.75 of self-belief before it would look the name up. Two
+       gates on the same doubt, so an actor whose name the model knew
+       perfectly well was thrown away for hedging - "must be able to easily
+       identify movie stars etc".
+
+       Nothing here reaches a screen unless the name resolves to a living
+       human with a Wikipedia article, so the useful thing this end can do
+       is OFFER ITS CANDIDATES and be honest about how sure it is. A name
+       it is unsure of costs nothing: the gate refuses it. A name it
+       withholds is lost for good. */
     return common +
       'This crop shows a person.\n' +
-      'Identify them ONLY if they are a widely photographed public figure - the kind of person who has a ' +
-      'Wikipedia article and whose pictures appear across the web: heads of state, major athletes, famous ' +
-      'musicians and actors, well-known scientists and writers.\n' +
-      'If this is an ordinary private individual, or you are working from a mere resemblance, you MUST return ' +
-      'an empty name with confidence 0. Never name someone because they look like someone. Never guess.\n' +
+      'Name them if they are a widely photographed public figure - the kind of person who has a Wikipedia ' +
+      'article and whose pictures appear across the web: heads of state, major athletes, actors, musicians, ' +
+      'well-known scientists and writers.\n' +
+      'Put your best candidate in "name" and up to three others in "alt", best first. Every one of them is ' +
+      'checked against Wikipedia before anything is shown, so an uncertain candidate is worth offering - ' +
+      'give it a low confidence rather than withholding it. Include the alternatives whenever the face could ' +
+      'reasonably be more than one well-known person.\n' +
+      'If this is an ordinary private individual, return an empty name, no alternatives, and confidence 0. ' +
+      'Never invent a name for someone who is not famous.\n' +
       'Set kind to "person".';
   }
   if (hint === 'plant') {

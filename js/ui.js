@@ -700,10 +700,23 @@ var UI = (function () {
     }
 
     if (rec.kind === 'person') {
+      /* The films come FIRST. Nine times out of ten the question behind
+         "who is that" is "what do I know them from", and "Actor" does not
+         answer it. grid() drops an empty row, so somebody with no listed
+         works simply shows fewer. */
       html += grid([
-        ['Known for', (w.occupations || []).slice(0, 3).join(', ')],
+        ['Known for', (w.knownFor || []).slice(0, 4).join(', ')],
+        ['Work', (w.occupations || []).slice(0, 3).join(', ')],
+        ['Awards', (w.awards || []).slice(0, 2).join(', ')],
+        ['From', w.country || ''],
         ['Born', w.bornYear ? String(w.bornYear) : '']
       ]);
+      /* If the name came from a runner-up, say so. A reader who can see
+         the model's first answer was wrong can judge the second. */
+      if (rec.viaAlt) {
+        html += '<p class="d-note">Its first guess was ' + U.esc(rec.viaAlt) +
+                ', which no living public figure matched. This one did.</p>';
+      }
     } else if (rec.kind === 'plant' || rec.kind === 'animal' || rec.kind === 'insect') {
       /* Everything Wikidata will say about the species, which is the part of
          this that is genuinely uncapped. grid() drops any row with no value,
