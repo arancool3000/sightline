@@ -21,7 +21,10 @@ var SET = (function () {
     capBoth: true,
     mode: 'all',
     facing: 'environment',
-    apiCleared: false
+    apiCleared: false,
+    /* Only for an endpoint you run yourself - a Pi behind a tunnel needs a
+       lock on the door. The Cloudflare Worker does not use one. */
+    apiKey: ''
   };
 
   var state = Object.assign({}, DEFAULTS);
@@ -59,6 +62,11 @@ var SET = (function () {
     all: function () { return state; },
     /* An endpoint is configured and looks like a URL we can actually call. */
     hasApi: function () { return /^https?:\/\/.+/i.test(state.apiBase || ''); },
-    api: function (path) { return String(state.apiBase || '').replace(/\/+$/, '') + path; }
+    api: function (path) { return String(state.apiBase || '').replace(/\/+$/, '') + path; },
+    apiHeaders: function () {
+      var h = { 'Content-Type': 'application/json' };
+      if (state.apiKey) h['X-Sightline-Key'] = state.apiKey;
+      return h;
+    }
   };
 })();

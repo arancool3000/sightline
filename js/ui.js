@@ -653,6 +653,12 @@ var UI = (function () {
     U.$('#optCapTo').addEventListener('change', function () { SET.set('capTo', this.value); });
     U.$('#optCapBoth').addEventListener('change', function () { SET.set('capBoth', this.checked); });
 
+    var keyEl = U.$('#apiKey');
+    if (keyEl) {
+      keyEl.value = SET.get('apiKey') || '';
+      keyEl.addEventListener('change', function () { SET.set('apiKey', this.value.trim()); });
+    }
+
     var agree = U.$('#btnAgree');
     if (agree) agree.addEventListener('click', function () {
       if (!SET.hasApi()) { setText('#agreeStatus', 'Set an endpoint first.'); return; }

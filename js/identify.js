@@ -103,7 +103,7 @@ var IDENT = (function () {
   function post(path, body) {
     return U.fetchT(SET.api(path), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: SET.apiHeaders(),
       body: JSON.stringify(body)
     }, 20000).then(function (r) {
       if (r.status === 429) throw new Error('429 quota');

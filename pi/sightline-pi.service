@@ -1,0 +1,22 @@
+# cp this to /etc/systemd/system/ then:
+#   sudo systemctl enable --now sightline-pi
+[Unit]
+Description=Sightline identification endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/sightline/pi
+# Put SIGHTLINE_SECRET in this file, readable only by root:
+#   echo 'SIGHTLINE_SECRET=...' | sudo tee /etc/sightline.env && sudo chmod 600 /etc/sightline.env
+EnvironmentFile=/etc/sightline.env
+Environment=PORT=8088
+Environment=LLAMA_URL=http://127.0.0.1:8080
+ExecStart=/usr/bin/node server.mjs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

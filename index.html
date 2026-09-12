@@ -165,6 +165,12 @@
         not the app's - this sends the word "agree" to your own Worker, once.</p>
         <button id="btnAgree" class="obtn">ACCEPT THE MODEL LICENCE</button>
         <div id="agreeStatus" class="status"></div>
+
+        <label class="slabel" for="apiKey">ENDPOINT KEY</label>
+        <input id="apiKey" type="password" placeholder="only for an endpoint you run yourself" autocomplete="off" spellcheck="false">
+        <p class="shelp">Leave this empty for the Cloudflare Worker. A machine of your own reachable from the
+        internet - a Raspberry Pi behind a tunnel, say - needs a lock on the door, and this is the key it
+        expects. See <span class="mono">pi/README.md</span> in the repository.</p>
       </div>
 
       <div class="sgroup">
