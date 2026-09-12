@@ -210,6 +210,79 @@ var IDENT = (function () {
 
   /* ---- entry points ---------------------------------------------------- */
 
+  /* ---- A TAP IS A REQUEST, AND IT SPENDS THE GOOD MODEL ----
+
+     "whenever you tap on an object it must use ai and fall back to
+      wikipedia if out of free gemini. that only should happen when you
+      tap on that object."
+
+     Both halves matter. A tap is somebody asking, so it is worth a real
+     answer from the best thing available - the reader's own Gemini key,
+     straight from the device. And ONLY a tap: nothing on this path runs
+     by itself, so a camera pointed at a busy street does not quietly
+     spend an allowance nobody asked it to.
+
+     When Gemini has no key, is turned away, or answers nothing useful,
+     the old path is still there underneath: the on-device label resolved
+     through Wikipedia, then the Worker. Falling back is not failing.
+
+     ⚠ The prompt below says the same thing as the Worker's promptFor().
+     They cannot share a file - one runs in a browser and one in a Worker,
+     and there is no build step - so if you change what an answer should
+     contain, change both. The SHAPE is enforced in one place either way:
+     enrich() is what every answer goes through. */
+  var TAP_RULES =
+    'You are a precise visual identification engine. Identify the MAIN subject of this image.\n' +
+    'Answer as JSON only: {"kind":"person|plant|animal|insect|vehicle|object","name":"","confidence":0.0,' +
+    '"scientific":"","note":"","alt":["",""],"specs":[{"k":"","v":""}]}\n' +
+    '- "confidence" is your honest probability from 0 to 1 that the name is exactly right.\n' +
+    '- A generic noun is useless. "Chair", "printer", "laptop" tell the viewer nothing they cannot see: ' +
+    'give the specific identity - the make, model and generation, the breed, the species.\n' +
+    '- If nothing can be identified, return an empty name and confidence 0.\n';
+  var TAP_HINT = {
+    person: 'This is a person. Name them if they are a widely photographed public figure with a Wikipedia ' +
+            'article. Put your best candidate in "name" and up to three others in "alt", best first - every ' +
+            'one is checked against Wikipedia before anything is shown, so an uncertain candidate is worth ' +
+            'offering. If this is an ordinary private individual, return an empty name and confidence 0.',
+    plant:  'This is a plant, tree, flower or fungus. Common name in "name", binomial in "scientific".',
+    animal: 'This is an animal. Species, or the breed for a domestic animal, in "name"; binomial in "scientific".',
+    insect: 'This is an insect or other small invertebrate. Common name in "name", binomial in "scientific". ' +
+            'Say in "note" whether it stings or bites.',
+    vehicle:'This is a vehicle. Make, model and generation in "name" (for example "Subaru Impreza WRX (GC8)"). ' +
+            'Production years and body style in "note".',
+    object: 'This is a manufactured object. Give the full model name and manufacturer in "name". Fill "specs" ' +
+            'with what someone looking at it would want, as {k,v} pairs, in this order where you can: ' +
+            'Manufacturer, Model, Released, Price from, Where to buy, and one standout specification. ' +
+            'Omit any row you are unsure of - a missing row is honest, an invented price is not.'
+  };
+
+  /* Only openTrack calls this. Answers a record, or null to mean "use the
+     path that was already there". */
+  function tapAsk(t) {
+    if (!window.GEM || !GEM.has || !GEM.has()) return Promise.resolve(null);
+    var hint = kindOf(t.cls);
+    if (hint === 'person' && !SET.get('faces')) return Promise.resolve(null);
+    var img = CAM.crop(t.raw, hint === 'person' ? 384 : 512, hint === 'person' ? 0.25 : 0.12);
+    if (!img) return Promise.resolve(null);
+    var prompt = TAP_RULES + (TAP_HINT[hint] || TAP_HINT.object);
+    return GEM.ask(prompt, img, { json: true, maxTokens: 500, temperature: 0.1 })
+      .then(function (r) {
+        if (!r || !r.ok) return null;                    // no key, turned away, or nothing
+        var raw = r.json;
+        if (!raw) { try { raw = JSON.parse(r.text); } catch (e) { return null; } }
+        if (!raw || typeof raw !== 'object') return null;
+        raw.kind = raw.kind || hint;
+        /* Same gate as every other answer: enrich() decides what may be
+           shown, so a tap cannot name somebody the rest of the app would
+           refuse to. */
+        return enrich(raw, hint).then(function (rec) {
+          rec.source = 'gemini';
+          rec.model = r.model;
+          return rec;
+        });
+      }, function () { return null; });
+  }
+
   function forTrack(t) {
     if (t.state !== 'new') return;
     var hint = kindOf(t.cls);
@@ -341,5 +414,5 @@ var IDENT = (function () {
 
   return { forTrack: forTrack, atPoint: atPoint, kindOf: kindOf, busy: busy, fromLocal: fromLocal,
            health: healthOf,
-           status: status, KICKER: KICKER, post: post, _enrich: enrich };
+           status: status, KICKER: KICKER, post: post, _enrich: enrich, tapAsk: tapAsk };
 })();

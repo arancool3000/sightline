@@ -767,6 +767,31 @@ var UI = (function () {
     openTrackId = t.id;
     if (t.state === 'done' && t.data) { showSheet(record(t.data)); return; }
 
+    /* A TAP ASKS THE AI FIRST.
+
+       "whenever you tap on an object it must use ai and fall back to
+        wikipedia if out of free gemini. that only should happen when you
+        tap on that object."
+
+       So the reader's own key gets the question, and the older path -
+       the on-device label through Wikipedia, then the Worker - is what
+       happens when there is no key or Gemini has been turned away. They
+       do not both run: spending the allowance AND the fallback for one
+       tap would be paying twice for one answer. */
+    if (window.GEM && GEM.has && GEM.has()) {
+      openPending('Asking about ' + U.titleCase(t.cls) + '\u2026');
+      IDENT.tapAsk(t).then(function (rec) {
+        if (openTrackId !== t.id) return;
+        if (rec) { t.state = 'done'; t.data = rec; showSheet(record(rec)); return; }
+        fallbackTrack(t);
+      }, function () { if (openTrackId === t.id) fallbackTrack(t); });
+      return;
+    }
+    fallbackTrack(t);
+  }
+
+  /* What the app did before there was a key, and still does without one. */
+  function fallbackTrack(t) {
     /* An on-device label is a real answer: resolve its page straight from
        Wikipedia, which needs no key and no endpoint. */
     if (t.local && t.state !== 'queued') {
@@ -777,13 +802,19 @@ var UI = (function () {
       if (t.state === 'skipped' || !SET.hasApi()) return;
     }
 
-    if (t.state === 'queued') { openPending('Identifying ' + U.titleCase(t.cls) + '…'); return; }
+    if (t.state === 'queued') { openPending('Identifying ' + U.titleCase(t.cls) + '\u2026'); return; }
     if (t.state === 'skipped' && t.reason === 'faces-off') { showSheet(gatedPerson({ kind: 'person', gated: 'faces-off' })); return; }
     if (t.state === 'failed' && !t.local) { openError(t.reason || ''); return; }
+    if (!SET.hasApi()) {
+      /* No key and no endpoint: the on-device label is all there is, and
+         if there is not even one, say so rather than spinning. */
+      if (!t.local) openError('no-endpoint');
+      return;
+    }
 
     t.state = 'new';
     IDENT.forTrack(t);
-    openPending('Identifying ' + U.titleCase(t.cls) + '…');
+    openPending('Identifying ' + U.titleCase(t.cls) + '\u2026');
   }
 
   /* A picture that will not load leaves a black box with corner marks on it,

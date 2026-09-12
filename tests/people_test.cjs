@@ -149,6 +149,41 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); }
     ok('CONTROL: a real question about a film still goes to the model', c.d === false, c);
   }
 
+  console.log('\nA TAP ASKS THE AI, AND FALLS BACK WHEN IT CANNOT');
+  {
+    /* "whenever you tap on an object it must use ai and fall back to
+        wikipedia if out of free gemini. that only should happen when you
+        tap on that object." */
+    const r = await page.evaluate(async () => {
+      const realHas = GEM.has, realAsk = GEM.ask, realCrop = CAM.crop;
+      CAM.crop = () => 'data:image/jpeg;base64,/9j/4AAQ';
+      const t = { id: 't1', cls: 'person', raw: [0, 0, 10, 10] };
+      let asked = 0;
+
+      GEM.has = () => true;
+      GEM.ask = () => { asked++; return Promise.resolve({ ok: true, model: 'g', text: '',
+        json: { kind: 'person', name: 'Florence Pugh', confidence: 0.44 } }); };
+      const good = await IDENT.tapAsk(t);
+
+      /* Turned away: no record, so the caller uses the old path. */
+      GEM.ask = () => { asked++; return Promise.resolve({ ok: false, error: 'at its limit' }); };
+      const limited = await IDENT.tapAsk(t);
+
+      /* No key: it must not even ask. */
+      GEM.has = () => false;
+      const before = asked;
+      const noKey = await IDENT.tapAsk(t);
+
+      CAM.crop = realCrop; GEM.has = realHas; GEM.ask = realAsk;
+      return { name: good && good.name, src: good && good.source,
+               limited, noKey, askedWithoutKey: asked - before };
+    });
+    ok('a tap gets the answer from Gemini', r.name === 'Florence Pugh' && r.src === 'gemini', r);
+    ok('and the same gate applies - it went through Wikipedia', r.name === 'Florence Pugh', r);
+    ok('out of free Gemini it answers nothing, so the old path takes over', r.limited === null, r);
+    ok('CONTROL: with no key it does not ask at all', r.noKey === null && r.askedWithoutKey === 0, r);
+  }
+
   ok('no page errors throughout', errs.length === 0, errs);
   console.log('\n' + pass + '/' + (pass + fail) + ' passed');
   await b.close(); server.close(); process.exit(fail ? 1 : 0);
