@@ -161,7 +161,10 @@ input,select{font:inherit;color:inherit}
 .cap-meta{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:rgba(190,225,255,.7);
   padding:4px 10px}
 .cap-meta:empty{display:none}
-body.caps-on #radarPod,body.caps-on #nearCard,body.caps-on #sceneChip{display:none}
+/* Captions must not take the rest of the display away with them - the map
+   in particular. They sit above the bottom row instead. */
+body.caps-on #captionBar{bottom:calc(var(--safe-b) + 152px)}
+body.caps-on #sceneChip{display:none}
 
 /* ---------- the dock ---------- */
 #rail{

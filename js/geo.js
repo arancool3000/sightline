@@ -72,12 +72,27 @@ var GEO = (function () {
     listenCompass();
   }
 
+  /* The compass has to reach the screen as it turns. It was only stored, and
+     nothing redrew until the next position fix, so the map answered the way
+     you were facing a minute ago until something else happened to nudge it.
+
+     Emitting on every event would repaint a canvas sixty times a second over
+     a live camera, so it is throttled by angle and by time - which is also
+     what stops a device sitting still from redrawing on sensor noise. */
+  var lastEmitHead = null, lastHeadAt = 0;
   function listenCompass() {
     function handle(e) {
       var h = null;
       if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;   // iOS, already true north
       else if (typeof e.alpha === 'number') h = e.absolute === false ? null : (360 - e.alpha) % 360;
-      if (h !== null && !isNaN(h)) { heading = h; }
+      if (h === null || isNaN(h)) return;
+      heading = h;
+      var now = Date.now();
+      var moved = lastEmitHead === null ? 999 :
+                  Math.abs(((h - lastEmitHead + 540) % 360) - 180);
+      if (moved < 2 || (now - lastHeadAt) < 90) return;
+      lastEmitHead = h; lastHeadAt = now;
+      emit();
     }
     window.addEventListener('deviceorientationabsolute', handle, true);
     window.addEventListener('deviceorientation', handle, true);

@@ -83,6 +83,116 @@ var CAPS = (function () {
   }
 
   function supported() { return !!SR; }
+
+  /* ---- which language is being spoken --------------------------------
+
+     Web Speech cannot detect a language; it listens for ONE and returns its
+     best attempt in that language. So "auto" meant the device language, and
+     a French speaker got English phonetic mush that no translator could
+     rescue.
+
+     Two halves, and both are needed.
+
+     One: read the SCRIPT and the common words of whatever text comes back,
+     which is enough to know what to translate FROM. Entirely on-device.
+
+     Two: when the engine keeps reporting low confidence, it is probably
+     listening for the wrong language. Rotate through a short list of
+     candidates and keep the one that scores best - an auto language lock.  */
+
+  var SCRIPT = [
+    [/[\u0600-\u06ff]/, 'ar'], [/[\u0400-\u04ff]/, 'ru'], [/[\u0370-\u03ff]/, 'el'],
+    [/[\u0590-\u05ff]/, 'he'], [/[\u0900-\u097f]/, 'hi'], [/[\u0e00-\u0e7f]/, 'th'],
+    [/[\uac00-\ud7af]/, 'ko'], [/[\u3040-\u30ff]/, 'ja'], [/[\u4e00-\u9fff]/, 'zh']
+  ];
+
+  /* Function words, which are the cheapest reliable signal in Latin script.
+     Short lists on purpose: these are meant to separate languages, not to
+     be a dictionary. */
+  var WORDS = {
+    en: 'the and is it you that of to in was for with have this are not but',
+    es: 'el la los las que de y en un una por con para no es se pero como',
+    fr: 'le la les des que de et en un une pour avec pas est je ne vous',
+    de: 'der die das und ist nicht ein eine mit von zu auf für ich sie aber',
+    it: 'il la le che di e un una per con non sono come questo ma anche',
+    pt: 'o a os as que de e em um uma por com nao para mas como isso',
+    nl: 'de het een en is niet van met voor op maar zijn dat ik je',
+    pl: 'nie to jest i w na z do sie że ale jak tego po co',
+    tr: 've bir bu da de için ile ne var yok ama gibi daha çok en',
+    id: 'yang dan di ke dari itu ini untuk tidak dengan pada saya kamu ada',
+    ro: 'si de la in un o care nu este cu pentru dar ca mai sa',
+    sv: 'och att det som en är för på av med inte den har jag'
+  };
+  var WORDSET = (function () {
+    var m = {};
+    Object.keys(WORDS).forEach(function (k) {
+      m[k] = {};
+      WORDS[k].split(' ').forEach(function (w) { m[k][w] = 1; });
+    });
+    return m;
+  })();
+
+  function detectLang(text) {
+    var t = String(text || '');
+    if (!t.trim()) return '';
+    for (var i = 0; i < SCRIPT.length; i++) if (SCRIPT[i][0].test(t)) return SCRIPT[i][1];
+
+    var words = t.toLowerCase().replace(/[^a-zà-ÿğışçöü\s']/g, ' ').split(/\s+/).filter(Boolean);
+    if (words.length < 2) return '';
+    var best = '', bestScore = 0;
+    Object.keys(WORDSET).forEach(function (lang) {
+      var n = 0;
+      for (var i = 0; i < words.length; i++) if (WORDSET[lang][words[i]]) n++;
+      var score = n / words.length;
+      if (score > bestScore) { bestScore = score; best = lang; }
+    });
+    /* Below this it is a guess, and a guess about the source language makes
+       the translation worse rather than better. */
+    return bestScore >= 0.12 ? best : '';
+  }
+
+  /* ---- the auto language lock ---- */
+  var CANDIDATES = ['en-GB', 'es-ES', 'fr-FR', 'de-DE', 'ar-SA', 'hi-IN', 'zh-CN', 'pl-PL'];
+  var confHist = [];
+  var tried = {}, locked = false;
+
+  function candidateList() {
+    var dev = navigator.language || 'en-GB';
+    var out = [dev];
+    CANDIDATES.forEach(function (c) { if (out.indexOf(c) === -1) out.push(c); });
+    return out;
+  }
+
+  /* Called with each finished result's own confidence. Six poor ones in a
+     row means we are listening for the wrong language. */
+  function judge(conf, text) {
+    if (SET.get('capFrom') !== 'auto' || locked) return;
+    var heard = detectLang(text);
+    if (heard && heard === shortOf(rec ? rec.lang : '')) { locked = true; return; }
+    confHist.push(typeof conf === 'number' ? conf : 0);
+    while (confHist.length > 6) confHist.shift();
+    if (confHist.length < 6) return;
+    var mean = confHist.reduce(function (a, b) { return a + b; }, 0) / confHist.length;
+    if (mean >= 0.55) { locked = true; return; }
+
+    /* If the text itself looks like a language, go straight to it rather
+       than working through the list. */
+    var want = null;
+    if (heard) {
+      candidateList().forEach(function (c) { if (!want && shortOf(c) === heard) want = c; });
+    }
+    if (!want) {
+      var list = candidateList();
+      for (var i = 0; i < list.length; i++) if (!tried[list[i]]) { want = list[i]; break; }
+    }
+    if (!want || want === (rec && rec.lang)) return;
+    tried[want] = 1;
+    confHist = [];
+    autoLang = want;
+    note('LISTENING FOR ' + want.toUpperCase());
+    try { if (rec) rec.abort(); } catch (e) {}
+  }
+  var autoLang = '';
   function health() { return { supported: !!SR, wantOn: wantOn, listening: on,
                                note: lastNote, netFails: netFails,
                                quietMs: lastSign ? Date.now() - lastSign : -1 }; }
@@ -90,17 +200,22 @@ var CAPS = (function () {
   function srcLang() {
     var v = SET.get('capFrom');
     if (v && v !== 'auto') return v;
-    return navigator.language || 'en-GB';
+    return autoLang || navigator.language || 'en-GB';
   }
   function shortOf(code) { return String(code || '').split('-')[0].toLowerCase(); }
 
   function start() {
+    wantOn = true;
     if (!supported()) {
+      /* No recogniser in this browser. Rather than refusing - which is what
+         "captions don't work" looked like on the owner's iPad - record a few
+         seconds at a time and have them transcribed. */
+      if (canRecord()) { note('STARTING'); return startRecording(); }
       note('NOT SUPPORTED BY THIS BROWSER');
-      U.toast('This browser has no speech recognition. Chrome and Edge have it; Safari on iOS often does not.', 6000);
+      U.toast('This browser has no speech recognition, and there is no endpoint set to transcribe audio instead.', 6500);
+      wantOn = false;
       return false;
     }
-    wantOn = true;
     netFails = 0;
     sign();
     note('STARTING');
@@ -128,13 +243,14 @@ var CAPS = (function () {
       note('LISTENING');
       var fresh = '';
       interim = '';
+      var conf = null;
       for (var i = ev.resultIndex; i < ev.results.length; i++) {
         var r = ev.results[i];
-        if (r.isFinal) fresh += r[0].transcript;
+        if (r.isFinal) { fresh += r[0].transcript; conf = r[0].confidence; }
         else interim += r[0].transcript;
       }
       if (interim) UI.captionDraw(lines, interim, null);
-      if (fresh.trim()) push(fresh.trim());
+      if (fresh.trim()) { judge(conf, fresh); push(fresh.trim()); }
     };
 
     rec.onerror = function (ev) {
@@ -151,12 +267,18 @@ var CAPS = (function () {
       if (e === 'no-speech') { note('NO SPEECH HEARD'); return; }
       if (e === 'aborted') { return; }
       if (e === 'network') {
-        /* Safari sends the audio to a server to be recognised, and that
-           request fails often. Backing off beats hammering it, and saying so
-           beats an empty bar. */
+        /* Safari sends the audio away to be recognised and that request
+           fails often. After a few goes, stop waiting for it and record
+           instead - the app's own transcription needs nothing from the
+           browser but a microphone. */
         netFails++;
-        note(netFails > 3 ? 'SPEECH SERVICE UNREACHABLE - STILL TRYING'
-                          : 'RECONNECTING (' + netFails + ')');
+        if (netFails > 3 && canRecord() && !recording) {
+          note('SWITCHING TO RECORDED CAPTIONS');
+          try { if (rec) rec.abort(); } catch (e2) {}
+          startRecording();
+          return;
+        }
+        note('RECONNECTING (' + netFails + ')');
         return;
       }
       note(String(e || 'error').toUpperCase().replace(/-/g, ' '));
@@ -181,6 +303,103 @@ var CAPS = (function () {
     catch (e) { on = false; clearTimeout(restartTimer); restartTimer = setTimeout(spin, 600); }
   }
 
+  /* ---- recorded captions -----------------------------------------------
+
+     The fallback, and on some phones the only thing that works at all. A few
+     seconds of audio at a time go to the endpoint's Whisper route, which
+     returns the words AND the language it heard - so translating into
+     English needs nobody to say what language is being spoken.
+
+     Only ever a few seconds are held, in memory, and each clip is discarded
+     the moment it has been sent. */
+  var mediaStream = null, recorder = null, recording = false, chunkTimer = null;
+  var CHUNK_MS = 4500;
+
+  function canRecord() {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+              window.MediaRecorder && SET.hasApi());
+  }
+
+  function startRecording() {
+    if (recording) return true;
+    recording = true;
+    note('ASKING FOR THE MICROPHONE');
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
+      if (!wantOn) { st.getTracks().forEach(function (t) { t.stop(); }); recording = false; return; }
+      mediaStream = st;
+      note('LISTENING');
+      UI.captionState('listening');
+      cycle();
+    }).catch(function (e) {
+      recording = false;
+      wantOn = false;
+      note('MICROPHONE BLOCKED');
+      UI.captionState('denied');
+      U.toast('Captions need the microphone. Allow it and press CC again.', 5000);
+    });
+    return true;
+  }
+
+  /* One clip at a time: start, wait, stop, send, repeat. Chunking a single
+     long recording does not work - a slice of a webm stream is not a file
+     the decoder can open on its own. */
+  function cycle() {
+    if (!wantOn || !mediaStream) return;
+    var parts = [];
+    var mr;
+    try { mr = new MediaRecorder(mediaStream, pickMime()); }
+    catch (e) { try { mr = new MediaRecorder(mediaStream); } catch (e2) { note('CANNOT RECORD HERE'); return; } }
+    recorder = mr;
+    mr.ondataavailable = function (ev) { if (ev.data && ev.data.size) parts.push(ev.data); };
+    mr.onstop = function () {
+      if (parts.length) send(new Blob(parts, { type: mr.mimeType || 'audio/webm' }));
+      parts = [];
+      if (wantOn) chunkTimer = setTimeout(cycle, 60);
+    };
+    try { mr.start(); } catch (e) { note('CANNOT RECORD HERE'); return; }
+    sign();
+    chunkTimer = setTimeout(function () {
+      try { if (mr.state !== 'inactive') mr.stop(); } catch (e) {}
+    }, CHUNK_MS);
+  }
+
+  function pickMime() {
+    var want = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    for (var i = 0; i < want.length; i++) {
+      if (window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(want[i])) {
+        return { mimeType: want[i] };
+      }
+    }
+    return {};
+  }
+
+  function send(blob) {
+    if (!wantOn || blob.size < 2000) return;      // a clip of silence
+    var fr = new FileReader();
+    fr.onload = function () {
+      if (!wantOn) return;
+      sign();
+      IDENT.post('/v1/transcribe', { audio: String(fr.result) })
+        .then(function (r) {
+          if (!wantOn) return;
+          if (r && r.ok && r.text) { note('LISTENING'); push(r.text.trim(), r.language || ''); }
+          else note('NOTHING HEARD');
+        })
+        .catch(function (e) {
+          note('TRANSCRIBE FAILED - ' + String(e && e.message || e).slice(0, 40).toUpperCase());
+        });
+    };
+    fr.readAsDataURL(blob);
+  }
+
+  function stopRecording() {
+    recording = false;
+    clearTimeout(chunkTimer);
+    try { if (recorder && recorder.state !== 'inactive') recorder.stop(); } catch (e) {}
+    recorder = null;
+    if (mediaStream) { mediaStream.getTracks().forEach(function (t) { t.stop(); }); mediaStream = null; }
+  }
+
   /* Stopping CLEARS. Leaving the text on screen after the user switched
      captions off is the bug this fixes, and making every caller remember to
      call clear() separately is how it would come back. */
@@ -189,6 +408,8 @@ var CAPS = (function () {
     clearTimeout(restartTimer);
     clearInterval(watchdog); watchdog = null;
     netFails = 0;
+    confHist = []; tried = {}; locked = false; autoLang = '';
+    stopRecording();
     note('');
     if (rec) {
       /* abort() discards a pending utterance; stop() delivers it, which is
@@ -205,15 +426,22 @@ var CAPS = (function () {
 
   function clear() { lines = []; interim = ''; UI.captionDraw(lines, '', null); }
 
-  function push(text) {
+  function push(text, heardLang) {
     if (!wantOn) return;
     var line = { src: text, out: '', pending: false };
     lines.push(line);
     while (lines.length > 4) lines.shift();
     UI.captionDraw(lines, '', null);
 
-    var to = SET.get('capTo');
-    var from = shortOf(srcLang());
+    var to = SET.get('capTo') || 'en';
+    /* The language is read off the words that came back, not off a setting.
+       That is what makes "hear French, read English" work without the
+       listener having to tell the app what they are about to hear. */
+    /* Whisper says which language it heard, which beats guessing from the
+       words; the word-based detector is the fallback for the browser's own
+       recogniser, which says nothing. */
+    var from = shortOf(heardLang || '') || detectLang(text) || shortOf(srcLang());
+    line.from = from;
     if (!to || to === from) { line.out = text; UI.captionDraw(lines, interim, null); return; }
 
     var key = from + '>' + to + ':' + text;
@@ -256,5 +484,6 @@ var CAPS = (function () {
 
   return { LANGS: LANGS, TARGETS: TARGETS, supported: supported, start: start,
            stop: stop, clear: clear, relang: relang, running: running,
-           shortOf: shortOf, health: health };
+           shortOf: shortOf, health: health, detectLang: detectLang,
+           canRecord: canRecord, recording: function () { return recording; } };
 })();

@@ -24,6 +24,7 @@ const DEFAULTS = {
   MODEL: 'gemini-2.0-flash',
   CF_VISION_MODEL: '@cf/meta/llama-3.2-11b-vision-instruct',
   CF_TRANSLATE_MODEL: '@cf/meta/m2m100-1.2b',
+  CF_STT_MODEL: '@cf/openai/whisper',
   ALLOW_ORIGIN: '*',
   RL_BURST: '40',        // requests per IP per window
   RL_WINDOW: '60',       // seconds
@@ -551,6 +552,33 @@ export default {
         return r.ok ? json(r, 200, env) : err(r.error, 502, env);
       } catch (e) {
         return err('translation failed', 502, env);
+      }
+    }
+
+    /* ---- transcribe ----
+
+       Web Speech recognition is missing or broken on a great many phones -
+       Safari in particular - and when it fails it fails silently, which is
+       the "captions don't work" report. This route is the way round it that
+       needs no key: Whisper runs on the same AI binding as identification,
+       transcribes a few seconds of audio and says which language it heard,
+       which is also what makes translate-to-English work without the
+       listener naming the language first. */
+    if (path === '/v1/transcribe') {
+      if (!env.AI) return err('no AI binding on this endpoint', 501, env);
+      const audio = String(body.audio || '');
+      const b64 = audio.indexOf(',') !== -1 ? audio.slice(audio.indexOf(',') + 1) : audio;
+      if (!b64) return err('audio is required', 400, env);
+      if (b64.length > 900000) return err('audio too long', 413, env);
+      try {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const out = await env.AI.run(cfg(env, 'CF_STT_MODEL'), { audio: Array.from(bytes) });
+        const text = String((out && (out.text || out.transcription)) || '').trim();
+        return json({ ok: true, text, language: (out && out.language) || '', via: 'whisper' }, 200, env);
+      } catch (e) {
+        return err('transcription failed', 502, env, { detail: String(e && e.message || e).slice(0, 160) });
       }
     }
 
