@@ -195,17 +195,21 @@ let BASE = '';
       const body = r.request().postData() || '';
       if (!isRoads(body)) return r.fulfill({ status: 200, contentType: 'application/json', body: bldBody(4) });
       roadCalls++;
-      /* Overpass under load: every slot taken. */
-      if (roadCalls === 1) return r.fulfill({ status: 429, contentType: 'text/plain',
-                                              headers: { 'Retry-After': '3' }, body: 'slot unavailable' });
+      /* Overpass under load: every slot taken, on BOTH mirrors.
+         Refusing only the first is not a discriminator - a build that
+         treats 429 as a failure simply falls through to the second mirror
+         and looks fine. With both busy, only a build that waits and asks
+         again ever gets the road. */
+      if (roadCalls <= 2) return r.fulfill({ status: 429, contentType: 'text/plain',
+                                             headers: { 'Retry-After': '3' }, body: 'slot unavailable' });
       return r.fulfill({ status: 200, contentType: 'application/json', body: roadsBody(7) });
     });
     await page.evaluate(() => MAP.setOpen(true));
     const got = await page.waitForFunction(() => ROADS.near().length > 0, null, { timeout: 25000 })
                           .then(() => true).catch(() => false);
-    ok('a 429 is retried rather than blacklisting the tile', got === true,
+    ok('every mirror busy still ends with the road on the map', got === true,
        { roadCalls, roads: await page.evaluate(() => ROADS.near().length) });
-    ok('SETUP: it really was refused the first time', roadCalls >= 2, roadCalls);
+    ok('SETUP: it really was refused, more than once', roadCalls >= 3, roadCalls);
     await ctx.close();
   }
 
