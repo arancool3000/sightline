@@ -479,9 +479,34 @@ var UI = (function () {
      An empty screen and a broken engine looked identical before this, which
      is how several rounds went by with nothing to diagnose from. */
   var lastStatus = '';
-  function status(msg, cls) {
+  /* ---- WHO OWNS THE STATUS STRIP ----
+
+     "mic button listening popup dissapears almost immediately."
+
+     Two writers, one slot, and no idea which of them was in charge.
+     statusFromEngine() runs inside draw(), so it writes the strip up to
+     twenty times a second, and once the recogniser is ready what it writes
+     is EMPTY. So "LISTENING - ASK YOUR QUESTION" survived about forty
+     milliseconds. The same was true of "looking for a code" and of every
+     answer the voice gave.
+
+     A message with a HOLD now owns the strip until its time is up. The
+     engine line is background: it writes only when nothing is holding.
+     Holds are always bounded, so a real fault - the recogniser failing -
+     is never suppressed for more than a few seconds. */
+  var holdUntil = 0;
+
+  /* The background line. Yields to anything being held. */
+  function statusBg(msg, cls) {
+    if (performance.now() < holdUntil) return;
+    status(msg, cls);
+  }
+
+  function status(msg, cls, holdMs) {
     var strip = U.$('#statusStrip');
     if (!strip) return;
+    if (holdMs) holdUntil = performance.now() + holdMs;
+    else if (!msg) holdUntil = 0;            // clearing gives the strip back
     msg = String(msg == null ? '' : msg).trim();
     var key = cls + '|' + msg;
     if (key === lastStatus) return;          // guarded: this runs every frame
@@ -538,14 +563,14 @@ var UI = (function () {
     engineLine();
     if (!window.LOCAL || !LOCAL.state) return;
     var st = LOCAL.state();
-    if (st.code === 'ready') { status('', ''); return; }
-    if (st.code === 'loading') { status('LOADING RECOGNISER — FIRST RUN DOWNLOADS ~6MB', 'busy'); return; }
+    if (st.code === 'ready') { statusBg('', ''); return; }
+    if (st.code === 'loading') { statusBg('LOADING RECOGNISER — FIRST RUN DOWNLOADS ~6MB', 'busy'); return; }
     if (st.code === 'retrying') {
-      status('RECOGNISER RETRYING (' + (st.attempt || 1) + '/4) — ' + (st.detail || 'unknown') + stamp(), 'bad');
+      statusBg('RECOGNISER RETRYING (' + (st.attempt || 1) + '/4) — ' + (st.detail || 'unknown') + stamp(), 'bad');
       return;
     }
-    if (st.code === 'erroring') { status('RECOGNISER ERRORING — ' + (st.detail || 'unknown') + stamp(), 'bad'); return; }
-    status('RECOGNISER FAILED — ' + (st.detail || 'unknown') + stamp() + ' — CFG > CLEAR CACHE & RESTART', 'bad');
+    if (st.code === 'erroring') { statusBg('RECOGNISER ERRORING — ' + (st.detail || 'unknown') + stamp(), 'bad'); return; }
+    statusBg('RECOGNISER FAILED — ' + (st.detail || 'unknown') + stamp() + ' — CFG > CLEAR CACHE & RESTART', 'bad');
   }
 
   /* ---------- dossier ---------- */
@@ -1029,7 +1054,7 @@ var UI = (function () {
       sb.addEventListener('click', function () {
         SCAN.burst();
         sb.setAttribute('aria-pressed', 'true');
-        status('LOOKING FOR A CODE\u2026', 'busy');
+        status('LOOKING FOR A CODE\u2026', 'busy', 9000);
         setTimeout(function () {
           sb.setAttribute('aria-pressed', 'false');
           if (!SCAN.bursting()) status('', '');
@@ -1169,10 +1194,15 @@ var UI = (function () {
   }
 
   function voiceEvent(ev) {
-    if (ev.kind === 'awake') { status('LISTENING \u2014 ASK YOUR QUESTION', 'busy'); }
-    else if (ev.kind === 'thinking') { status('\u201c' + ev.question + '\u201d', 'busy'); }
+    if (ev.kind === 'awake') {
+      /* Held for exactly as long as it is really listening, so the strip
+         and the microphone agree. */
+      status('LISTENING \u2014 ASK YOUR QUESTION', 'busy', VOICE.awakeMs());
+    }
+    else if (ev.kind === 'listening') { status('', ''); }
+    else if (ev.kind === 'thinking') { status('\u201c' + ev.question + '\u201d', 'busy', 25000); }
     else if (ev.kind === 'answer') {
-      status(ev.answer.say || '', ev.answer.error ? 'bad' : '');
+      status(ev.answer.say || '', ev.answer.error ? 'bad' : '', 7000);
       setTimeout(function () { status('', ''); }, 7000);
     } else if (ev.kind === 'box' || ev.kind === 'only') {
       voiceFocus = { what: ev.what, colour: ev.colour || '', only: ev.kind === 'only',

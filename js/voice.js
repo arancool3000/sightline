@@ -35,7 +35,7 @@ var VOICE = (function () {
   function onEvent(fn) { listeners.push(fn); }
 
   function state() {
-    return { on: on, awake: awake, thinking: thinking,
+    return { on: on, awake: awake, thinking: thinking, awakeMs: awakeMs(),
              heard: lastSaid, answer: lastAnswer,
              engine: GEM.has() ? 'gemini' : (SET.hasApi() ? 'worker' : 'none') };
   }
@@ -51,6 +51,7 @@ var VOICE = (function () {
   }
 
   function stop() {
+    if (awakeTimer) { clearTimeout(awakeTimer); awakeTimer = 0; }
     on = false; awake = false; thinking = false;
     CAPS.offHeard(heard);
     fire({ kind: 'off' });
@@ -77,10 +78,30 @@ var VOICE = (function () {
     askNow(line);
   }
 
+  var awakeTimer = 0;
+  /* How much longer it is really listening. The strip is held for exactly
+     this, so what is on screen and what the microphone is doing cannot
+     drift apart. */
+  function awakeMs() {
+    var left = awakeUntil - performance.now();
+    return awake && left > 0 ? Math.round(left) : 0;
+  }
+
   function wake() {
     awake = true;
     awakeUntil = performance.now() + AWAKE_MS;
     lastSaid = '';
+    /* Nothing used to close the window except the next thing anybody said,
+       so with nobody speaking it stayed "awake" until it was spoken to.
+       Now the window closes itself and says so. */
+    if (awakeTimer) clearTimeout(awakeTimer);
+    awakeTimer = setTimeout(function () {
+      awakeTimer = 0;
+      if (!awake || thinking) return;
+      if (performance.now() < awakeUntil) return;     // woken again since
+      awake = false;
+      fire({ kind: 'listening' });
+    }, AWAKE_MS + 60);
     fire({ kind: 'awake' });
   }
 
@@ -201,7 +222,7 @@ var VOICE = (function () {
     } catch (e) {}
   }
 
-  return { start: start, stop: stop, state: state, on: onEvent, ask: askNow,
+  return { start: start, stop: stop, state: state, on: onEvent, ask: askNow, awakeMs: awakeMs,
            wake: wake, speak: speak, _heard: heard, _apply: apply,
            WAKE: WAKE, ACTIONS: ACTIONS };
 })();

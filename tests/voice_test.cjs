@@ -167,6 +167,46 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   ok('CONTROL: nor is a sentence with a key in it', keys.words === false, keys);
   ok('and stray spaces around a good key do not refuse it', keys.padded === true, keys);
 
+  /* ---- the listening message has to survive the next frame ----
+
+     "mic button listening popup dissapears almost immediately."
+
+     statusFromEngine() runs inside draw(), twenty times a second, and once
+     the recogniser is ready what it writes is EMPTY - so the listening
+     message lived about forty milliseconds. What is checked is exactly
+     that: wake it, then draw the frames that used to wipe it, and see
+     whether it is still there. */
+  const strip = await page.evaluate(async () => {
+    const read = () => { const el = document.getElementById('statusStrip');
+                         return { hidden: !!el.hidden,
+                                  text: (document.getElementById('statusText')||{}).textContent || '' }; };
+    VOICE.start();
+    VOICE.wake();
+    const atOnce = read();
+    /* The frames that used to clear it. */
+    for (let i = 0; i < 12; i++) { UI.draw([]); await new Promise(r => setTimeout(r, 30)); }
+    const after = read();
+    return { atOnce, after, awakeMs: VOICE.awakeMs() };
+  });
+  ok('SETUP: waking really does put the listening message up',
+     /LISTENING/i.test(strip.atOnce.text) && strip.atOnce.hidden === false, strip.atOnce);
+  ok('and it is still there after the frames that used to wipe it',
+     /LISTENING/i.test(strip.after.text) && strip.after.hidden === false, strip.after);
+  ok('SETUP: it is held for as long as it is really listening',
+     strip.awakeMs > 1000, strip.awakeMs);
+
+  /* CONTROL: a hold that never lets go would bury a real fault, so the
+     strip has to come back to the engine when the window closes. */
+  const back = await page.evaluate(async () => {
+    VOICE.stop();
+    UI.status ? UI.status('HELD', 'busy', 300) : null;
+    await new Promise(r => setTimeout(r, 500));
+    for (let i = 0; i < 4; i++) { UI.draw([]); await new Promise(r => setTimeout(r, 30)); }
+    return (document.getElementById('statusText')||{}).textContent || '';
+  });
+  ok('CONTROL: once the hold lapses the strip is handed back',
+     !/HELD/.test(back), back);
+
   ok('no page errors throughout', errs.length===0, errs);
   console.log('\n'+pass+'/'+(pass+fail)+' passed');
   await b.close();server.close();process.exit(fail?1:0);
