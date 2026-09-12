@@ -22,7 +22,7 @@ var MAP = (function () {
 
   function init() {
     disc = document.getElementById('radar');
-    panel = document.getElementById('mapCanvas');
+    panel = null;                       // the panel belongs to MAPVIEW now
     if (disc) dctx = disc.getContext('2d');
     
     if (panel) pctx = panel.getContext('2d');
@@ -38,13 +38,7 @@ var MAP = (function () {
 
     var close = document.getElementById('mapClose');
     if (close) close.addEventListener('click', function () { setOpen(false); });
-    var rng = document.getElementById('mapRange');
-    if (rng) rng.addEventListener('click', function () {
-      range = RANGES[(RANGES.indexOf(range) + 1) % RANGES.length];
-      rng.textContent = label(range);
-      draw();
-    });
-    if (panel) panel.addEventListener('click', pick);
+
 
     var form = document.getElementById('mapForm');
     if (form) form.addEventListener('submit', function (ev) {
@@ -56,6 +50,7 @@ var MAP = (function () {
     if (clr) clr.addEventListener('click', clearDest);
 
     GEO.on(function () { draw(); fillList(); trip(); podLine(); });
+    if (window.MAPVIEW) MAPVIEW.init();
     ROADS.on(function () { draw(); });
     size();
     window.addEventListener('resize', function () { size(); draw(); });
@@ -118,6 +113,7 @@ var MAP = (function () {
     var box = document.getElementById('mapSearch');
     if (box) box.value = '';
     draw(); fillList(); podLine();
+    if (window.MAPVIEW) MAPVIEW.draw();
   }
   function clearDest() { sel = null; draw(); fillList(); podLine(); }
 
@@ -156,7 +152,18 @@ var MAP = (function () {
     open = v;
     var el = document.getElementById('mapPanel');
     if (el) el.hidden = !v;
-    if (v) { size(); GEO.refresh(); fillList(); trip(); }
+    if (v) {
+      size();
+      /* The panel is MAPVIEW's now - a real map, north-up, that pans and
+         zooms. This module keeps the corner card and the destination. */
+      /* The canvas is a flex item at 100%% height, so its real size is only
+         known after the panel has laid out. Measuring before that gives a
+         map drawn at the wrong scale. */
+      if (window.MAPVIEW) {
+        requestAnimationFrame(function () { MAPVIEW.size(); MAPVIEW.draw(); });
+      }
+      GEO.refresh(); fillList(); trip();
+    }
     draw();
   }
 
@@ -514,7 +521,7 @@ var MAP = (function () {
 
   function draw() {
     if (dctx && disc) paint(dctx, disc.clientWidth || 96, disc.clientHeight || 96, false);
-    if (open && pctx && panel) lastHits = paint(pctx, panel.clientWidth, panel.clientHeight, true);
+    if (open && window.MAPVIEW) MAPVIEW.draw();
     podLine();
   }
 

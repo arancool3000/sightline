@@ -74,24 +74,42 @@
     <div id="nearRows"></div>
   </aside>
 
-  <!-- The map, drawn from position and Wikipedia's geosearch. No tiles. -->
+  <!-- The map page. North-up and still: a map that turns under your hand is
+       a compass, not a map. -->
   <section id="mapPanel" hidden>
     <header class="map-head">
-      <h2>SURROUNDINGS</h2>
-      <button id="mapRange" class="hbtn">500 M</button>
+      <h2>MAP</h2>
       <button id="mapClose" class="hbtn" aria-label="Close">CLOSE</button>
     </header>
+
     <form id="mapForm" class="map-find" autocomplete="off">
-      <input id="mapSearch" type="search" placeholder="Where do you want to go?" spellcheck="false">
+      <input id="mapSearch" type="search" placeholder="Search for a place" spellcheck="false">
       <button type="submit" class="hbtn">FIND</button>
       <button type="button" id="mapClear" class="hbtn" hidden>CLEAR</button>
     </form>
     <div id="mapNote" class="map-note"></div>
 
-    <div class="map-stage"><canvas id="mapCanvas"></canvas></div>
+    <div class="map-stage">
+      <canvas id="mapCanvas"></canvas>
+      <div class="map-ctl">
+        <button id="mapZoomIn" class="mbtn-sq" aria-label="Zoom in">+</button>
+        <button id="mapZoomOut" class="mbtn-sq" aria-label="Zoom out">&minus;</button>
+        <button id="mapFollow" class="mbtn-sq" aria-pressed="true" aria-label="Centre on me">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>
+        </button>
+      </div>
+      <div id="mapScale" class="map-scalechip"></div>
+    </div>
 
-    <!-- Measured by this device's own GPS, and nothing else. There is no
-         step count because a browser cannot count steps. -->
+    <div class="map-layers" role="group" aria-label="Layers">
+      <button id="layer-streets" class="lbtn" aria-pressed="true">Streets</button>
+      <button id="layer-buildings" class="lbtn" aria-pressed="true">Buildings</button>
+      <button id="layer-places" class="lbtn" aria-pressed="true">Places</button>
+      <button id="layer-route" class="lbtn" aria-pressed="true">Route</button>
+      <button id="layer-labels" class="lbtn" aria-pressed="true">Labels</button>
+    </div>
+
+    <!-- Measured by this device's own GPS, and nothing else. -->
     <div class="trip">
       <div class="trip-big"><b id="tripSpeed">0.0</b><i>km/h</i></div>
       <div class="trip-rows">
@@ -101,25 +119,10 @@
       </div>
       <button id="tripReset" class="hbtn">RESET</button>
     </div>
-    <p class="map-note">Drawn from this device's position and Wikipedia's own geosearch. No map service, no key, no limit.</p>
+
+    <p class="map-note">Drawn from OpenStreetMap geometry and this device's position. No tile service, no key. Tap anywhere to set a destination.</p>
     <div id="mapListK" class="glass-k">Nearby &middot; tap to set a destination</div>
     <div id="mapList" class="map-list"></div>
-  </section>
-
-  <!-- A scanned code, beside whatever else is on screen. -->
-  <section id="codeCard" class="glass" hidden>
-    <button id="codeClose" class="code-x" aria-label="Dismiss">&times;</button>
-    <div class="code-head">
-      <img id="codeImg" alt="" hidden>
-      <div class="code-id">
-        <div id="codeKicker" class="glass-k"></div>
-        <div id="codeName" class="code-name"></div>
-        <div id="codeSub" class="code-sub"></div>
-      </div>
-      <div id="codeScore" class="code-score" hidden><b></b><i>/100</i></div>
-    </div>
-    <div id="codeBody" class="code-body"></div>
-    <a id="codeGo" class="code-go" target="_blank" rel="noopener noreferrer nofollow" hidden>OPEN</a>
   </section>
 
   <!-- What the camera is centred on, when nothing has been boxed. A name
@@ -287,6 +290,7 @@
 <script src="js/roads.js" defer></script>
 <script src="js/route.js" defer></script>
 <script src="js/map.js" defer></script>
+<script src="js/mapview.js" defer></script>
 <script src="js/scan.js" defer></script>
 <script src="js/codes.js" defer></script>
 <script src="js/track.js" defer></script>
