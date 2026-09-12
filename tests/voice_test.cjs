@@ -279,8 +279,11 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
 
   /* ---- "takes ages ... sometimes forgets to respond" ---- */
   const drop = await page.evaluate(async () => {
-    const real = GEM.ask, realHas = GEM.has;
+    const real = GEM.ask, realHas = GEM.has, realFrame = CAM.frame;
     GEM.has = () => true;
+    /* No camera is running in this suite, so CAM.frame() answers null and
+       "carries the picture" read false for a correct build. Hand it one. */
+    CAM.frame = () => 'data:image/jpeg;base64,/9j/4AAQ';
     const sent = [];
     let release;
     /* The first answer is held until we let go; the second is asked while
@@ -296,7 +299,7 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
     const keptWhileBusy = VOICE._pending();
     release(); await p1;
     await new Promise(r => setTimeout(r, 300));
-    GEM.ask = real; GEM.has = realHas; VOICE.stop();
+    GEM.ask = real; GEM.has = realHas; CAM.frame = realFrame; VOICE.stop();
     return { keptWhileBusy, answers, sent };
   });
   ok('a question asked while it is still answering is KEPT, not dropped', drop.keptWhileBusy === 'how far is the station', drop);
