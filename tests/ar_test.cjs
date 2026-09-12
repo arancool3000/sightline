@@ -165,7 +165,8 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
       { idx: 1, box: [40, 30, 300, 300], name: 'Pot', score: 0.58, kind: 'object', at: now },
       { idx: 2, box: [20, 10, 320, 320], name: 'Valley', score: 0.71, kind: 'object', at: now }
     ];
-    const out = LOCAL._testGridSuppress(hits);
+    LOCAL._testGridSeed(hits);
+    const out = LOCAL._testGridTargets();      // the real door, not the helper
     return { kept: out.length, names: out.map(h => h.name) };
   });
   ok('three overlapping regions collapse to one answer', r.kept === 1, r);
@@ -177,9 +178,39 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
       { idx: 0, box: [0, 0, 200, 200], name: 'Rapeseed', score: 0.62, kind: 'plant', at: now },
       { idx: 5, box: [400, 400, 200, 200], name: 'Chair', score: 0.66, kind: 'object', at: now }
     ];
-    return LOCAL._testGridSuppress(hits).length;
+    LOCAL._testGridSeed(hits);
+    return LOCAL._testGridTargets().length;
   });
   ok('CONTROL: two regions on DIFFERENT parts of the scene both survive', r === 2, r);
+
+  console.log('\nA GUESS THAT CANNOT REPEAT ITSELF IS NOT SHOWN');
+  r = await page.evaluate(async () => {
+    // A canvas is drawable and can carry the two properties gridStep reads,
+    // so the real gridStep runs against it.
+    const v = document.createElement('canvas');
+    v.width = 640; v.height = 480;
+    v.videoWidth = 640; v.videoHeight = 480;
+    const wait = () => new Promise(r => setTimeout(r, 30));
+
+    // Case 1: the same region answers differently every pass.
+    const flip = ['rapeseed', 'pot', 'valley', 'cotton candy'];
+    let i = 0;
+    LOCAL._testSetNet(() => Promise.resolve([{ className: flip[i++ % flip.length], probability: 0.9 }]));
+    for (let k = 0; k < 9; k++) { LOCAL.gridStep(v); await wait(); }   // one full sweep
+    for (let k = 0; k < 9; k++) { LOCAL.gridStep(v); await wait(); }   // second sweep, new answers
+    const unstable = LOCAL._testGridTargets().length;
+
+    // Case 2: the same region answers the same thing twice.
+    LOCAL._testSetNet(() => Promise.resolve([{ className: 'espresso maker', probability: 0.9 }]));
+    for (let k = 0; k < 9; k++) { LOCAL.gridStep(v); await wait(); }
+    for (let k = 0; k < 9; k++) { LOCAL.gridStep(v); await wait(); }
+    const steady = LOCAL._testGridTargets();
+
+    return { unstable: unstable, steady: steady.length, name: steady[0] && steady[0].name };
+  });
+  ok('a region that says something different every pass shows nothing', r.unstable === 0, r.unstable);
+  ok('CONTROL: a region that repeats itself IS believed', r.steady >= 1, r);
+  ok('CONTROL: and it is the answer it kept giving', /espresso/i.test(r.name || ''), r.name);
 
   ok('no page errors throughout', errs.length === 0, errs);
 

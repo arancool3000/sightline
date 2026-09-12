@@ -680,5 +680,15 @@ var LOCAL = (function () {
            scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
            gridStep: gridStep, gridTargets: gridTargets,
            timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget,
-           _testGridSuppress: suppress };
+           /* Test seam: seeds the grid's own store so a suite drives the
+              REAL gridTargets() door. Asserting against suppress() directly
+              would stay green if nothing ever called it. */
+           _testGridSeed: function (h) { gridHits = h.slice(); },
+           _testGridTargets: gridTargets,
+           /* Installs a stand-in classifier so a suite can run the REAL
+              gridStep and watch what it chooses to believe. */
+           _testSetNet: function (classify) {
+             net = { classify: classify };
+             gridBusy = false; gridAt = 0; gridHits = []; gridLast = {};
+           } };
 })();
