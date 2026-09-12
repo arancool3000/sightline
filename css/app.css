@@ -68,8 +68,9 @@ input,select{font:inherit;color:inherit}
 #hudTL{
   position:absolute;left:14px;top:calc(var(--safe-t) + 14px);z-index:6;
   display:flex;flex-direction:column;align-items:flex-start;gap:9px;pointer-events:none;
-  max-width:min(46vw,220px)
+  max-width:min(52vw,224px)
 }
+#hudTL>.glass{max-width:100%}
 /* The stack of small rows under the weather, from the reference: an icon,
    a title, a detail line. Rows come and go with what is true. */
 .stack{display:flex;flex-direction:column;padding:4px 0;width:100%;min-width:168px}
@@ -80,7 +81,9 @@ input,select{font:inherit;color:inherit}
 .s-ic.ok{background:rgba(110,231,160,.16);color:#6ee7a0}
 .s-t{display:flex;flex-direction:column;min-width:0;line-height:1.25}
 .s-t b{font-size:12.5px;font-weight:600}
-.s-t i{font-style:normal;font-size:11px;color:rgba(230,236,241,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The detail line WRAPS. "badly cropped" was this line ellipsised inside a
+   pane narrower than the weather card above it. */
+.s-t i{font-style:normal;font-size:11px;color:rgba(230,236,241,.72);line-height:1.3}
 .chip{
   display:flex;align-items:center;gap:9px;padding:6px 12px;
   background:rgba(10,16,26,.6);border:1px solid rgba(120,190,255,.2);border-radius:999px;
@@ -113,7 +116,7 @@ body.diag .tele{display:grid}
   display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .hud-btns{display:flex;gap:8px}
 .ask{display:flex;align-items:center;gap:9px;padding:7px 14px 7px 9px;border-radius:999px;
-  text-align:left;pointer-events:auto;max-width:min(52vw,230px)}
+  text-align:left;pointer-events:auto;max-width:min(40vw,190px)}
 .ask-ic{flex:0 0 28px;height:28px;display:grid;place-items:center;border-radius:50%;
   background:linear-gradient(135deg,#4fe3ff,#7b8cff);color:#061018}
 .ask-t{display:flex;flex-direction:column;min-width:0;line-height:1.2}

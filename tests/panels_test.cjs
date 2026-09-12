@@ -196,13 +196,11 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
      sc.ready === true && sc.native === false, sc);
   ok('and it says how many formats it is really looking for', sc.formats === 6, sc);
 
-  const btn = await page.evaluate(()=>{
-    const el = document.getElementById('btnScan');
-    const r = el.getBoundingClientRect();
-    return { shown: !el.hidden, w: Math.round(r.width), h: Math.round(r.height) };
-  });
-  ok('there is still a button to ask for a look now', btn.shown === true, btn);
-  ok('which meets the touch floor', btn.w >= 44 && btn.h >= 44, btn);
+  /* "remove qr code button it should be automatic." It is: the scanner
+     watches on its own, so there is no button to press. */
+  const btn = await page.evaluate(()=>({ button: !!document.getElementById('btnScan'), watching: SCAN.state().ready }));
+  ok('there is no scan button', btn.button === false, btn);
+  ok('because the scanner is already watching', btn.watching === true, btn);
   done(b);
 })().catch(e => {
   const why = crashed || String(e && e.message || e).split('\n')[0];

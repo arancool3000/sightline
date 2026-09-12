@@ -1093,22 +1093,8 @@ var UI = (function () {
       keyEl.addEventListener('change', function () { SET.set('apiKey', this.value.trim()); });
     }
 
-    /* A nudge, not a switch: the decoder is always watching, and this puts
-       its pace back to brisk and says so, for someone holding a label up
-       after a quiet minute. Shown where the browser has no scanner of its
-       own, which is where that pause is longest. */
-    var sb = U.$('#btnScan');
-    if (sb) {
-      sb.addEventListener('click', function () {
-        SCAN.burst();
-        sb.setAttribute('aria-pressed', 'true');
-        status('LOOKING FOR A CODE\u2026', 'busy', 9000);
-        setTimeout(function () {
-          sb.setAttribute('aria-pressed', 'false');
-          if (!SCAN.bursting()) status('', '');
-        }, 9000);
-      });
-    }
+    /* No scan button: the scanner watches on its own on every browser, and
+       "scan this" by voice puts its pace back to brisk. */
 
     var gk = U.$('#geminiKey');
     if (gk) {

@@ -151,8 +151,6 @@
         SCAN.start().then(function (ok) {
           if (!ok) UI.status('CODE SCANNER UNAVAILABLE - ' + (SCAN.error() || 'unknown'), 'bad');
         });
-        var sb = U.$('#btnScan');
-        if (sb && !window.BarcodeDetector) sb.hidden = false;
         UI.resize();
         running = true;
         UI.tele('#tEng', SET.hasApi() ? 'CLOUD' : 'LOCAL');

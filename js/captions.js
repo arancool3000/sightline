@@ -296,6 +296,7 @@ var CAPS = (function () {
       on = false;
       sign();
       if (!wantOn) { UI.captionState('off'); return; }
+      if (held) { UI.captionState('paused'); return; }   // the app is talking; resume() respins
       UI.captionState('paused');
       clearTimeout(restartTimer);
       /* Back off when the service keeps refusing, so a broken network does
@@ -502,6 +503,23 @@ var CAPS = (function () {
   function offHeard(fn) { heardFns = heardFns.filter(function (f) { return f !== fn; }); }
   function tellHeard(text) { heardFns.forEach(function (f) { try { f(text); } catch (e) {} }); }
 
+  /* HELD WHILE THE APP SPEAKS.
+
+     "it can no longer hear me." On a phone the recogniser and the speaker
+     share one audio path: an answer read aloud ends recognition with
+     'aborted', the respin lands while the voice is still talking, and
+     what it then hears is the app itself. So the microphone is put on
+     hold for the length of the answer and respun when it is done. */
+  var held = false;
+  function hold(v) {
+    v = !!v;
+    if (v === held) return;
+    held = v;
+    if (held) { try { if (rec && on) rec.abort(); } catch (e) {} return; }
+    if (wantOn && !on) { clearTimeout(restartTimer); restartTimer = setTimeout(spin, 250); }
+  }
+  function isHeld() { return held; }
+
   /* Start listening without showing captions - what the assistant needs. */
   function listen() {
     if (wantOn) return true;
@@ -515,5 +533,6 @@ var CAPS = (function () {
            stop: stop, clear: clear, relang: relang, running: running,
            shortOf: shortOf, health: health, detectLang: detectLang,
            canRecord: canRecord, recording: function () { return recording; },
-           onHeard: onHeard, offHeard: offHeard, listen: listen, isSilent: isSilent };
+           onHeard: onHeard, offHeard: offHeard, listen: listen, isSilent: isSilent,
+           hold: hold, isHeld: isHeld };
 })();

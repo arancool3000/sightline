@@ -29,7 +29,7 @@ var CMD = (function () {
   function press(id) {
     var el = document.getElementById(id);
     if (!el || el.hidden || el.disabled) return false;
-    if (el.offsetParent === null && el.id !== 'btnScan') return false;   // not on screen
+    if (el.offsetParent === null) return false;                          // not on screen
     el.click();
     return true;
   }

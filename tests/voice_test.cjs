@@ -212,20 +212,50 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
      "the ai should automatically stop listening when it feels it is
       appropriate to." A plain answer ends the exchange; an answer that
       asks something back keeps the window open for a reply. */
-  const done = await page.evaluate(() => {
+  const done = await page.evaluate(async () => {
+    const realF = VOICE._followupMs();
+    VOICE._setFollowupMs(400);
     VOICE.start(); VOICE.wake();
     const before = VOICE.state().awake;
     VOICE._settle('The coffee shop is on your right.');
-    const afterPlain = VOICE.state().awake;
+    const rightAfter = VOICE.state().awake;
+    await new Promise(r => setTimeout(r, 700));
+    const later = VOICE.state().awake;
     VOICE.wake();
     VOICE._settle('Would you like directions?');
-    const afterAsk = VOICE.state().awake;
-    VOICE.stop();
-    return { before, afterPlain, afterAsk };
+    await new Promise(r => setTimeout(r, 700));
+    const askStill = VOICE.state().awake;
+    VOICE._setFollowupMs(realF); VOICE.stop();
+    return { before, rightAfter, later, askStill };
   });
   ok('SETUP: waking really makes it awake', done.before === true, done);
-  ok('a plain answer closes the window by itself', done.afterPlain === false, done);
-  ok('CONTROL: an answer that asks something back keeps it open for the reply', done.afterAsk === true, done);
+  /* "it can no longer hear me": the first cut closed the window the moment
+     it answered, so the follow-up everyone says next went unheard. */
+  ok('right after a plain answer it is STILL listening for a follow-up', done.rightAfter === true, done);
+  ok('and closes by itself once nothing more is said', done.later === false, done);
+  ok('CONTROL: an answer that asks something back stays open longer', done.askStill === true, done);
+
+  /* The microphone is held while the app talks, and released after. */
+  const held = await page.evaluate(async () => {
+    /* Stub the METHOD, not the constructor: speak() rejects an object that
+       is not a real utterance, the catch releases the hold, and the line
+       read false for a build that holds correctly. Headless has no voices
+       either, so the real speak() ends instantly. */
+    const realSpeak = speechSynthesis.speak.bind(speechSynthesis), realHas = GEM.has;
+    GEM.has = () => false;
+    let u = null;
+    speechSynthesis.speak = function (utt) { u = utt; };
+    VOICE.start();
+    await VOICE.speak('one moment');
+    const during = CAPS.isHeld();
+    if (u && u.onend) u.onend();
+    const after = CAPS.isHeld();
+    speechSynthesis.speak = realSpeak; GEM.has = realHas; VOICE.stop();
+    return { during, after, gotUtterance: !!u };
+  });
+  ok('SETUP: something really was spoken', held.gotUtterance === true, held);
+  ok('while the app is talking the microphone is on hold', held.during === true, held);
+  ok('and it is given back the moment the voice stops', held.after === false, held);
 
   /* ---- a scene question gets the picture, not our labels ---- */
   const scene = await page.evaluate(async () => {

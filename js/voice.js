@@ -30,7 +30,7 @@ var VOICE = (function () {
      appropriate to." Once a question has been answered the window closes
      itself - unless the answer asked something back, in which case it
      stays open just long enough for a reply. */
-  var FOLLOWUP_MS = 6000;
+  var FOLLOWUP_MS = 5000, ASKBACK_MS = 9000;
   var thinking = false;
   var lastSaid = '';
   var lastAnswer = null;
@@ -130,12 +130,17 @@ var VOICE = (function () {
      sleep and waits for the wake word. An answer that ends in a question
      means it is waiting on you, so the window stays open a moment. */
   function settle(said) {
+    /* "it can no longer hear me" - the first cut closed the window the
+       instant an answer was given, so the follow-up everybody says next
+       ("and how far is it?") went unheard until they said the wake word
+       again. Stopping when appropriate means AFTER the pause that follows
+       an answer, not before it. A plain answer keeps the ear open a few
+       seconds; one that asks something back, longer. */
     var asksBack = /\?\s*$/.test(String(said || '').trim());
-    if (asksBack) { awakeUntil = performance.now() + FOLLOWUP_MS; armClose(FOLLOWUP_MS); return; }
-    awake = false;
-    awakeUntil = 0;
-    if (awakeTimer) { clearTimeout(awakeTimer); awakeTimer = 0; }
-    fire({ kind: 'listening' });
+    var ms = asksBack ? ASKBACK_MS : FOLLOWUP_MS;
+    awake = true;
+    awakeUntil = performance.now() + ms;
+    armClose(ms);
   }
   function armClose(ms) {
     if (awakeTimer) clearTimeout(awakeTimer);
@@ -409,14 +414,28 @@ var VOICE = (function () {
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
     try { if (playing) { playing.stop(); playing = null; } } catch (e) {}
   }
+  /* The microphone is held while the app talks and released when it
+     stops - by the utterance ending, the buffer ending, or a ceiling in
+     case neither event ever comes. The follow-up window is re-armed on
+     release so it starts when you can actually be heard. */
+  var holdTimer = 0;
+  function holdMic(on2) {
+    if (!window.CAPS || !CAPS.hold) return;
+    CAPS.hold(on2);
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = 0; }
+    if (on2) holdTimer = setTimeout(function () { holdTimer = 0; holdMic(false); }, 12000);
+    else if (awake) { awakeUntil = Math.max(awakeUntil, performance.now() + FOLLOWUP_MS); armClose(FOLLOWUP_MS); }
+  }
   function deviceSpeak(text) {
     if (!window.speechSynthesis) return false;
     try {
       var u = new SpeechSynthesisUtterance(String(text).slice(0, 400));
       u.rate = 1.05;
+      holdMic(true);
+      u.onend = u.onerror = function () { holdMic(false); };
       speechSynthesis.speak(u);
       return true;
-    } catch (e) { return false; }
+    } catch (e) { holdMic(false); return false; }
   }
   function playPcm(pcm, rate) {
     var AC = window.AudioContext || window.webkitAudioContext;
@@ -427,7 +446,8 @@ var VOICE = (function () {
     for (var i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
     var src = audioCtx.createBufferSource();
     src.buffer = buf; src.connect(audioCtx.destination);
-    src.onended = function () { if (playing === src) playing = null; };
+    holdMic(true);
+    src.onended = function () { if (playing === src) playing = null; holdMic(false); };
     playing = src; src.start();
     return true;
   }
@@ -457,6 +477,7 @@ var VOICE = (function () {
   return { start: start, stop: stop, state: state, on: onEvent, ask: askNow, awakeMs: awakeMs,
            wake: wake, speak: speak, _heard: heard, _apply: apply, _settle: settle,
            _pending: function () { return pendingQ; }, _timeoutMs: ASK_TIMEOUT_MS, _setTimeoutMs: function (v) { ASK_TIMEOUT_MS = v; },
+           _setFollowupMs: function (v) { FOLLOWUP_MS = v; }, _followupMs: function () { return FOLLOWUP_MS; },
            isSceneQuestion: isSceneQuestion,
            WAKE: WAKE, ACTIONS: ACTIONS };
 })();
