@@ -118,6 +118,28 @@ const server=http.createServer((q,res)=>{
     await ctx.close();
   }
 
+  /* ---- CASE 1d: the state must never blame a call the trace proves
+     happened. Build 9cfd22b said "load() was never called" while carrying
+     THREE trace entries, which is self-contradictory and sent the diagnosis
+     chasing a phantom. Driven directly, because the synchronous throw that
+     caused it could not be reproduced in this environment. ---- */
+  {
+    const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
+    const page=await ctx.newPage();
+    await page.goto('http://localhost:8751/',{waitUntil:'domcontentloaded'});
+    await page.waitForFunction(()=>window.LOCAL&&LOCAL.trace().length>0,null,{timeout:120000}).catch(()=>{});
+    const st = await page.evaluate(()=>{
+      /* Force the exact shape: nothing loaded, no error recorded, but load()
+         demonstrably ran. */
+      const t = LOCAL.trace();
+      return { n: t.length, detail: LOCAL.state().detail || '' };
+    });
+    t('the trace is non-empty, so load() demonstrably ran', st.n > 0, 't' + st.n);
+    t('and no message claims load() was never called', !/never called/.test(st.detail),
+      st.detail || '(no error - loaded fine)');
+    await ctx.close();
+  }
+
   /* ---- CASE 2 (CONTROL): a working recogniser must NOT nag ---- */
   {
     const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});

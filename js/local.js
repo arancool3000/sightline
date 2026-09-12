@@ -58,16 +58,35 @@ var LOCAL = (function () {
   function pickBackend() {
     if (!window.tf) return Promise.resolve('');
     var order = [];
-    if (tf.findBackend && tf.findBackend('webgpu')) order.push('webgpu');
+    try {
+      if (tf.findBackend && tf.findBackend('webgpu')) order.push('webgpu');
+    } catch (e) { /* an unregistered backend must not be fatal */ }
     order.push('webgl', 'cpu');
 
     function tryNext(i) {
-      if (i >= order.length) return Promise.resolve(tf.getBackend());
-      return tf.setBackend(order[i])
-        .then(function (ok) { return ok === false ? tryNext(i + 1) : tf.ready().then(function () { return order[i]; }); })
+      if (i >= order.length) {
+        return Promise.resolve(tf.getBackend ? tf.getBackend() : '');
+      }
+      /* setBackend does not reliably return a thenable - some builds and
+         some failure paths hand back a bare boolean, and calling .then on
+         that is a SYNCHRONOUS TypeError that escapes load() entirely,
+         leaving no error recorded anywhere. Promise.resolve normalises it. */
+      var r;
+      try { r = tf.setBackend(order[i]); }
+      catch (e) { return tryNext(i + 1); }
+
+      return Promise.resolve(r)
+        .then(function (ok) {
+          if (ok === false) return tryNext(i + 1);
+          return Promise.resolve(tf.ready()).then(function () { return order[i]; });
+        })
         .catch(function () { return tryNext(i + 1); });
     }
-    return tryNext(0).then(function (b) { backend = b || (tf.getBackend && tf.getBackend()) || ''; return backend; });
+
+    return tryNext(0).then(function (b) {
+      backend = b || (tf.getBackend ? tf.getBackend() : '') || '';
+      return backend;
+    });
   }
 
   var trace = [];
@@ -100,7 +119,22 @@ var LOCAL = (function () {
       return Promise.resolve(null);
     }
 
-    loading = pickBackend()
+    try {
+      loading = startLoad();
+    } catch (e) {
+      /* A synchronous throw used to escape with nothing recorded, so the
+         state fell through to "load() was never called" - describing the
+         one thing that had definitely happened. */
+      lastErr = 'load threw: ' + String(e && e.message || e).slice(0, 100);
+      mark('threw: ' + lastErr.slice(0, 50));
+      loading = null;
+      return Promise.resolve(null);
+    }
+    return loading;
+  }
+
+  function startLoad() {
+    return pickBackend()
       .then(function () {
         /* RELIABILITY FIRST, and deliberately so.
            The weights are vendored into this repo and served from our own
@@ -140,8 +174,6 @@ var LOCAL = (function () {
         mark('failed: ' + lastErr.slice(0, 60));
         return null;
       });
-
-    return loading;
   }
 
   /* Our own copy. No third party involved at any point. */
@@ -496,7 +528,9 @@ var LOCAL = (function () {
       return { code: bad ? 'erroring' : 'ready', detail: bad ? lastErr : '' };
     }
     if (loading) return { code: 'loading', detail: '' };
-    return { code: 'failed', detail: lastErr || 'load() was never called' };
+    return { code: 'failed',
+             detail: lastErr || (trace.length ? 'load ran but recorded nothing - ' + trace[trace.length - 1]
+                                              : 'load() was never called') };
   }
 
   function timing() {
@@ -523,7 +557,14 @@ var LOCAL = (function () {
   function kick(attempt) {
     attempt = attempt || 1;
     tries = attempt;
-    load().then(function (m) {
+    var p;
+    try { p = load(); }
+    catch (e) {
+      lastErr = 'kick threw: ' + String(e && e.message || e).slice(0, 100);
+      mark('kick threw');
+      return;
+    }
+    p.then(function (m) {
       if (m) { tries = 0; return; }
       if (attempt >= 4) { exhausted = true; return; }
       var wait = attempt * 2500;
