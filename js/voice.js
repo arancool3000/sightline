@@ -25,7 +25,12 @@ var VOICE = (function () {
   var on = false;          // the wake word is being listened for
   var awake = false;       // a question is being taken right now
   var awakeUntil = 0;
-  var AWAKE_MS = 8000;     // how long it keeps listening after waking
+  var AWAKE_MS = 8000;     // how long it waits for a question after the wake word
+  /* "the ai should automatically stop listening when it feels it is
+     appropriate to." Once a question has been answered the window closes
+     itself - unless the answer asked something back, in which case it
+     stays open just long enough for a reply. */
+  var FOLLOWUP_MS = 6000;
   var thinking = false;
   var lastSaid = '';
   var lastAnswer = null;
@@ -36,6 +41,7 @@ var VOICE = (function () {
 
   function state() {
     return { on: on, awake: awake, thinking: thinking, awakeMs: awakeMs(),
+             tts: { gemini: ttsSpoken, device: ttsFellBack },
              heard: lastSaid, answer: lastAnswer,
              engine: GEM.has() ? 'gemini' : (SET.hasApi() ? 'worker' : 'none') };
   }
@@ -103,10 +109,10 @@ var VOICE = (function () {
      thing - which is the point: the reader should not have to know which
      of the two happened. */
   function local(res) {
-    awakeUntil = performance.now() + AWAKE_MS;
     lastAnswer = { say: res.say || '', local: true, command: res.name || '' };
     fire({ kind: 'answer', answer: lastAnswer });
     speak(lastAnswer.say);
+    settle(lastAnswer.say);
     /* Some of them finish later - a place has to be looked up. The second
        answer replaces the first rather than talking over it. */
     if (res.then && res.then.then) {
@@ -118,6 +124,28 @@ var VOICE = (function () {
       });
     }
     return lastAnswer;
+  }
+
+  /* Done with this exchange? A plain answer means yes - it goes back to
+     sleep and waits for the wake word. An answer that ends in a question
+     means it is waiting on you, so the window stays open a moment. */
+  function settle(said) {
+    var asksBack = /\?\s*$/.test(String(said || '').trim());
+    if (asksBack) { awakeUntil = performance.now() + FOLLOWUP_MS; armClose(FOLLOWUP_MS); return; }
+    awake = false;
+    awakeUntil = 0;
+    if (awakeTimer) { clearTimeout(awakeTimer); awakeTimer = 0; }
+    fire({ kind: 'listening' });
+  }
+  function armClose(ms) {
+    if (awakeTimer) clearTimeout(awakeTimer);
+    awakeTimer = setTimeout(function () {
+      awakeTimer = 0;
+      if (!awake || thinking) return;
+      if (performance.now() < awakeUntil) return;
+      awake = false;
+      fire({ kind: 'listening' });
+    }, ms + 60);
   }
 
   var awakeTimer = 0;
@@ -136,14 +164,7 @@ var VOICE = (function () {
     /* Nothing used to close the window except the next thing anybody said,
        so with nobody speaking it stayed "awake" until it was spoken to.
        Now the window closes itself and says so. */
-    if (awakeTimer) clearTimeout(awakeTimer);
-    awakeTimer = setTimeout(function () {
-      awakeTimer = 0;
-      if (!awake || thinking) return;
-      if (performance.now() < awakeUntil) return;     // woken again since
-      awake = false;
-      fire({ kind: 'listening' });
-    }, AWAKE_MS + 60);
+    armClose(AWAKE_MS);
     fire({ kind: 'awake' });
   }
 
@@ -247,9 +268,25 @@ var VOICE = (function () {
     fire({ kind: 'thinking', question: question });
 
     var shot = CAM.frame ? CAM.frame(768) : null;
-    var ctx = context();
 
-    var full = PROMPT + '\n\nWhat the app has already worked out: ' + ctx +
+    /* "the labels confuse it. if the message is related to the scene in
+        front of it it should analyse without looking at the labels
+        properly and then label things itsself."
+
+       Right: handed "things it has boxed: cup, laptop", the model answers
+       about cups and laptops whether or not that is what is there. So a
+       question about the scene gets the PICTURE and nothing else, and is
+       asked to name what it sees; those names come back in "seen" and are
+       boxed from the model's own answer. A question that is not about the
+       scene - directions, the weather, a fact - still gets the context,
+       because there the labels are the point. */
+  var scene = isSceneQuestion(question);
+    var full = PROMPT +
+               (scene ? '\n\nLook at the picture yourself. Ignore any labels you might expect an app to have; ' +
+                        'name what YOU see. Put the two to six things worth naming in "seen" as ' +
+                        '[{"what":"golden retriever","colour":"green"}], most important first, using ' +
+                        'the specific name (a breed, a model, a species) when you can see it.'
+                      : '\n\nWhat the app has already worked out: ' + context()) +
                '\n\nThe question: ' + question;
 
     var job = GEM.has()
@@ -263,15 +300,25 @@ var VOICE = (function () {
         lastAnswer = { say: 'I could not reach the assistant.', error: r.error };
         fire({ kind: 'answer', answer: lastAnswer });
         speak(lastAnswer.say);
+        settle('');
         return lastAnswer;
       }
       var parsed = r.json;
       if (!parsed) { try { parsed = JSON.parse(pickJson(r.text)); } catch (e) {} }
       var say = (parsed && parsed.say) || r.text || '';
-      apply(parsed && parsed.actions);
-      lastAnswer = { say: say, actions: (parsed && parsed.actions) || [], model: r.model };
+      var acts = (parsed && parsed.actions) || [];
+      /* What the model saw becomes the boxes, in the order it named them. */
+      if (scene && parsed && Array.isArray(parsed.seen)) {
+        parsed.seen.slice(0, 6).forEach(function (s) {
+          if (s && s.what) acts.push({ do: 'box', what: String(s.what), colour: s.colour || '' });
+        });
+      }
+      apply(acts);
+      lastAnswer = { say: say, actions: acts, model: r.model, scene: scene,
+                     seen: (scene && parsed && parsed.seen) || [] };
       fire({ kind: 'answer', answer: lastAnswer });
       speak(say);
+      settle(say);
       return lastAnswer;
     }).catch(function (e) {
       thinking = false;
@@ -280,6 +327,12 @@ var VOICE = (function () {
       return lastAnswer;
     });
   }
+
+  /* Is this about what is in front of the camera? Deliberately wide: the
+     cost of a scene question getting the labels is the confusion the
+     owner reported; the cost of a fact question losing them is small. */
+  var SCENE = /\b(what|who|which|where)\b.*\b(this|that|these|those|here|it|see|seeing|looking at|in front|around me|on the (left|right)|over there)\b|\b(describe|look at|read|count|identify|is there|are there|can you see|do you see|how many)\b/i;
+  function isSceneQuestion(q) { return SCENE.test(String(q || '')); }
 
   function pickJson(t) {
     var s = String(t || '');
@@ -302,19 +355,59 @@ var VOICE = (function () {
     return bits.length ? bits.join('; ') : 'nothing identified yet';
   }
 
-  /* Spoken back, where the browser will. Cancelled first so two answers
-     never talk over each other. */
-  function speak(text) {
-    if (!text || !window.speechSynthesis) return;
+  /* ---- SPEAKING ----
+
+     Gemini's own voice when a key is present and it is not at its limit;
+     the device's voice otherwise. There is no third tier: every "free"
+     neutral web voice either wants a key or caps you, and a service that
+     caps you is not free unlimited - the device's speech engine is the one
+     that never runs out. Whichever speaks, the other is silenced first so
+     two answers never talk over each other. */
+  var audioCtx = null, playing = null;
+  var ttsSpoken = 0, ttsFellBack = 0;
+
+  function hush() {
+    try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
+    try { if (playing) { playing.stop(); playing = null; } } catch (e) {}
+  }
+  function deviceSpeak(text) {
+    if (!window.speechSynthesis) return false;
     try {
-      speechSynthesis.cancel();
       var u = new SpeechSynthesisUtterance(String(text).slice(0, 400));
       u.rate = 1.05;
       speechSynthesis.speak(u);
-    } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  }
+  function playPcm(pcm, rate) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    audioCtx = audioCtx || new AC();
+    var buf = audioCtx.createBuffer(1, pcm.length, rate);
+    var ch = buf.getChannelData(0);
+    for (var i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+    var src = audioCtx.createBufferSource();
+    src.buffer = buf; src.connect(audioCtx.destination);
+    src.onended = function () { if (playing === src) playing = null; };
+    playing = src; src.start();
+    return true;
+  }
+  function speak(text) {
+    text = String(text || '').trim();
+    if (!text) return Promise.resolve('none');
+    hush();
+    var useGem = window.GEM && GEM.has && GEM.has() && GEM.tts && SET.get('geminiVoice') !== false;
+    if (!useGem) { deviceSpeak(text); return Promise.resolve('device'); }
+    return GEM.tts(text).then(function (r) {
+      if (r && r.ok && r.pcm && r.pcm.length && playPcm(r.pcm, r.rate)) { ttsSpoken++; return 'gemini'; }
+      ttsFellBack++;
+      deviceSpeak(text);
+      return 'device';
+    }, function () { ttsFellBack++; deviceSpeak(text); return 'device'; });
   }
 
   return { start: start, stop: stop, state: state, on: onEvent, ask: askNow, awakeMs: awakeMs,
-           wake: wake, speak: speak, _heard: heard, _apply: apply,
+           wake: wake, speak: speak, _heard: heard, _apply: apply, _settle: settle,
+           isSceneQuestion: isSceneQuestion,
            WAKE: WAKE, ACTIONS: ACTIONS };
 })();

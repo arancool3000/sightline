@@ -207,6 +207,76 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   ok('CONTROL: once the hold lapses the strip is handed back',
      !/HELD/.test(back), back);
 
+  /* ---- it stops listening by itself ----
+
+     "the ai should automatically stop listening when it feels it is
+      appropriate to." A plain answer ends the exchange; an answer that
+      asks something back keeps the window open for a reply. */
+  const done = await page.evaluate(() => {
+    VOICE.start(); VOICE.wake();
+    const before = VOICE.state().awake;
+    VOICE._settle('The coffee shop is on your right.');
+    const afterPlain = VOICE.state().awake;
+    VOICE.wake();
+    VOICE._settle('Would you like directions?');
+    const afterAsk = VOICE.state().awake;
+    VOICE.stop();
+    return { before, afterPlain, afterAsk };
+  });
+  ok('SETUP: waking really makes it awake', done.before === true, done);
+  ok('a plain answer closes the window by itself', done.afterPlain === false, done);
+  ok('CONTROL: an answer that asks something back keeps it open for the reply', done.afterAsk === true, done);
+
+  /* ---- a scene question gets the picture, not our labels ---- */
+  const scene = await page.evaluate(async () => {
+    const sent = [];
+    const real = GEM.ask, realHas = GEM.has;
+    GEM.has = () => true;
+    GEM.ask = (prompt) => { sent.push(prompt); return Promise.resolve({ ok: true, text: '', model: 'stub',
+      json: { say: 'A retriever and a red bike.', seen: [{ what: 'golden retriever', colour: 'green' }, { what: 'red bicycle' }] } }); };
+    const boxes = [];
+    VOICE.on(ev => { if (ev.kind === 'box') boxes.push(ev.what); });
+    VOICE.start();
+    await VOICE.ask('what am I looking at');
+    await VOICE.ask('how far is the station');
+    GEM.ask = real; GEM.has = realHas; VOICE.stop();
+    return { sceneHadLabels: /already worked out/.test(sent[0] || ''), sceneAskedToLook: /name what YOU see/i.test(sent[0] || ''),
+             factHadLabels: /already worked out/.test(sent[1] || ''), boxes,
+             isScene: [VOICE.isSceneQuestion('what is that'), VOICE.isSceneQuestion('describe what you see'),
+                       VOICE.isSceneQuestion('start a timer for ten minutes')] };
+  });
+  ok('a question about the scene is sent WITHOUT the app\'s labels', scene.sceneHadLabels === false, scene);
+  ok('and the model is asked to name what it sees itself', scene.sceneAskedToLook === true, scene);
+  ok('CONTROL: a question that is not about the scene still gets the context', scene.factHadLabels === true, scene);
+  ok('what the model saw is boxed from its own answer',
+     scene.boxes.indexOf('golden retriever') >= 0 && scene.boxes.indexOf('red bicycle') >= 0, scene.boxes);
+  ok('SETUP: the scene test tells the two apart', scene.isScene[0] && scene.isScene[1] && !scene.isScene[2], scene.isScene);
+
+  /* ---- the voice: Gemini first, the device when it cannot ---- */
+  const tts = await page.evaluate(async () => {
+    const realTts = GEM.tts, realHas = GEM.has;
+    /* window.speechSynthesis is a read-only accessor in Chromium, so a
+       stub assigned to it is silently dropped - the first cut counted 0
+       device calls while the real engine was speaking. The utterance
+       constructor IS writable, and one is made per device utterance. */
+    let deviceCalls = 0;
+    const realU = window.SpeechSynthesisUtterance;
+    window.SpeechSynthesisUtterance = function (t) { deviceCalls++; this.text = t; };
+    GEM.has = () => true;
+    GEM.tts = () => Promise.resolve({ ok: true, pcm: new Int16Array(2400), rate: 24000 });
+    const a = await VOICE.speak('hello');
+    GEM.tts = () => Promise.resolve({ ok: false, error: 'speech is at its limit', turnedAway: true });
+    const b = await VOICE.speak('hello again');
+    GEM.has = () => false;
+    const c = await VOICE.speak('and again');
+    window.SpeechSynthesisUtterance = realU; GEM.tts = realTts; GEM.has = realHas;
+    return { a, b, c, deviceCalls, models: GEM.TTS_MODELS };
+  });
+  ok('with a key and a working speech model, Gemini speaks', tts.a === 'gemini', tts);
+  ok('at its limit, the device speaks instead', tts.b === 'device' && tts.deviceCalls >= 1, tts);
+  ok('CONTROL: with no key at all, the device speaks', tts.c === 'device', tts);
+  ok('SETUP: there is more than one speech model name to try', tts.models.length >= 2, tts.models);
+
   ok('no page errors throughout', errs.length===0, errs);
   console.log('\n'+pass+'/'+(pass+fail)+' passed');
   await b.close();server.close();process.exit(fail?1:0);

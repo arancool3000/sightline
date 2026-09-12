@@ -154,6 +154,60 @@ var GEM = (function () {
     return Promise.resolve(attempt(0));
   }
 
+  /* ---- SPEAKING THE ANSWER ----
+
+     "i want tts for the Ai, using gemini api tts when it has not hit
+      limit and using on device tts ... "
+
+     Gemini's speech models answer with raw 16-bit PCM at 24 kHz. Same key,
+     same turned-away rule, same cooldown as the text models, so a quota
+     hit on one is a quota hit on both and the voice drops to the device
+     for a while rather than hammering. Answers { ok, pcm: Int16Array,
+     rate } or { ok:false, error }. The model list is tried in order,
+     because the speech model names have moved twice in a year. */
+  var TTS_MODELS = ['gemini-3.5-flash-tts', 'gemini-2.5-flash-preview-tts'];
+  var ttsBlockedUntil = 0;
+
+  function tts(text, voice) {
+    text = String(text || '').slice(0, 600);
+    if (!text || !has()) return Promise.resolve({ ok: false, error: 'no key set' });
+    if (Date.now() < ttsBlockedUntil) return Promise.resolve({ ok: false, error: 'speech is at its limit', turnedAway: true });
+    var payload = {
+      contents: [{ role: 'user', parts: [{ text: text }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice || 'Kore' } } }
+      }
+    };
+    function attempt(i) {
+      if (i >= TTS_MODELS.length) return { ok: false, error: lastError || 'no speech model answered' };
+      return call(TTS_MODELS[i], payload).then(function (r) {
+        if (r.status === 200) {
+          var json; try { json = JSON.parse(r.text); } catch (e) { return { ok: false, error: 'unreadable audio' }; }
+          var part = null;
+          try { part = (json.candidates[0].content.parts || []).filter(function (p) { return p.inlineData || p.inline_data; })[0]; } catch (e) {}
+          var d = part && (part.inlineData || part.inline_data);
+          if (!d || !d.data) return { ok: false, error: 'no audio in the answer' };
+          var rate = 24000, m = /rate=(\d+)/.exec(d.mimeType || d.mime_type || '');
+          if (m) rate = parseInt(m[1], 10) || 24000;
+          var bin = atob(d.data), n = bin.length >> 1, pcm = new Int16Array(n);
+          for (var k = 0; k < n; k++) pcm[k] = (bin.charCodeAt(2 * k) | (bin.charCodeAt(2 * k + 1) << 8)) << 16 >> 16;
+          return { ok: true, pcm: pcm, rate: rate, model: TTS_MODELS[i] };
+        }
+        if (r.status === 401 || (r.status === 403 && !/quota|limit/i.test(r.text))) return { ok: false, error: 'the key was refused', keyBad: true };
+        if (turnedAway(r.status, r.text)) {
+          /* 404 means this name is gone, not that we are over: try the next. */
+          if (r.status !== 404 && r.status !== 400) { ttsBlockedUntil = Date.now() + COOLDOWN_MS; lastError = 'speech is at its limit'; return { ok: false, error: lastError, turnedAway: true }; }
+          lastError = TTS_MODELS[i] + ' not available';
+          return attempt(i + 1);
+        }
+        lastError = 'HTTP ' + r.status;
+        return attempt(i + 1);
+      }).catch(function (e) { lastError = String(e && e.message || e).slice(0, 90); return attempt(i + 1); });
+    }
+    return Promise.resolve(attempt(0));
+  }
+
   /* A quick check that a pasted key works, without spending a picture. */
   function test() {
     if (!has()) return Promise.resolve({ ok: false, error: 'that does not look like a key' });
@@ -164,7 +218,8 @@ var GEM = (function () {
       });
   }
 
-  return { ask: ask, test: test, state: state, has: has, looksLikeKey: looksLikeKey,
+  return { ask: ask, test: test, tts: tts, state: state, has: has, looksLikeKey: looksLikeKey,
+           TTS_MODELS: TTS_MODELS,
            PRIMARY: PRIMARY, FALLBACK: FALLBACK,
            _turnedAway: turnedAway, _reset: function () { blockedUntil = 0; lastError = ''; } };
 })();
