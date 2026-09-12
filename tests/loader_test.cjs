@@ -125,6 +125,26 @@ const server=http.createServer((q,res)=>{
   t('CONTROL - libs are served same-origin', await page.evaluate(() =>
       [...document.scripts].every(s => !s.src || s.src.startsWith(location.origin))), '');
 
+  /* ---- the offline shell has to name every script the page loads ----
+
+     It had drifted to ten of the twenty-five modules. A missing one still
+     worked, because a cache miss is fetched and then stored - but only
+     after one online visit, so a first run that lost signal part way
+     through came up broken. The list is DERIVED from index.html here,
+     because a hand-kept copy of "what the app is made of" is the thing
+     that drifted in the first place. */
+  const shellCheck = await page.evaluate(async () => {
+    const html = await fetch('index.html').then(r => r.text());
+    const sw   = await fetch('sw.js').then(r => r.text());
+    const wanted = (html.match(/src="((?:js|vendor)\/[a-z0-9._-]+\.js)"/g) || [])
+      .map(s2 => s2.slice(5, -1));
+    const missing = wanted.filter(f => sw.indexOf("'./" + f + "'") < 0);
+    return { wanted: wanted.length, missing: missing };
+  });
+  t('SETUP: the page really does load a pile of scripts', shellCheck.wanted >= 20, shellCheck.wanted);
+  t('the offline shell names every one of them',
+    shellCheck.missing.length === 0, shellCheck.missing);
+
   await browser.close(); server.close();
   const bad=R.filter(x=>!x.p);
   R.forEach(x=>console.log((x.p?'PASS  ':'FAIL  ')+x.n+(x.x?'   ['+x.x+']':'')));

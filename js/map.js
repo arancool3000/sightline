@@ -67,24 +67,25 @@ var MAP = (function () {
      page per search and never on a keystroke, because it is run by
      volunteers. */
   var searching = false;
-  function search(q) {
+  /* ONE place that looks a place up. The search box shows what it finds
+     and lets you choose; a spoken "directions to the post office" takes
+     the nearest and says which. Two copies of this query would drift, and
+     the voice would quietly start searching somewhere else. */
+  function find(q) {
     q = String(q || '').trim();
-    if (!q || searching || !GEO.state().pos) return;
-    searching = true;
-    note('Searching…');
     var p = GEO.state().pos;
+    if (!q || !p) return Promise.resolve([]);
     /* Biased to a box around you, so "the post office" means yours. */
     var d = 0.09;
     var u = 'https://nominatim.openstreetmap.org/search?format=json&limit=8&q=' +
             encodeURIComponent(q) +
             '&viewbox=' + (p.lon - d).toFixed(4) + ',' + (p.lat + d).toFixed(4) + ',' +
                           (p.lon + d).toFixed(4) + ',' + (p.lat - d).toFixed(4);
-    U.fetchT(u, { headers: { 'Accept': 'application/json' } }, 15000)
+    return U.fetchT(u, { headers: { 'Accept': 'application/json' } }, 15000)
       .then(function (r) { return r.json(); })
       .then(function (list) {
-        searching = false;
-        if (!list || !list.length) { note('Nothing found for "' + q + '"'); return; }
-        var found = list.map(function (it) {
+        if (!list || !list.length) return [];
+        return list.map(function (it) {
           var at = { lat: +it.lat, lon: +it.lon };
           return { title: (it.display_name || '').split(',')[0] || q,
                    full: it.display_name || '',
@@ -92,10 +93,31 @@ var MAP = (function () {
                    dist: Math.round(GEO.metres(p, at)),
                    bearing: GEO.bearing(p, at) };
         }).sort(function (a, b) { return a.dist - b.dist; });
-        note('');
-        showResults(found);
-      })
-      .catch(function () { searching = false; note('The search could not be reached'); });
+      });
+  }
+
+  function search(q) {
+    q = String(q || '').trim();
+    if (!q || searching || !GEO.state().pos) return;
+    searching = true;
+    note('Searching…');
+    find(q).then(function (found) {
+      searching = false;
+      if (!found.length) { note('Nothing found for "' + q + '"'); return; }
+      note('');
+      showResults(found);
+    }).catch(function () { searching = false; note('The search could not be reached'); });
+  }
+
+  /* Spoken: find it and set off, no list to tap. Answers what it picked so
+     a wrong one can be corrected out loud. */
+  function searchGo(q) {
+    if (!GEO.state().pos) return Promise.resolve(null);
+    return find(q).then(function (found) {
+      if (!found.length) return null;
+      setDest(found[0]);
+      return found[0];
+    }).catch(function () { return null; });
   }
 
   function note(t) {
@@ -585,5 +607,6 @@ var MAP = (function () {
 
   return { init: init, draw: draw, setOpen: setOpen, isOpen: function () { return open; },
            setDest: setDest, dest: function () { return sel; }, search: search,
+           find: find, searchGo: searchGo,
            range: function () { return range; } };
 })();

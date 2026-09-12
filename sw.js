@@ -16,13 +16,25 @@
    answer must never be served. */
 
 const VERSION = 'sightline-v3';
+/* EVERY script index.html loads, and nothing that is not one.
+
+   This had drifted to ten of the twenty-five modules. Anything missing
+   still worked, because a miss is fetched and then cached - but only
+   after one online visit, so a first run that lost signal part way
+   through came up broken. loader_test derives this list from index.html
+   and fails when the two disagree, which is the only way a list like
+   this stays true. */
 const SHELL = [
   './', './index.html', './css/app.css', './manifest.json', './icon.svg',
-  './js/util.js', './js/settings.js', './js/wiki.js', './js/camera.js',
-  './js/track.js', './js/local.js', './js/identify.js', './js/captions.js',
-  './js/ui.js', './js/app.js',
-  './vendor/tf.min.js', './vendor/tf.es2017.min.js', './vendor/coco-ssd.min.js', './vendor/mobilenet.min.js',
-  './vendor/imagenet-classes.js'
+  './js/build.js', './js/util.js', './js/settings.js', './js/wiki.js',
+  './js/camera.js', './js/geo.js', './js/roads.js', './js/route.js',
+  './js/map.js', './js/mapview.js', './js/scan.js', './js/codes.js',
+  './js/evidence.js', './js/faces.js', './js/track.js', './js/local.js',
+  './js/species.js', './js/identify.js', './js/gemini.js', './js/captions.js',
+  './js/commands.js', './js/voice.js', './js/ar.js', './js/ui.js',
+  './js/app.js',
+  './vendor/tf.min.js', './vendor/tf-backend-wasm.min.js', './vendor/coco-ssd.min.js',
+  './vendor/mobilenet.min.js', './vendor/imagenet-classes.js'
 ];
 
 self.addEventListener('install', e => {

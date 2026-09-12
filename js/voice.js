@@ -70,12 +70,54 @@ var VOICE = (function () {
       /* Anything after the wake word in the same breath is the question. */
       var rest = line.slice(line.toLowerCase().indexOf(m[0].toLowerCase()) + m[0].length).trim();
       wake();
-      if (rest.length > 3) askNow(rest);
+      if (rest.length > 3) {
+        /* Said in one breath - "hey vision show the map" - is the same
+           instruction as saying it after the wake word, and used to skip
+           the built-ins entirely and go straight to the model. */
+        var quick = window.CMD ? CMD.run(rest) : null;
+        if (quick) { local(quick); return; }
+        askNow(rest);
+      }
       return;
     }
 
     if (performance.now() > awakeUntil) { awake = false; fire({ kind: 'listening' }); return; }
+
+    /* THE BUILT-INS GO FIRST, EVERY TIME.
+
+       "built in voice commands which get checked before sent to gemini
+        like show map or select subject n more complex commands are handed
+        to gemini."
+
+       So most of what anybody says never leaves the device: no wait, no
+       quota, and it works with no signal. Anything the table does not
+       recognise falls through to the model exactly as before. */
+    var did = window.CMD ? CMD.run(line) : null;
+    if (did) { local(did); return; }
+
     askNow(line);
+  }
+
+  /* A built-in that has already acted. It speaks like any other answer, so
+     from the outside a local command and a model answer are the same
+     thing - which is the point: the reader should not have to know which
+     of the two happened. */
+  function local(res) {
+    awakeUntil = performance.now() + AWAKE_MS;
+    lastAnswer = { say: res.say || '', local: true, command: res.name || '' };
+    fire({ kind: 'answer', answer: lastAnswer });
+    speak(lastAnswer.say);
+    /* Some of them finish later - a place has to be looked up. The second
+       answer replaces the first rather than talking over it. */
+    if (res.then && res.then.then) {
+      res.then.then(function (r2) {
+        if (!r2 || !r2.say) return;
+        lastAnswer = { say: r2.say, local: true, command: res.name || '' };
+        fire({ kind: 'answer', answer: lastAnswer });
+        speak(r2.say);
+      });
+    }
+    return lastAnswer;
   }
 
   var awakeTimer = 0;
@@ -120,8 +162,53 @@ var VOICE = (function () {
     /* colour: {what, colour} */
     colour: function (a) { fire({ kind: 'box', what: String(a.what || ''), colour: String(a.colour || '') }); },
     /* say: nothing to change, just the words */
-    say: function () {}
+    say: function () {},
+
+    /* ---- THE REST OF THE APP, AS TOOLS ----
+
+       "gemini should have even more tool calls it can use."
+
+       Every one of these goes through CMD, the same table a spoken
+       command goes through, which presses the same control a finger
+       would. So the model cannot reach anything a person cannot, cannot
+       invent an instruction, and the two ways of asking can never drift
+       apart - there is one implementation and it is the one already
+       tested. Anything it names that is not here is dropped. */
+
+    /* map: {open:true|false} */
+    map: function (a) { viaWords(a.open === false ? 'close the map' : 'show the map'); },
+    /* zoom: {way:"in"|"out"} */
+    zoom: function (a) { viaWords('zoom ' + (String(a.way || 'in').toLowerCase() === 'out' ? 'out' : 'in')); },
+    /* follow: back to where you are */
+    follow: function () { viaWords('follow me'); },
+    /* layer: {name:"buildings"|"streets"|"places"|"route", on:true|false} */
+    layer: function (a) {
+      var n = String(a.name || '').toLowerCase();
+      if (!n) return;
+      viaWords((a.on === false ? 'hide the ' : 'show the ') + n);
+    },
+    /* scan: look for a code now */
+    scan: function () { viaWords('scan this code'); },
+    /* subject: take a closer look at what is in the middle */
+    subject: function () { viaWords('identify the subject'); },
+    /* navigate: {to:"the post office"} */
+    navigate: function (a) {
+      var to = String(a.to || '').trim();
+      if (to) viaWords('directions to ' + to);
+    },
+    /* stopNavigation: put the route away */
+    stopNavigation: function () { viaWords('stop directions'); },
+    /* captions: {on:true|false} */
+    captions: function (a) { viaWords((a.on === false ? 'turn off ' : 'turn on ') + 'the captions'); }
   };
+
+  /* A tool call is spoken to the same table a person speaks to. If the
+     table cannot do it, neither can the model. */
+  function viaWords(line) {
+    if (!window.CMD) return;
+    var r = CMD.run(line);
+    if (r && r.then && r.then.then) r.then.then(function () {});
+  }
 
   function apply(list) {
     if (!Array.isArray(list)) return 0;
@@ -141,9 +228,14 @@ var VOICE = (function () {
     'and no markdown.\n' +
     'You may also ask the display to change. Reply as JSON:\n' +
     '{"say":"...","actions":[{"do":"box","what":"the bicycle","colour":"green"}]}\n' +
-    'Allowed "do" values and nothing else: box, only, colour, clear, say.\n' +
+    'Allowed "do" values and nothing else: box, only, colour, clear, say, map, zoom, ' +
+    'follow, layer, scan, subject, navigate, stopNavigation, captions.\n' +
     '"what" is a word or two naming the thing, as a person would say it.\n' +
     '"colour" may be green, blue, amber, pink or red.\n' +
+    'map takes {"open":true|false}; zoom takes {"way":"in"|"out"}; layer takes ' +
+    '{"name":"buildings"|"streets"|"places"|"route","on":true|false}; navigate takes ' +
+    '{"to":"the post office"}. follow, scan, subject, stopNavigation take nothing. ' +
+    'captions takes {"on":true|false}.\n' +
     'Use actions only when they help. If you are not sure what something is, say so plainly ' +
     'rather than guessing - a wrong name is worse than "I cannot tell from here".';
 

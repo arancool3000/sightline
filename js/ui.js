@@ -374,11 +374,11 @@ var UI = (function () {
       ctx.globalAlpha = fade * 0.35;
       ctx.strokeStyle = 'rgba(0,0,0,.9)';
       ctx.lineWidth = wide * 1.5;
-      chevron(ctx, tl, tip, tr);
+      chevronOnGround(ctx, tl, tip, tr);
       ctx.globalAlpha = fade * 0.95;
       ctx.strokeStyle = '#4fe3ff';
       ctx.lineWidth = wide;
-      chevron(ctx, tl, tip, tr);
+      chevronOnGround(ctx, tl, tip, tr);
     }
     ctx.restore();
 
@@ -391,13 +391,31 @@ var UI = (function () {
     navLabel(ctx, w, h, txt, fmtM(f.remaining) + ' to go');
   }
 
-  /* Three points that are already on the screen, because they were already
-     on the ground. Nothing here knows which way is up. */
-  function chevron(ctx, a, tip, b) {
+  /* TWO CHEVRONS, AND THEY ARE NOT THE SAME SHAPE.
+
+     One is a marking lying on a real road: three points that are already
+     on the screen because they were already on the ground, so nothing
+     here knows which way is up. The other is drawn when there is no road
+     to lie on - a plain pointer in the picture, which is honest about
+     being a direction rather than a place.
+
+     They had the same name for one commit, and the ground version's
+     three-argument call silently broke the flat one - the fallback that
+     every first visit to a new area uses. Named apart now. */
+  function chevronOnGround(ctx, a, tip, b) {
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(tip.x, tip.y);
     ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  function chevronFlat(ctx, x, y, size, ang) {
+    var c = Math.cos(ang), s2 = Math.sin(ang);
+    function at(dx, dy) { return [x + dx * c - dy * s2, y + dx * s2 + dy * c]; }
+    var p1 = at(-size * 0.55, -size * 0.6), p2 = at(size * 0.35, 0), p3 = at(-size * 0.55, size * 0.6);
+    ctx.beginPath();
+    ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]);
     ctx.stroke();
   }
 
@@ -423,11 +441,11 @@ var UI = (function () {
       ctx.globalAlpha = (0.92 - t * 0.5) * 0.35;
       ctx.strokeStyle = 'rgba(0,0,0,.9)';
       ctx.lineWidth = Math.max(4, size * 0.44);
-      chevron(ctx, x, y, size, -Math.PI / 2);
+      chevronFlat(ctx, x, y, size, -Math.PI / 2);
       ctx.globalAlpha = 0.92 - t * 0.5;
       ctx.strokeStyle = '#4fe3ff';
       ctx.lineWidth = Math.max(3, size * 0.34);
-      chevron(ctx, x, y, size, -Math.PI / 2);
+      chevronFlat(ctx, x, y, size, -Math.PI / 2);
     }
     ctx.restore();
     var d = Math.round(GEO.metres(st.pos, dest));
