@@ -94,7 +94,10 @@ var UI = (function () {
       var s = CAM.toScreen(t.box);
       var kind = IDENT.kindOf(t.cls);
       var col = COLOR[kind] || COLOR.object;
-      var named = !!t.label;
+      /* A marked object and a LABELLED object are different things now: the
+         mark says "this is a thing and you can tap it", the label says
+         something you did not already know. */
+      var named = AR.worthSaying(t);
 
       var x = s[0], y = s[1], bw = s[2], bh = s[3];
       /* Was 24px, which threw away most objects in a cluttered scene. A small

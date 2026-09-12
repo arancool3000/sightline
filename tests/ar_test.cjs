@@ -45,9 +45,17 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
      assertion about position means what it says. */
   await page.evaluate(() => {
     CAM.toScreen = function (b) { return [b[0], b[1], b[2], b[3]]; };
-    window.__plot = function (dets) {
+    /* Labels are attached because a card is only drawn when there is
+       something non-obvious to say - a bare "backpack" box gets a marker and
+       no words, by design. The dedupe questions are about TARGETS; the card
+       count is what the labels are for. */
+    window.__plot = function (dets, labels) {
       TRACK.reset();
       TRACK.update(dets, performance.now());
+      TRACK.all().forEach(function (t, i) {
+        var l = labels ? labels[i % labels.length] : null;
+        if (l) { t.label = l; t.tier = 'cloud'; t.scan = 'relevant'; }
+      });
       UI.draw(TRACK.all());
       return TRACK.visible().length;
     };
@@ -71,19 +79,57 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     const n = window.__plot([
       { cls: 'backpack', box: [26, 170, 218, 240], score: 0.72 },
       { cls: 'backpack', box: [136, 184, 211, 233], score: 0.66 }
-    ]);
+    ], ['Mous Extreme Luggage']);
     const iou = U.iou([26, 170, 218, 240], [136, 184, 211, 233]);
     return { visible: n, cards: window.__cards(), iou: iou };
   });
   ok('SETUP: those two boxes really do overlap only loosely', r.iou > 0.28 && r.iou < 0.36, +r.iou.toFixed(3));
   ok("the owner's two-boxes-on-one-backpack case leaves ONE card", r.cards.length === 1, r.cards.map(c => c.text));
 
+  console.log('\nNOT FOR LABELLING THE OBVIOUS');
+  r = await page.evaluate(() => {
+    // Exactly the owner's complaint: a detected tennis ball, named only by
+    // the word already on the box.
+    window.__plot([{ cls: 'sports ball', box: [140, 400, 70, 70], score: 0.88 }]);
+    const bare = document.querySelectorAll('#arLayer .ar-card').length;
+
+    // A guess about a square of the scene: "Tennis Ball", "Lemon".
+    TRACK.reset();
+    TRACK.update([{ cls: 'grid', box: [140, 400, 120, 120], score: 0.8 }], performance.now());
+    const g = TRACK.all()[0];
+    g.label = 'Lemon'; g.tier = 'guess'; g.conf = 0.74; g.scan = 'relevant';
+    UI.draw(TRACK.all());
+    const guess = document.querySelectorAll('#arLayer .ar-card').length;
+
+    // The detail tier coming back with the same word it was given.
+    TRACK.reset();
+    TRACK.update([{ cls: 'backpack', box: [60, 300, 140, 180], score: 0.8 }], performance.now());
+    const c = TRACK.all()[0];
+    c.label = 'Backpack'; c.tier = 'cloud'; c.scan = 'relevant';
+    UI.draw(TRACK.all());
+    const echoed = document.querySelectorAll('#arLayer .ar-card').length;
+
+    // On-device, but genuinely more than the box said.
+    TRACK.reset();
+    TRACK.update([{ cls: 'dog', box: [60, 300, 140, 180], score: 0.8 }], performance.now());
+    const d = TRACK.all()[0];
+    d.label = 'Golden Retriever'; d.tier = 'local'; d.scan = 'relevant';
+    UI.draw(TRACK.all());
+    const better = document.querySelectorAll('#arLayer .ar-card').length;
+
+    return { bare, guess, echoed, better };
+  });
+  ok('a tennis ball named "sports ball" gets no card', r.bare === 0, r.bare);
+  ok('a guess about a square of the scene gets no card', r.guess === 0, r.guess);
+  ok('the detail tier echoing the box word back gets no card', r.echoed === 0, r.echoed);
+  ok('CONTROL: "dog" becoming "Golden Retriever" DOES get a card', r.better === 1, r.better);
+
   /* And the other half of what the owner asked for: two backpacks, two signs. */
   r = await page.evaluate(() => {
     const n = window.__plot([
       { cls: 'backpack', box: [30, 500, 170, 220], score: 0.8 },
       { cls: 'backpack', box: [220, 510, 170, 220], score: 0.78 }
-    ]);
+    ], ['Mous Extreme Luggage', 'Osprey Talon 22']);
     return { visible: n, cards: window.__cards() };
   });
   ok('two backpacks side by side get TWO cards', r.cards.length === 2, r.cards.map(c => c.text));
@@ -93,7 +139,7 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     window.__plot([
       { cls: 'person', box: [80, 400, 150, 380], score: 0.9 },
       { cls: 'person', box: [130, 410, 150, 380], score: 0.86 }
-    ]);
+    ], ['Ada Lovelace', 'Alan Turing']);
     return { cards: window.__cards().length, iou: U.iou([80,400,150,380],[130,410,150,380]) };
   });
   ok('SETUP: those two people overlap more than the backpacks did', r.iou > 0.36, +r.iou.toFixed(3));
@@ -104,7 +150,7 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     const n = window.__plot([
       { cls: 'backpack', box: [100, 300, 140, 180], score: 0.81 },
       { cls: 'backpack', box: [112, 314, 132, 170], score: 0.74 }
-    ]);
+    ], ['Mous Extreme Luggage']);
     return { visible: n, cards: window.__cards() };
   });
   ok('two overlapping backpack boxes leave ONE target', r.visible === 1, r.visible);
@@ -116,11 +162,11 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     const n = window.__plot([
       { cls: 'laptop', box: [60, 200, 300, 220], score: 0.9 },
       { cls: 'tv', box: [120, 240, 120, 90], score: 0.6 }
-    ]);
+    ], ['MacBook Pro 14-inch M3', 'Sony Bravia XR']);
     return { visible: n, cards: window.__cards() };
   });
   ok('a box contained inside another is folded into it', r.visible === 1, r.visible);
-  ok('the stronger claim is the one kept', r.cards.length === 1 && /LAPTOP/i.test(r.cards[0].text), r.cards.map(c => c.text));
+  ok('the stronger claim is the one kept', r.cards.length === 1 && /MacBook/i.test(r.cards[0].text), r.cards.map(c => c.text));
 
   // CONTROL: genuinely separate objects must still each get a card.
   r = await page.evaluate(() => {
@@ -128,7 +174,7 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
       { cls: 'chair', box: [20, 120, 120, 160], score: 0.8 },
       { cls: 'person', box: [230, 400, 130, 300], score: 0.9 },
       { cls: 'bottle', box: [40, 640, 60, 120], score: 0.7 }
-    ]);
+    ], ['Herman Miller Aeron', 'Ada Lovelace', 'Chateau Margaux 2015']);
     return { visible: n, cards: window.__cards() };
   });
   ok('CONTROL: three separate objects still get three targets', r.visible === 3, r.visible);
@@ -143,19 +189,27 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     // stepped several times and the LAST position is what matters.
     let before = null;
     TRACK.update([{ cls: 'bottle', box: [40, 200, 80, 160], score: 0.9 }], now);
+    const lbl = TRACK.all()[0];
+    lbl.label = 'Chateau Margaux 2015'; lbl.tier = 'cloud'; lbl.scan = 'relevant';
     UI.draw(TRACK.all());
     before = window.__cards()[0];
-    for (let i = 0; i < 20; i++) {
-      TRACK.update([{ cls: 'bottle', box: [280, 560, 80, 160], score: 0.9 }], now + i * 30);
+    /* Moved a step at a time, not teleported. A box that jumps the width of
+       the screen in one frame is a DIFFERENT object as far as the tracker is
+       concerned - correctly - and it would lose its identity along with its
+       label, which is what this is trying to watch follow it. */
+    for (let i = 1; i <= 24; i++) {
+      TRACK.update([{ cls: 'bottle', box: [40 + i * 10, 200 + i * 15, 80, 160], score: 0.9 }], now + i * 30);
       UI.draw(TRACK.all());
     }
     const after = window.__cards()[0];
     const t = TRACK.visible()[0];
-    return { before: before, after: after, tracks: TRACK.visible().length, box: t && t.box };
+    return { before: before, after: after, tracks: TRACK.visible().length, box: t && t.box,
+             kept: !!(t && t.label) };
   });
   ok('it is still one target after moving', r.tracks === 1, r.tracks);
-  ok('the card moved right with the object', r.after.x - r.before.x > 150, { from: Math.round(r.before.x), to: Math.round(r.after.x) });
-  ok('the card moved down with the object', r.after.y - r.before.y > 250, { from: Math.round(r.before.y), to: Math.round(r.after.y) });
+  ok('CONTROL: and it kept the name it was given', r.kept === true, r.kept);
+  ok('the card moved right with the object', r.after.x - r.before.x > 120, { from: Math.round(r.before.x), to: Math.round(r.after.x) });
+  ok('the card moved down with the object', r.after.y - r.before.y > 200, { from: Math.round(r.before.y), to: Math.round(r.after.y) });
   ok('the card sits horizontally over its object', Math.abs((r.after.x + r.after.w / 2) - (r.box[0] + r.box[2] / 2)) < 40,
      { card: Math.round(r.after.x + r.after.w / 2), obj: Math.round(r.box[0] + r.box[2] / 2) });
   ok('the card sits just above its object, not floating elsewhere',
@@ -167,6 +221,8 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     TRACK.reset();
     const now = performance.now();
     TRACK.update([{ cls: 'cup', box: [100, 300, 90, 110], score: 0.8 }], now);
+    const c0 = TRACK.all()[0];
+    c0.label = 'Le Creuset Stoneware'; c0.tier = 'cloud'; c0.scan = 'relevant';
     UI.draw(TRACK.all());
     const first = document.querySelector('#arLayer .ar-card');
     first.dataset.mark = 'same-node';
@@ -185,6 +241,8 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     TRACK.reset();
     let now = performance.now();
     TRACK.update([{ cls: 'cup', box: [100, 300, 90, 110], score: 0.8 }], now);
+    const c1 = TRACK.all()[0];
+    c1.label = 'Le Creuset Stoneware'; c1.tier = 'cloud'; c1.scan = 'relevant';
     UI.draw(TRACK.all());
     const had = document.querySelectorAll('#arLayer .ar-card').length;
     for (let i = 0; i < 30; i++) { now += 40; TRACK.update([], now); UI.draw(TRACK.all()); }

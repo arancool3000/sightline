@@ -142,18 +142,64 @@ var AR = (function () {
 
   /* One card per target. Written guarded so a steady scene does no DOM work
      beyond moving things. */
+  /* IS THERE ANYTHING WORTH SAYING?
+
+     "this is not for LABELLING THE OBVIOUS. IT IS FOR LABELLING SPECIES AND
+      MODELS AND THINGS THAT ARE NOT OBVIOUS. I KNOW WHAT A TENNIS BALL IS."
+
+     So a card is not the reward for detecting something. It is the reward
+     for knowing something the person holding the camera does not: a species,
+     a make and model, a price, a name. A detected object with nothing but
+     its own generic noun attached gets a marker and no words.
+
+     Three things clear the bar:
+       - an answer from the detail tier, which is asked for the specific
+         identity and told a generic noun is useless;
+       - an on-device label that says MORE than the box did - "Golden
+         Retriever" over "dog";
+       - nothing else. A crop of the scene classified as "Tennis Ball" is
+         the thing this rule exists to stop.                               */
+  function worthSaying(t) {
+    if (!t.label) return false;
+    var lab = String(t.label).toLowerCase().trim();
+    var cls = String(t.cls || '').toLowerCase().replace(/[^a-z ]/g, '').trim();
+    if (!lab) return false;
+    /* Even the detail tier is held to it: if all it came back with was the
+       word already on the box, it has told us nothing. */
+    if (cls && lab === cls) return false;
+    if (t.tier === 'cloud') return true;
+    /* A guess about a square of the scene is never specific enough to
+       deserve words on screen. */
+    if (t.tier === 'guess') return false;
+    if (!cls) return false;
+    /* "dog" -> "Golden Retriever" is worth saying; "dog" -> "dogs" is not. */
+    if (lab.indexOf(cls) !== -1 && lab.split(/\s+/).length <= cls.split(/\s+/).length) return false;
+    return true;
+  }
+
   function place(t, screen, kind, frameW) {
     if (!layer) return;
+
+    if (!worthSaying(t)) {
+      /* Drop any card this target used to have, so an answer that is
+         withdrawn does not leave its words behind. */
+      if (cards[t.id]) {
+        var old = cards[t.id];
+        if (old.parentNode) old.parentNode.removeChild(old);
+        delete cards[t.id];
+      }
+      return null;
+    }
     var el = cards[t.id] || build(t.id, kind);
     seen[t.id] = 1;
 
-    var named = !!t.label;
-    var provisional = named && t.tier !== 'cloud';
-    var guess = named && t.tier === 'guess';
+    var named = true;                       // nothing reaches here unnamed
+    var provisional = t.tier !== 'cloud';
+    var guess = t.tier === 'guess';
     /* A target that has not been named yet shows the plain noun the
        detector gave, not a state machine. "SCANNING" and a percentage told
        the reader about our process; the noun tells them about the world. */
-    var title = named ? t.label : sentence(String(t.cls));
+    var title = sentence(t.label);
     /* What the second line says is a claim about how much to trust the
        first one. A confirmed identification gets its detail; a guess from a
        crop of the scene says so, with the number. */
@@ -216,5 +262,6 @@ var AR = (function () {
   }
 
   return { init: init, begin: begin, place: place, sweep: sweep, clear: clear,
+           worthSaying: worthSaying,
            HUE: HUE, distance: distance, SIZE: SIZE };
 })();
