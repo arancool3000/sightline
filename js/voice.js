@@ -260,14 +260,42 @@ var VOICE = (function () {
     'Use actions only when they help. If you are not sure what something is, say so plainly ' +
     'rather than guessing - a wrong name is worse than "I cannot tell from here".';
 
+  /* "takes ages for it to respond and sometimes forgets to respond."
+
+     FORGETS: askNow() returned early while a previous question was still
+     in flight, and said nothing - so the second thing you asked simply
+     vanished. And if the request hung, `thinking` stayed true for ever
+     and EVERY later question vanished. Now a question asked mid-answer
+     is kept and asked next, and a watchdog clears a hung request with an
+     answer that says so.
+
+     AGES: every question carried a 768px photograph, whether or not it
+     was about the picture. "How far is the station" is text. A text-only
+     request is a fraction of the bytes and the model answers it in a
+     fraction of the time; the picture goes only with a scene question,
+     and smaller. */
+  var ASK_TIMEOUT_MS = 20000, pendingQ = null, watchdog = 0;
+
   function askNow(question) {
-    if (thinking) return;
+    if (thinking) { pendingQ = question; return; }
     lastSaid = question;
     thinking = true;
     awakeUntil = performance.now() + AWAKE_MS;
     fire({ kind: 'thinking', question: question });
+    if (watchdog) clearTimeout(watchdog);
+    watchdog = setTimeout(function () {
+      watchdog = 0;
+      if (!thinking) return;
+      thinking = false;
+      lastAnswer = { say: 'That took too long. Ask me again.', error: 'timeout' };
+      fire({ kind: 'answer', answer: lastAnswer });
+      speak(lastAnswer.say);
+      settle('');
+      drain();
+    }, ASK_TIMEOUT_MS);
 
-    var shot = CAM.frame ? CAM.frame(768) : null;
+    var scene = isSceneQuestion(question);
+    var shot = (scene && CAM.frame) ? CAM.frame(512) : null;
 
     /* "the labels confuse it. if the message is related to the scene in
         front of it it should analyse without looking at the labels
@@ -280,7 +308,6 @@ var VOICE = (function () {
        boxed from the model's own answer. A question that is not about the
        scene - directions, the weather, a fact - still gets the context,
        because there the labels are the point. */
-  var scene = isSceneQuestion(question);
     var full = PROMPT +
                (scene ? '\n\nLook at the picture yourself. Ignore any labels you might expect an app to have; ' +
                         'name what YOU see. Put the two to six things worth naming in "seen" as ' +
@@ -295,6 +322,8 @@ var VOICE = (function () {
           .then(function (r) { return r && r.ok ? { ok: true, text: r.text, json: null, model: 'worker' } : { ok: false, error: (r && r.error) || 'no answer' }; });
 
     return job.then(function (r) {
+      if (!thinking) return lastAnswer;          // the watchdog already answered
+      if (watchdog) { clearTimeout(watchdog); watchdog = 0; }
       thinking = false;
       if (!r.ok) {
         lastAnswer = { say: 'I could not reach the assistant.', error: r.error };
@@ -319,13 +348,23 @@ var VOICE = (function () {
       fire({ kind: 'answer', answer: lastAnswer });
       speak(say);
       settle(say);
+      drain();
       return lastAnswer;
     }).catch(function (e) {
+      if (watchdog) { clearTimeout(watchdog); watchdog = 0; }
       thinking = false;
       lastAnswer = { say: 'Something went wrong asking that.', error: String(e && e.message || e) };
       fire({ kind: 'answer', answer: lastAnswer });
+      settle('');
+      drain();
       return lastAnswer;
     });
+  }
+
+  /* The question that arrived mid-answer gets asked now. */
+  function drain() {
+    var q = pendingQ; pendingQ = null;
+    if (q) { awake = true; awakeUntil = performance.now() + AWAKE_MS; askNow(q); }
   }
 
   /* Is this about what is in front of the camera? Deliberately wide: the
@@ -398,16 +437,26 @@ var VOICE = (function () {
     hush();
     var useGem = window.GEM && GEM.has && GEM.has() && GEM.tts && SET.get('geminiVoice') !== false;
     if (!useGem) { deviceSpeak(text); return Promise.resolve('device'); }
-    return GEM.tts(text).then(function (r) {
+    /* The cloud voice is a second round trip after the answer. It gets a
+       moment; past that the device speaks and whatever arrives later is
+       dropped, because two voices saying the same thing is worse than a
+       plainer one saying it now. */
+    var spoken = false;
+    var late = new Promise(function (res) { setTimeout(function () { res({ late: true }); }, TTS_WAIT_MS); });
+    return Promise.race([GEM.tts(text), late]).then(function (r) {
+      if (spoken) return 'device';
+      spoken = true;
       if (r && r.ok && r.pcm && r.pcm.length && playPcm(r.pcm, r.rate)) { ttsSpoken++; return 'gemini'; }
       ttsFellBack++;
       deviceSpeak(text);
       return 'device';
-    }, function () { ttsFellBack++; deviceSpeak(text); return 'device'; });
+    }, function () { if (spoken) return 'device'; spoken = true; ttsFellBack++; deviceSpeak(text); return 'device'; });
   }
+  var TTS_WAIT_MS = 1500;
 
   return { start: start, stop: stop, state: state, on: onEvent, ask: askNow, awakeMs: awakeMs,
            wake: wake, speak: speak, _heard: heard, _apply: apply, _settle: settle,
+           _pending: function () { return pendingQ; }, _timeoutMs: ASK_TIMEOUT_MS, _setTimeoutMs: function (v) { ASK_TIMEOUT_MS = v; },
            isSceneQuestion: isSceneQuestion,
            WAKE: WAKE, ACTIONS: ACTIONS };
 })();

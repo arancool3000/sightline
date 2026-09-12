@@ -277,6 +277,64 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   ok('CONTROL: with no key at all, the device speaks', tts.c === 'device', tts);
   ok('SETUP: there is more than one speech model name to try', tts.models.length >= 2, tts.models);
 
+  /* ---- "takes ages ... sometimes forgets to respond" ---- */
+  const drop = await page.evaluate(async () => {
+    const real = GEM.ask, realHas = GEM.has;
+    GEM.has = () => true;
+    const sent = [];
+    let release;
+    /* The first answer is held until we let go; the second is asked while
+       the first is still out. It used to vanish. */
+    GEM.ask = (prompt, image) => { sent.push({ q: prompt.slice(-40), img: !!image });
+      return new Promise(r => { if (sent.length === 1) release = () => r({ ok: true, text: '', json: { say: 'first' }, model: 's' });
+                                else r({ ok: true, text: '', json: { say: 'second' }, model: 's' }); }); };
+    const answers = [];
+    VOICE.on(ev => { if (ev.kind === 'answer') answers.push(ev.answer.say); });
+    VOICE.start(); VOICE.wake();
+    const p1 = VOICE.ask('what is that');
+    VOICE.ask('how far is the station');
+    const keptWhileBusy = VOICE._pending();
+    release(); await p1;
+    await new Promise(r => setTimeout(r, 300));
+    GEM.ask = real; GEM.has = realHas; VOICE.stop();
+    return { keptWhileBusy, answers, sent };
+  });
+  ok('a question asked while it is still answering is KEPT, not dropped', drop.keptWhileBusy === 'how far is the station', drop);
+  ok('and it is answered right after the first one', drop.answers.indexOf('second') > drop.answers.indexOf('first') && drop.answers.indexOf('first') >= 0, drop.answers);
+  ok('a question about the scene carries the picture', drop.sent[0] && drop.sent[0].img === true, drop.sent);
+  ok('a question that is not about the scene carries NO picture - that is most of the wait', drop.sent[1] && drop.sent[1].img === false, drop.sent);
+
+  const hung = await page.evaluate(async () => {
+    const real = GEM.ask, realHas = GEM.has, realT = VOICE._timeoutMs;
+    GEM.has = () => true;
+    GEM.ask = () => new Promise(() => {});          // never answers
+    VOICE._setTimeoutMs(400);
+    const answers = [];
+    VOICE.on(ev => { if (ev.kind === 'answer') answers.push(ev.answer); });
+    VOICE.start(); VOICE.wake();
+    VOICE.ask('what is that');
+    await new Promise(r => setTimeout(r, 900));
+    const stuck = VOICE.state().thinking;
+    GEM.ask = real; GEM.has = realHas; VOICE._setTimeoutMs(realT); VOICE.stop();
+    return { stuck, said: answers.map(a => a.say), err: answers.map(a => a.error) };
+  });
+  ok('a request that hangs does not leave it stuck thinking for ever', hung.stuck === false, hung);
+  ok('and it SAYS it took too long instead of going quiet', hung.err.indexOf('timeout') >= 0 && /too long/i.test(hung.said.join(' ')), hung);
+
+  const slowTts = await page.evaluate(async () => {
+    const realTts = GEM.tts, realHas = GEM.has, realU = window.SpeechSynthesisUtterance;
+    let device = 0; window.SpeechSynthesisUtterance = function (t) { device++; this.text = t; };
+    GEM.has = () => true;
+    GEM.tts = () => new Promise(r => setTimeout(() => r({ ok: true, pcm: new Int16Array(240), rate: 24000 }), 4000));
+    const t0 = Date.now();
+    const how = await VOICE.speak('hello there');
+    const ms = Date.now() - t0;
+    window.SpeechSynthesisUtterance = realU; GEM.tts = realTts; GEM.has = realHas;
+    return { how, ms, device };
+  });
+  ok('a slow cloud voice is not waited for - the device speaks within two seconds',
+     slowTts.how === 'device' && slowTts.device >= 1 && slowTts.ms < 2500, slowTts);
+
   ok('no page errors throughout', errs.length===0, errs);
   console.log('\n'+pass+'/'+(pass+fail)+' passed');
   await b.close();server.close();process.exit(fail?1:0);
