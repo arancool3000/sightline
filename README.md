@@ -64,6 +64,72 @@ translation. 34 source languages, 32 targets.
 
 ---
 
+## What is free, and what "free" means in each case
+
+The rule this was built to: *no API unless it is literally unlimited free
+fast use, not practically unlimited.* Here is every source it touches,
+sorted honestly, because the difference matters when one of them stops
+answering.
+
+### Genuinely uncapped
+
+Nothing meters these, and the app is designed so that these alone are
+enough to have something on screen.
+
+| what | why it is uncapped |
+|---|---|
+| **The detector and the classifier** | They run in your browser. The weights are served from this site and nothing is sent anywhere. There is no request to count. |
+| **Your position, heading, speed and distance** | The device's own GPS and compass. Nothing leaves the phone. |
+| **Wikipedia and Wikidata** | No key, no account, no quota for a reader. They are read the same way a person reading an article reads them. |
+| **Your own hardware** | The Pi in `pi/`. You own it, so nobody is metering it. |
+
+### Free, no key, but a fair-use policy rather than a promise
+
+These have no cost and no sign-up, and their operators ask you not to hammer
+them. **The app is built to be a good citizen of each**, and to keep working
+when one of them says no.
+
+| what | the policy, and what this app does about it |
+|---|---|
+| **Open-Meteo** (weather) | Free for non-commercial use with no key. Asked once when you move a few hundred metres, not on a timer. |
+| **Overpass** (road geometry) | A volunteer-run service. One request per 700-metre tile, **cached on your device for a month**, and never retried in a loop. A street you have walked down once draws with no network at all. |
+| **MyMemory** (translation, fallback) | Has a daily character allowance. Only used if the Worker's own translation is unavailable. |
+
+### Free on your own account, with an allowance
+
+| what | the truth about it |
+|---|---|
+| **Cloudflare Workers AI** | This is the tier that knows a 3D printer from a Polaroid camera, and it runs on **your** Cloudflare account, on the free plan's daily neuron allowance. That is generous but it is not infinite. When it runs out, everything on-device carries on and names stay generic. |
+
+There is deliberately **no** Google Vision, no PlantNet, no Gemini key and no
+tile provider in the default build. The Worker supports them if you set the
+keys, and it works completely without them.
+
+### The one thing that is not solved
+
+**Naming a tree species from a photograph, free and unlimited, does not
+currently have an answer**, and it is worth being straight about why rather
+than pretending otherwise.
+
+- Every keyless species API (iNaturalist, Pl@ntNet) either needs an account
+  or does not do image identification without one.
+- The only truly unlimited route is a model running on the device, and there
+  is no species classifier published in a form this app can vendor. The AIY
+  plant and insect classifiers exist but are not available as TensorFlow.js.
+- ImageNet, which is what the on-device classifier knows, has almost no tree
+  species in it. That is where "rapeseed", "pot" and "valley" for one tree
+  came from, and why the on-device tier is now forbidden from naming a
+  species at all.
+
+So species identification goes to the detail tier — Workers AI, or your own
+Pi — and everything Wikidata knows is layered on top of whatever name comes
+back: the binomial, the rank, the genus or family it belongs to, its other
+common names, and its conservation status. That part *is* unlimited.
+
+If a species classifier ever ships in a form that can be vendored here, it
+drops into the same slot the other two models use and the whole thing
+becomes unlimited. Until then this is the honest position.
+
 ## Stack
 
 | Layer | What | Cost |

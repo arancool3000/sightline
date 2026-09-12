@@ -396,7 +396,15 @@ var UI = (function () {
         ['Born', w.bornYear ? String(w.bornYear) : '']
       ]);
     } else if (rec.kind === 'plant' || rec.kind === 'animal' || rec.kind === 'insect') {
-      html += grid([['Rank', w.rank], ['Status', w.conservation]]);
+      /* Everything Wikidata will say about the species, which is the part of
+         this that is genuinely uncapped. grid() drops any row with no value,
+         so a taxon it knows little about simply shows less. */
+      html += grid([
+        ['Also called', w.common],
+        ['Rank', w.rank],
+        ['Belongs to', w.parent],
+        ['Status', w.conservation]
+      ]);
     } else if (!rec.specs || !rec.specs.length) {
       html += grid([['Made by', w.maker], ['Since', w.from]]);
     }

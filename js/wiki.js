@@ -171,16 +171,23 @@ var WIKI = (function () {
       return entity(p.qid).then(function (e) {
         var out = {
           name: p.title, extract: p.extract, thumb: p.thumb, url: p.url, qid: p.qid,
-          scientific: '', rank: '', conservation: ''
+          scientific: '', rank: '', conservation: '', parent: '', common: ''
         };
         if (!e) return out;
         out.scientific = claimValue(e, 'P225') || '';
+        /* The four facts that answer "what kind of tree is this" once
+           something has given it a name. All from Wikidata, which has no key
+           and no quota worth the name - it is the one part of species
+           identification that really is unlimited. */
         return Promise.all([
-          labelsFor(claimIds(e, 'P105')),   // taxon rank
-          labelsFor(claimIds(e, 'P141'))    // IUCN status
+          labelsFor(claimIds(e, 'P105')),   // taxon rank: species, genus, family
+          labelsFor(claimIds(e, 'P141')),   // IUCN conservation status
+          labelsFor(claimIds(e, 'P171'))    // parent taxon - the genus, or the family
         ]).then(function (r) {
           out.rank = r[0][0] || '';
           out.conservation = r[1][0] || '';
+          out.parent = r[2][0] || '';
+          out.common = claimValue(e, 'P1843') || '';   // its common name, per Wikidata
           return out;
         });
       });
