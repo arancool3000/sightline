@@ -97,18 +97,38 @@ var TRACK = (function () {
 
      Containment matters as much as overlap here: a small box wholly inside
      a large one has a LOW IoU while plainly being the same object. */
-  var DUP_IOU = 0.5;
-  var DUP_INSIDE = 0.7;
+  /* Measured against the real case rather than guessed: the owner's photo of
+     ONE backpack produced two boxes at IoU 0.32 and 0.49 containment, which
+     sailed under a 0.5 / 0.7 rule. Two SEPARATE backpacks side by side are a
+     different picture - they barely touch - so the bar for "same class, same
+     thing" can come down a long way without merging two real objects.
+
+     People are the exception and keep the strict numbers: a crowd is full of
+     genuinely different people who genuinely overlap, and merging two of them
+     would be worse than showing two cards on one person.
+
+     The rule the owner stated: one backpack, one sign; two backpacks, two
+     signs. */
+  var SAME = { iou: 0.25, inside: 0.55 };     // same class - almost certainly one thing
+  var CROSS = { iou: 0.5, inside: 0.7 };      // different classes - one thing under two names
+  var CROWD = { iou: 0.55, inside: 0.85 };    // people, who really do stand in front of each other
+  var CROWDED = { person: 1 };
+
+  function limits(a, b) {
+    if (CROWDED[a.cls] || CROWDED[b.cls]) return CROWD;
+    return a.cls === b.cls ? SAME : CROSS;
+  }
 
   function overlapping(a, b) {
-    if (U.iou(a.box, b.box) >= DUP_IOU) return true;
+    var lim = limits(a, b);
+    if (U.iou(a.box, b.box) >= lim.iou) return true;
     var ax = Math.max(a.box[0], b.box[0]), ay = Math.max(a.box[1], b.box[1]);
     var bx = Math.min(a.box[0] + a.box[2], b.box[0] + b.box[2]);
     var by = Math.min(a.box[1] + a.box[3], b.box[1] + b.box[3]);
     var inter = Math.max(0, bx - ax) * Math.max(0, by - ay);
     if (!inter) return false;
     var areaA = a.box[2] * a.box[3], areaB = b.box[2] * b.box[3];
-    return inter / Math.min(areaA, areaB) >= DUP_INSIDE;
+    return inter / Math.min(areaA, areaB) >= lim.inside;
   }
 
   /* Which of two overlapping targets is the better answer. A named one beats

@@ -86,12 +86,17 @@ var AR = (function () {
 
     var named = !!t.label;
     var provisional = named && t.tier !== 'cloud';
+    var guess = named && t.tier === 'guess';
     var title = named ? t.label
               : (t.scan === 'scanning' ? 'Scanning' :
                  t.scan === 'dismissed' ? (t.why || 'Dismissed') : String(t.cls));
-    var sub = (t.data && t.data.scientific) ||
-              (t.data && t.data.specs && t.data.specs.length ? t.data.specs[0].v : '') ||
-              (named ? kind.charAt(0).toUpperCase() + kind.slice(1) : '');
+    /* What the second line says is a claim about how much to trust the
+       first one. A confirmed identification gets its detail; a guess from a
+       crop of the scene says so, with the number. */
+    var sub = guess ? ('GUESS ' + Math.round((t.conf || 0) * 100) + '%')
+            : ((t.data && t.data.scientific) ||
+               (t.data && t.data.specs && t.data.specs.length ? t.data.specs[0].v : '') ||
+               (named ? kind.charAt(0).toUpperCase() + kind.slice(1) : ''));
     var dist = distance(t.cls, screen[2], screen[3], frameW);
 
     var tEl = el.querySelector('.ar-title');
@@ -103,7 +108,8 @@ var AR = (function () {
 
     var cls = 'ar-card k-' + kind +
       (named ? ' named' : '') +
-      (provisional ? ' prov' : '') +
+      (provisional && !guess ? ' prov' : '') +
+      (guess ? ' guess' : '') +
       (t.scan === 'dismissed' && !named ? ' dim' : '') +
       (t.scan === 'scanning' && !named ? ' scan' : '');
     if (el.className !== cls) el.className = cls;

@@ -7,6 +7,7 @@
   var model = null;
   var running = false;
   var lastDetect = 0;
+  var GRID_MIN = 0.70;             // a scene crop must be this sure to be named at all
   var DETECT_MS = 90;              // ~11 detector passes a second; boxes are smoothed between
   var frameTimes = [];
   var loopHandle = null;
@@ -19,11 +20,11 @@
     people: { person: 1 }
   };
 
-  function allowed(cls) {
+  function allowedKind(kind) {
     var want = MODE_KINDS[SET.get('mode')];
-    if (!want) return true;
-    return !!want[IDENT.kindOf(cls)];
+    return !want || !!want[kind];
   }
+  function allowed(cls) { return allowedKind(IDENT.kindOf(cls)); }
 
   function boot() {
     UI.init();
@@ -108,6 +109,8 @@
     });
   }
 
+  window.SL_MODE_ALLOWS = allowedKind;      // for the mode suite
+
   window.SL_RELOAD = function () { model = null; return loadModel(); };
   window.SL_DIAG = function () {
     return {
@@ -132,6 +135,9 @@
            staring at the start screen with no feedback; labels simply appear
            once the weights arrive. */
         U.$('#gate').classList.add('hidden');
+        /* Location starts with the camera, not at boot: asking for it before
+           the user has pressed anything is two permission prompts at once. */
+        GEO.start();
         UI.resize();
         running = true;
         UI.tele('#tEng', SET.hasApi() ? 'CLOUD' : 'LOCAL');
@@ -163,6 +169,9 @@
        slow device it thins out rather than starving the live label. */
     if (LOCAL.ready()) {
       LOCAL.scene(U.$('#cam'), function (r) {
+        /* The scene readout is a label on screen like any other, so a mode
+           that excludes its kind must exclude it. */
+        if (r && r.kind && !allowedKind(r.kind)) r = null;
         sceneRec = r;
         if (r && !sceneFirstAt) sceneFirstAt = performance.now();
         UI.sceneLabel(r);
@@ -197,7 +206,11 @@
   /* Turn confident grid regions into tracks so they render, are tappable and
      carry a verdict exactly like detector targets do. */
   function gridToTracks(now) {
-    var hits = LOCAL.gridTargets();
+    /* The mode filter was applied to detector boxes and NOT here, so with no
+       detector every mode showed everything: NATURE listed a backpack and a
+       spaghetti squash. The grid knows each region's kind, so it is filtered
+       on that directly rather than by round-tripping through a class name. */
+    var hits = LOCAL.gridTargets().filter(function (hh) { return allowedKind(hh.kind); });
     var dets = hits.map(function (hh) {
       return { cls: hh.kind === 'object' ? 'grid' : hh.kind, box: hh.box.slice(), score: hh.score };
     });
@@ -213,9 +226,15 @@
          and part of a thing - so its guesses are far weaker than a detected
          object's. "Refrigerator" and "Forklift" for a 3D printer came from
          exactly this. Only a strong guess is worth showing. */
-      if (hit.score < 0.55) { t.scan = 'dismissed'; t.why = 'LOW CONFIDENCE'; t.settled = performance.now(); return; }
+      /* "Sweatshirt" over a bare wall and "spaghetti squash" over a table:
+         a square of the scene classified at 0.6 is a guess, and it was being
+         written on screen in the same type as a real identification. The bar
+         is 0.7 now AND the answer carries its own confidence, so a guess
+         reads as one. */
+      if (hit.score < GRID_MIN) { t.scan = 'dismissed'; t.why = 'LOW CONFIDENCE'; t.settled = performance.now(); return; }
       t.label = hit.name;
-      t.tier = 'local';
+      t.tier = 'guess';                    // a region of the scene, not a detected object
+      t.conf = hit.score;
       t.scan = 'relevant';
       t.localState = 'done';
       t.local = { name: hit.name, score: hit.score, ms: 0, alt: [] };

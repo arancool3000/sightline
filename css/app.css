@@ -21,6 +21,12 @@
   --mono:ui-monospace,"SF Mono",Menlo,"Roboto Mono","JetBrains Mono",Consolas,monospace;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* The browser hides [hidden] with display:none at 0-1-0. Every panel here is
+   positioned by an ID rule at 1-0-0, which OUTRANKS it - so setting .hidden
+   did nothing and a "hidden" status strip stayed on screen as an empty black
+   bar, with the scene chip floating over the AR cards beside it. Six panels
+   were affected. This is the one line that settles it for all of them. */
+[hidden]{display:none!important}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);overscroll-behavior:none}
 body{overflow:hidden;-webkit-font-smoothing:antialiased}
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0}
@@ -357,3 +363,92 @@ body.caps-on #sceneChip{top:auto;bottom:calc(var(--safe-b) + 176px)}
   .ar-card{max-width:70vw;padding:5px 8px 5px 6px;gap:6px}
   .ar-title{font-size:11.5px}
 }
+
+/* ---------- ambient instruments --------------------------------------- */
+/* The scene is the subject. These hug the edges, stay small, and carry only
+   what a heads-up display should: where you are, which way you face, what
+   the sky is doing, and what has just been identified. */
+
+#radarPod{
+  position:absolute;right:14px;top:calc(var(--safe-t) + 150px);z-index:6;
+  width:88px;display:flex;flex-direction:column;align-items:center;gap:4px;
+  padding:6px 6px 5px;background:rgba(6,9,12,.5);
+  border:1px solid var(--line);border-radius:50% 50% 3px 3px;
+  backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)
+}
+#radar{width:76px;height:76px;display:block}
+.pod-note{
+  font-family:var(--mono);font-size:8px;letter-spacing:.12em;color:var(--dim);
+  max-width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center
+}
+
+#ambient{
+  position:absolute;right:14px;top:calc(var(--safe-t) + 268px);z-index:6;
+  display:flex;flex-direction:column;gap:7px;align-items:flex-end;pointer-events:none
+}
+.amb-row{display:flex;flex-direction:column;align-items:flex-end;line-height:1.1}
+.amb-row b{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink)}
+.amb-row i{font-family:var(--mono);font-size:8px;font-style:normal;letter-spacing:.18em;color:var(--faint)}
+
+#scanlog{
+  position:absolute;left:14px;top:calc(var(--safe-t) + 150px);z-index:6;
+  width:126px;pointer-events:none;display:flex;flex-direction:column;gap:5px
+}
+.log-k{font-family:var(--mono);font-size:8px;letter-spacing:.2em;color:var(--faint)}
+.log-row{
+  display:flex;flex-direction:column;gap:1px;
+  padding:4px 6px;background:rgba(6,9,12,.44);
+  border-left:2px solid var(--acc-dim);
+  animation:logIn .22s ease-out
+}
+.log-row b{font-size:10.5px;font-weight:600;line-height:1.2;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.log-row i{font-family:var(--mono);font-size:7.5px;font-style:normal;letter-spacing:.14em;color:var(--faint)}
+.log-row.k-person{border-left-color:#8ab4ff}
+.log-row.k-plant{border-left-color:#5ddc8c}
+.log-row.k-animal{border-left-color:#ff8fd0}
+.log-row.k-insect{border-left-color:#ffb347}
+.log-row.k-vehicle{border-left-color:#7aa2ff}
+@keyframes logIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
+
+/* Hide the margin notes when something is actually being read. */
+body.reading #scanlog,body.reading #ambient,body.reading #radarPod{display:none}
+
+/* ---------- the map --------------------------------------------------- */
+#mapPanel{
+  position:absolute;inset:0;z-index:17;display:flex;flex-direction:column;
+  background:var(--plate-solid);padding:0 16px calc(var(--safe-b) + 16px)
+}
+.map-head{
+  display:flex;align-items:center;gap:10px;
+  padding:calc(var(--safe-t) + 16px) 0 12px;border-bottom:1px solid var(--line)
+}
+.map-head h2{flex:1;margin:0;font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.22em}
+.map-stage{flex:0 0 auto;display:grid;place-items:center;padding:14px 0}
+#mapCanvas{width:min(88vw,420px);height:min(88vw,420px);display:block}
+.map-note{margin:0 0 10px;font-size:11px;line-height:1.5;color:var(--dim)}
+.map-list{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  font-size:12px;color:var(--dim)}
+.map-row{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:10px 8px;border-bottom:1px solid rgba(230,236,241,.08);min-height:var(--touch-min,44px)
+}
+.map-row.on{background:rgba(79,227,255,.08)}
+.mr-b{font-family:var(--mono);font-size:10px;color:var(--acc);flex:0 0 34px}
+.mr-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.mr-d{font-family:var(--mono);font-size:10px;color:var(--dim);flex:0 0 auto}
+
+@media (max-height:720px){
+  #radarPod{top:calc(var(--safe-t) + 128px);width:74px}
+  #radar{width:62px;height:62px}
+  #ambient{top:calc(var(--safe-t) + 222px)}
+  #scanlog{top:calc(var(--safe-t) + 128px);width:112px}
+}
+
+/* A guess is a square of the scene classified by the on-device model, not a
+   detected object. It said "Sweatshirt" over a bare wall in the same type as
+   a real identification, so it does not get that type. */
+.ar-card.guess{border-style:dashed;background:rgba(6,9,12,.5)}
+.ar-card.guess .ar-title{font-weight:500;color:rgba(230,236,241,.82)}
+.ar-card.guess .ar-sub{color:var(--warn);opacity:.85}
+.ar-card.guess .ar-ic{opacity:.5}

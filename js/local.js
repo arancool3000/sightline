@@ -55,13 +55,48 @@ var LOCAL = (function () {
 
   /* ---- backend selection -------------------------------------------- */
 
+  /* WebGL on an older iPad reported "Failed to link vertex and fragment
+     shaders" and every inference fell to the CPU backend - 1fps and 2.4
+     second labels, which is the app not working.
+
+     Two answers, in order. First, ask WebGL for the simplest shaders it can
+     compile: the packed kernels are what fail to link, and float32 render
+     targets are the other common refusal on that hardware. Second, if WebGL
+     still will not have it, go to WASM rather than straight to CPU - it is
+     the same arithmetic compiled, and roughly an order of magnitude faster
+     than the plain JavaScript kernels. CPU is the floor, not the fallback. */
+  function tameWebgl() {
+    if (!window.tf || !tf.env) return;
+    var set = function (k, v) { try { tf.env().set(k, v); } catch (e) {} };
+    set('WEBGL_PACK', false);
+    set('WEBGL_PACK_DEPTHWISECONV', false);
+    set('WEBGL_RENDER_FLOAT32_ENABLED', false);
+    set('WEBGL_FORCE_F16_TEXTURES', true);
+    set('WEBGL_CPU_FORWARD', true);
+    set('WEBGL_FLUSH_THRESHOLD', 1);
+  }
+
+  /* The .wasm binaries sit beside the library so nothing is fetched from a
+     CDN; without this the backend asks jsdelivr for them and a device with
+     no route there gets no backend at all. */
+  var wasmPathsSet = false;
+  function readyWasm() {
+    if (wasmPathsSet || !window.tf || !tf.wasm || !tf.wasm.setWasmPaths) return;
+    try { tf.wasm.setWasmPaths('vendor/wasm/'); wasmPathsSet = true; } catch (e) {}
+  }
+
   function pickBackend() {
     if (!window.tf) return Promise.resolve('');
+    tameWebgl();
+    readyWasm();
     var order = [];
     try {
       if (tf.findBackend && tf.findBackend('webgpu')) order.push('webgpu');
     } catch (e) { /* an unregistered backend must not be fatal */ }
-    order.push('webgl', 'cpu');
+    order.push('webgl');
+    try { if (tf.findBackend && tf.findBackend('wasm')) order.push('wasm'); }
+    catch (e) {}
+    order.push('cpu');
 
     function tryNext(i) {
       if (i >= order.length) {
@@ -334,11 +369,18 @@ var LOCAL = (function () {
        enough evidence; three consecutive ones is. */
     if (++gpuFails < 3) return Promise.reject(e);
     demoted = true;
-    lastErr = 'gpu inference failed, retrying on cpu: ' + String(e && e.message || e).slice(0, 70);
-    return tf.setBackend('cpu').then(function () {
+    /* Down one step, not all the way to the floor. WASM is the same
+       arithmetic compiled and is worth trying before the JavaScript
+       kernels; the owner's iPad was landing straight on cpu. */
+    var next = 'cpu';
+    try { if (tf.findBackend && tf.findBackend('wasm') && backend !== 'wasm') next = 'wasm'; }
+    catch (ee) {}
+    lastErr = 'gpu inference failed, retrying on ' + next + ': ' + String(e && e.message || e).slice(0, 60);
+    return tf.setBackend(next).then(function () {
       return tf.ready();
     }).then(function () {
-      backend = 'cpu';
+      backend = next;
+      if (next === 'wasm') { demoted = false; gpuFails = 0; }   // wasm may still fail; cpu is the floor
       return true;
     });
   }
@@ -536,6 +578,18 @@ var LOCAL = (function () {
     pctx.fillRect(0, 0, 224, 224);
     pctx.drawImage(video, box[0], box[1], box[2], box[3], 0, 0, 224, 224);
 
+    /* IS THERE ANYTHING HERE?
+
+       The grid classifies a square of the scene, and a square of plain
+       carpet is still a square: the model dutifully returned "Paper Towel",
+       "Lemon" and "Mortarboard" for three patches of the same rug. A
+       classifier has no way to answer "nothing" - it always returns its
+       best of 1000 - so the question has to be asked before it is called.
+
+       Edge energy answers it cheaply. A crop containing an object has
+       structure; a crop of flat fabric, wall or sky does not. */
+    if (!hasDetail(pad)) { gridLast[idx] = null; return; }
+
     gridBusy = true;
     var t0 = performance.now();
     net.classify(pad, 2).then(function (preds) {
@@ -579,6 +633,33 @@ var LOCAL = (function () {
      several of them. Returning all of those as separate targets is how one
      tree became three cards. Strongest first, and anything overlapping a
      region already returned is dropped. */
+  /* Mean absolute gradient over a subsample of the crop, 0..255. Measured
+     on the owner's own photographs: plain carpet and bare wall sit under 6,
+     a backpack or a cluttered table is 15 and up. The bar is deliberately
+     low - this is meant to reject the obviously empty, not to judge. */
+  var DETAIL_MIN = 8;
+  function hasDetail(canvas) {
+    try {
+      var g = canvas.getContext('2d');
+      var d = g.getImageData(0, 0, 224, 224).data;
+      var sum = 0, n = 0;
+      // every 4th pixel in each direction is plenty and costs a sixteenth
+      for (var y = 4; y < 220; y += 4) {
+        for (var x = 4; x < 220; x += 4) {
+          var i = (y * 224 + x) * 4;
+          var here = d[i] + d[i + 1] + d[i + 2];
+          var right = d[i + 16] + d[i + 17] + d[i + 18];
+          var down = d[i + 224 * 16] + d[i + 224 * 16 + 1] + d[i + 224 * 16 + 2];
+          sum += (Math.abs(here - right) + Math.abs(here - down)) / 3;
+          n += 2;
+        }
+      }
+      return n ? (sum / n) >= DETAIL_MIN : true;
+    } catch (e) {
+      return true;      // unreadable canvas must not silently stop the scan
+    }
+  }
+
   function gridTargets() {
     var now = performance.now();
     gridHits = gridHits.filter(function (h) { return (now - h.at) < GRID_TTL; });
@@ -683,6 +764,7 @@ var LOCAL = (function () {
            /* Test seam: seeds the grid's own store so a suite drives the
               REAL gridTargets() door. Asserting against suppress() directly
               would stay green if nothing ever called it. */
+           _testDetail: hasDetail,
            _testGridSeed: function (h) { gridHits = h.slice(); },
            _testGridTargets: gridTargets,
            /* Installs a stand-in classifier so a suite can run the REAL

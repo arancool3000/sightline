@@ -46,6 +46,34 @@
     </div>
   </div>
 
+  <!-- Ambient instruments. Edge-hugging on purpose: the scene is the
+       subject and these are the margin notes. -->
+  <button id="radarPod" aria-label="Open the map">
+    <canvas id="radar" width="96" height="96"></canvas>
+    <span id="radarNote" class="pod-note">LOCATING</span>
+  </button>
+
+  <aside id="ambient" aria-hidden="true">
+    <div class="amb-row"><b id="ambSky">--</b><i>SKY</i></div>
+    <div class="amb-row"><b id="ambTemp">--</b><i>TEMP</i></div>
+    <div class="amb-row"><b id="ambHead">--</b><i>HDG</i></div>
+  </aside>
+
+  <!-- What has been identified, most recent first. -->
+  <aside id="scanlog" aria-hidden="true"><div class="log-k">SCAN LOG</div><div id="logRows"></div></aside>
+
+  <!-- The map, drawn from position and Wikipedia's geosearch. No tiles. -->
+  <section id="mapPanel" hidden>
+    <header class="map-head">
+      <h2>SURROUNDINGS</h2>
+      <button id="mapRange" class="hbtn">500 M</button>
+      <button id="mapClose" class="hbtn" aria-label="Close">CLOSE</button>
+    </header>
+    <div class="map-stage"><canvas id="mapCanvas"></canvas></div>
+    <p class="map-note">Drawn from this device's position and Wikipedia's own geosearch. No map service, no key, no limit.</p>
+    <div id="mapList" class="map-list"></div>
+  </section>
+
   <!-- Reticle and the live scene readout -->
   <div id="reticle" hidden aria-hidden="true">
     <svg viewBox="0 0 100 100" class="ring"><circle cx="50" cy="50" r="46" pathLength="100"/></svg>
@@ -163,6 +191,7 @@
      and this app cannot start without these four files. -->
 <script src="js/build.js"></script>
 <script src="vendor/tf.min.js"></script>
+<script src="vendor/tf-backend-wasm.min.js"></script>
 <script src="vendor/coco-ssd.min.js"></script>
 <script src="vendor/mobilenet.min.js"></script>
 <script src="vendor/imagenet-classes.js"></script>
@@ -170,6 +199,8 @@
 <script src="js/settings.js"></script>
 <script src="js/wiki.js"></script>
 <script src="js/camera.js"></script>
+<script src="js/geo.js"></script>
+<script src="js/map.js"></script>
 <script src="js/track.js"></script>
 <script src="js/local.js"></script>
 <script src="js/identify.js"></script>

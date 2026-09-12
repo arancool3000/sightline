@@ -59,10 +59,48 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     };
   });
 
+  let r;
   console.log('\nONE OBJECT, ONE CARD');
 
+  /* The owner's own photograph, measured off it: one Adidas backpack, two
+     boxes, IoU 0.32. The first version of this fix used a 0.5 bar and let
+     both through, so these are its exact proportions, scaled to fit the
+     test viewport (the first attempt used the photo's own pixel numbers,
+     which fall outside a 412px screen and were culled as off-frame). */
+  r = await page.evaluate(() => {
+    const n = window.__plot([
+      { cls: 'backpack', box: [26, 170, 218, 240], score: 0.72 },
+      { cls: 'backpack', box: [136, 184, 211, 233], score: 0.66 }
+    ]);
+    const iou = U.iou([26, 170, 218, 240], [136, 184, 211, 233]);
+    return { visible: n, cards: window.__cards(), iou: iou };
+  });
+  ok('SETUP: those two boxes really do overlap only loosely', r.iou > 0.28 && r.iou < 0.36, +r.iou.toFixed(3));
+  ok("the owner's two-boxes-on-one-backpack case leaves ONE card", r.cards.length === 1, r.cards.map(c => c.text));
+
+  /* And the other half of what the owner asked for: two backpacks, two signs. */
+  r = await page.evaluate(() => {
+    const n = window.__plot([
+      { cls: 'backpack', box: [30, 500, 170, 220], score: 0.8 },
+      { cls: 'backpack', box: [220, 510, 170, 220], score: 0.78 }
+    ]);
+    return { visible: n, cards: window.__cards() };
+  });
+  ok('two backpacks side by side get TWO cards', r.cards.length === 2, r.cards.map(c => c.text));
+
+  /* People stand in front of each other for real, so they keep a strict bar. */
+  r = await page.evaluate(() => {
+    window.__plot([
+      { cls: 'person', box: [80, 400, 150, 380], score: 0.9 },
+      { cls: 'person', box: [130, 410, 150, 380], score: 0.86 }
+    ]);
+    return { cards: window.__cards().length, iou: U.iou([80,400,150,380],[130,410,150,380]) };
+  });
+  ok('SETUP: those two people overlap more than the backpacks did', r.iou > 0.36, +r.iou.toFixed(3));
+  ok('two overlapping PEOPLE are still two people', r.cards === 2, r);
+
   // Two boxes on the same backpack, exactly the report.
-  let r = await page.evaluate(() => {
+  r = await page.evaluate(() => {
     const n = window.__plot([
       { cls: 'backpack', box: [100, 300, 140, 180], score: 0.81 },
       { cls: 'backpack', box: [112, 314, 132, 170], score: 0.74 }

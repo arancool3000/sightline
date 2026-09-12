@@ -23,6 +23,9 @@ var UI = (function () {
     sheetBody = U.$('#sheetBody');
     settings = U.$('#settings');
     AR.init();
+    MAP.init();
+    GEO.on(ambient);
+    ambient(GEO.state());
     resize();
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
@@ -90,6 +93,7 @@ var UI = (function () {
       var kind = IDENT.kindOf(t.cls);
       var col = COLOR[kind] || COLOR.object;
       var named = !!t.label;
+      if (named) logTarget(t, kind);
 
       var x = s[0], y = s[1], bw = s[2], bh = s[3];
       /* Was 24px, which threw away most objects in a cluttered scene. A small
@@ -632,7 +636,62 @@ var UI = (function () {
     });
   }
 
-  return { init: init, draw: draw, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
+  /* ---------- ambient readouts and the scan log ---------- */
+
+  /* Guarded writes only. These update on a position fix and on the minute,
+     not every frame, but the guard is the habit that stops a repaint
+     costing anything when nothing changed. */
+  function ambient(s) {
+    var w = s.weather;
+    set('#ambSky', s.sky ? s.sky.toUpperCase() : '--');
+    set('#ambTemp', w ? (w.temp + '\u00b0') : '--');
+    set('#ambHead', typeof s.heading === 'number' ? compass(s.heading) : '--');
+  }
+  function set(sel, v) { var el = U.$(sel); if (el && el.textContent !== v) el.textContent = v; }
+  var ROSE = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  function compass(deg) { return ROSE[Math.round(((deg % 360) + 360) % 360 / 45) % 8]; }
+
+  /* The last few things identified, newest first. It is the one part of the
+     display that shows the app is doing something over time rather than
+     only right now. */
+  var logged = {}, logRows = [];
+  function logTarget(t, kind) {
+    if (!t.label || logged[t.id]) return;
+    logged[t.id] = 1;
+    logRows.unshift({ label: t.label, kind: kind, at: Date.now() });
+    while (logRows.length > 4) logRows.pop();
+    paintLog();
+  }
+  function paintLog() {
+    var box = U.$('#logRows');
+    if (!box) return;
+    box.textContent = '';
+    logRows.forEach(function (r) {
+      var d = document.createElement('div');
+      d.className = 'log-row k-' + r.kind;
+      var b = document.createElement('b'); b.textContent = r.label;
+      var i = document.createElement('i');
+      i.textContent = new Date(r.at).toTimeString().slice(0, 5) + ' \u00b7 ' + r.kind.toUpperCase();
+      d.appendChild(b); d.appendChild(i);
+      box.appendChild(d);
+    });
+  }
+
+  /* A place from the map opens in the same dossier everything else uses. */
+  function openPlace(p) {
+    MAP.setOpen(false);
+    openRecord({
+      title: p.title,
+      kicker: 'PLACE \u00b7 ' + Math.round(p.bearing) + '\u00b0 \u00b7 ' +
+              (p.dist < 1000 ? p.dist + ' m' : (p.dist / 1000).toFixed(1) + ' km'),
+      wiki: p.title,
+      specs: [{ k: 'Bearing', v: Math.round(p.bearing) + '\u00b0 from north' },
+              { k: 'Distance', v: p.dist + ' m' },
+              { k: 'Coordinates', v: p.lat.toFixed(4) + ', ' + p.lon.toFixed(4) }]
+    });
+  }
+
+  return { init: init, draw: draw, openPlace: openPlace, logTarget: logTarget, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
            status: status,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
