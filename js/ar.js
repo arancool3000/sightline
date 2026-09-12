@@ -14,6 +14,8 @@ var AR = (function () {
   var layer = null;
   var cards = {};          // track id -> element
   var seen = {};
+  var taken = [];          // rectangles already occupied this frame
+  var reserved = [];       // the HUD's own furniture, which cards must dodge
 
   /* Typical largest real-world dimension, in metres, for classes where a
      sensible prior exists. Anything not listed gets NO distance rather than
@@ -49,9 +51,58 @@ var AR = (function () {
     layer = document.getElementById('arLayer');
   }
 
+  /* Called once a frame before any placing. The HUD's corners hold the
+     telemetry, the clock, the scan log and the instruments; a card that
+     slides under them is unreadable, so they are treated as occupied. */
+  function begin() {
+    taken = [];
+    reserved = [];
+    ['hudTL', 'hudTR', 'radarPod', 'nearCard', 'sceneChip', 'captionBar'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el || el.hidden || !el.offsetWidth) return;
+      var r = el.getBoundingClientRect();
+      reserved.push([r.left - 6, r.top - 6, r.width + 12, r.height + 12]);
+    });
+    taken = reserved.slice();
+  }
+
+  function hits(a, b) {
+    return a[0] < b[0] + b[2] && a[0] + a[2] > b[0] &&
+           a[1] < b[1] + b[3] && a[1] + a[3] > b[1];
+  }
+  function clashes(r) {
+    for (var i = 0; i < taken.length; i++) if (hits(r, taken[i])) return true;
+    return false;
+  }
+
+  /* Several things identified at once is the whole point, so the cards have
+     to share the screen. A card that would land on top of another - or on
+     the telemetry - is stepped away until it finds room, preferring to stay
+     near its own object. */
+  function findRoom(x, y, cw, ch, w, h, objTop, objBottom) {
+    var tries = [[x, y]];
+    var step = ch + 6;
+    for (var k = 1; k <= 4; k++) {
+      tries.push([x, y - step * k]);                 // stack upward
+      tries.push([x, objBottom + 14 + step * (k - 1)]);   // or below the object
+    }
+    for (var j = 0; j < tries.length; j++) {
+      var tx = Math.max(6, Math.min(tries[j][0], w - cw - 6));
+      var ty = Math.max(6, Math.min(tries[j][1], h - ch - 6));
+      if (!clashes([tx, ty, cw, ch])) return [tx, ty];
+    }
+    /* Nowhere clean: keep it on its object rather than hiding the answer. */
+    return [Math.max(6, Math.min(x, w - cw - 6)), Math.max(6, Math.min(y, h - ch - 6))];
+  }
+
   /* Rough, and labelled as such. Apparent size against a typical real size,
      with a focal length assumed from a normal phone field of view. It is an
      estimate and the card says so with a "~". */
+  function sentence(w) {
+    w = String(w || '').replace(/[_-]+/g, ' ');
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }
+
   function distance(cls, boxW, boxH, frameW) {
     var real = SIZE[cls];
     if (!real || !frameW) return '';
@@ -60,7 +111,7 @@ var AR = (function () {
     var focal = frameW * 0.85;
     var d = (real * focal) / px;
     if (d < 0.25 || d > 120) return '';
-    return d < 10 ? ('~' + d.toFixed(1) + ' m') : ('~' + Math.round(d) + ' m');
+    return d < 10 ? ('\u2248 ' + d.toFixed(1) + ' m') : ('\u2248 ' + Math.round(d) + ' m');
   }
 
   function build(id, kind) {
@@ -87,16 +138,16 @@ var AR = (function () {
     var named = !!t.label;
     var provisional = named && t.tier !== 'cloud';
     var guess = named && t.tier === 'guess';
-    var title = named ? t.label
-              : (t.scan === 'scanning' ? 'Scanning' :
-                 t.scan === 'dismissed' ? (t.why || 'Dismissed') : String(t.cls));
+    /* A target that has not been named yet shows the plain noun the
+       detector gave, not a state machine. "SCANNING" and a percentage told
+       the reader about our process; the noun tells them about the world. */
+    var title = named ? t.label : sentence(String(t.cls));
     /* What the second line says is a claim about how much to trust the
        first one. A confirmed identification gets its detail; a guess from a
        crop of the scene says so, with the number. */
-    var sub = guess ? ('GUESS ' + Math.round((t.conf || 0) * 100) + '%')
-            : ((t.data && t.data.scientific) ||
-               (t.data && t.data.specs && t.data.specs.length ? t.data.specs[0].v : '') ||
-               (named ? kind.charAt(0).toUpperCase() + kind.slice(1) : ''));
+    var sub = (t.data && t.data.scientific) ||
+              (t.data && t.data.specs && t.data.specs.length ? t.data.specs[0].v : '') ||
+              (named ? sentence(kind) : '');
     var dist = distance(t.cls, screen[2], screen[3], frameW);
 
     var tEl = el.querySelector('.ar-title');
@@ -110,17 +161,20 @@ var AR = (function () {
       (named ? ' named' : '') +
       (provisional && !guess ? ' prov' : '') +
       (guess ? ' guess' : '') +
-      (t.scan === 'dismissed' && !named ? ' dim' : '') +
-      (t.scan === 'scanning' && !named ? ' scan' : '');
+      (t.scan === 'dismissed' && !named ? ' dim' : '');
     if (el.className !== cls) el.className = cls;
 
-    /* Anchor above the object, kept inside the viewport. */
+    /* Anchor above the object, kept inside the viewport and clear of
+       anything already on screen. */
     var w = layer.clientWidth, h = layer.clientHeight;
     var cw = el.offsetWidth || 150, ch = el.offsetHeight || 44;
     var x = screen[0] + screen[2] / 2 - cw / 2;
     var y = screen[1] - ch - 18;
     if (y < 6) y = Math.min(screen[1] + screen[3] + 14, h - ch - 6);
-    x = Math.max(6, Math.min(x, w - cw - 6));
+
+    var spot = findRoom(x, y, cw, ch, w, h, screen[1], screen[1] + screen[3]);
+    x = spot[0]; y = spot[1];
+    taken.push([x, y, cw, ch]);
 
     var tr = 'translate(' + Math.round(x) + 'px,' + Math.round(y) + 'px)';
     if (el.style.transform !== tr) el.style.transform = tr;
@@ -147,6 +201,6 @@ var AR = (function () {
     cards = {}; seen = {};
   }
 
-  return { init: init, place: place, sweep: sweep, clear: clear,
+  return { init: init, begin: begin, place: place, sweep: sweep, clear: clear,
            HUE: HUE, distance: distance, SIZE: SIZE };
 })();

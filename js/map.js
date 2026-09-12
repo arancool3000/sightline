@@ -24,6 +24,7 @@ var MAP = (function () {
     disc = document.getElementById('radar');
     panel = document.getElementById('mapCanvas');
     if (disc) dctx = disc.getContext('2d');
+    if (disc) { disc.width = 112; disc.height = 112; }
     if (panel) pctx = panel.getContext('2d');
     dpr = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -193,8 +194,8 @@ var MAP = (function () {
     var s = GEO.state();
     var pod = document.getElementById('radarNote');
     if (pod) {
-      var txt = s.pos ? (s.locality ? s.locality.toUpperCase().slice(0, 16) : 'NO LANDMARKS')
-                      : (s.error ? 'NO GPS' : 'LOCATING');
+      var txt = s.pos ? (s.locality || 'No landmarks')
+                      : (s.error ? 'No location' : 'Locating');
       if (pod.textContent !== txt) pod.textContent = txt;
     }
   }

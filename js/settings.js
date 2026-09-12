@@ -20,7 +20,8 @@ var SET = (function () {
     capTo: 'en',
     capBoth: true,
     mode: 'all',
-    facing: 'environment'
+    facing: 'environment',
+    apiCleared: false
   };
 
   var state = Object.assign({}, DEFAULTS);
@@ -32,6 +33,14 @@ var SET = (function () {
       Object.keys(DEFAULTS).forEach(function (k) {
         if (saved[k] !== undefined) state[k] = saved[k];
       });
+      /* A device that ran an early build stored apiBase:'' - back when there
+         was no default - and that empty string then beat every later
+         default, so those installs were stuck on-device for ever, showing
+         ENG LOCAL and a generic noun for a 3D printer.
+
+         An empty endpoint is only respected when the user cleared it
+         themselves, which is recorded explicitly rather than inferred. */
+      if (!state.apiBase && !saved.apiCleared) state.apiBase = DEFAULT_API;
     }
   } catch (e) { /* first run, or storage blocked */ }
 
@@ -41,7 +50,12 @@ var SET = (function () {
 
   return {
     get: function (k) { return state[k]; },
-    set: function (k, v) { state[k] = v; save(); },
+    set: function (k, v) {
+      state[k] = v;
+      if (k === 'apiBase') state.apiCleared = !String(v || '').trim();
+      save();
+    },
+    defaultApi: DEFAULT_API,
     all: function () { return state; },
     /* An endpoint is configured and looks like a URL we can actually call. */
     hasApi: function () { return /^https?:\/\/.+/i.test(state.apiBase || ''); },

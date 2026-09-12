@@ -73,7 +73,6 @@ var LOCAL = (function () {
     set('WEBGL_RENDER_FLOAT32_ENABLED', false);
     set('WEBGL_FORCE_F16_TEXTURES', true);
     set('WEBGL_CPU_FORWARD', true);
-    set('WEBGL_FLUSH_THRESHOLD', 1);
   }
 
   /* The .wasm binaries sit beside the library so nothing is fetched from a

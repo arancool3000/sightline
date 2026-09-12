@@ -69,7 +69,8 @@ const ok = (name, cond, got) => { if (cond) { pass++; console.log('  ok   ' + na
   ok('no class score moved more than 0.02', mnet.maxd < 0.02, +mnet.maxd.toFixed(5));
 
   console.log('\nDETECTOR  (coco-ssd lite_mobilenet_v2)');
-  const coco = await page.evaluate(async () => {
+  const COCOB = process.env.COCO_DIR ? '/vendor/models/' + process.env.COCO_DIR + '/model.json' : '/vendor/models/coco-ssd-lite-q/model.json';
+  const coco = await page.evaluate(async (COCOB) => {
     const w = 300, h = 300, n = w * h * 3, a = new Int32Array(n);
     for (let i = 0; i < n; i++) a[i] = (Math.floor(128 + 100 * Math.sin(i * 0.0011)) + (i % 7) * 3) & 255;
     const x = tf.tensor(a, [1, h, w, 3], 'int32');
@@ -83,7 +84,7 @@ const ok = (name, cond, got) => { if (cond) { pass++; console.log('  ok   ' + na
       return vals;
     };
     const A = await run('/vendor/models/_float32/coco-ssd-lite/model.json');
-    const B = await run('/vendor/models/coco-ssd-lite-q/model.json');
+    const B = await run((COCOB));
     x.dispose();
     // The two output heads are boxes and scores; compare each elementwise,
     // relative to that head's own range so a big head is not flattered.
@@ -107,7 +108,7 @@ const ok = (name, cond, got) => { if (cond) { pass++; console.log('  ok   ' + na
       topAgree = { a: rank(sa), b: rank(sb), maxScoreA: mx(sa) };
     }
     return { heads: heads, topAgree: topAgree };
-  });
+  }, COCOB);
   ok('SETUP: both models produced the same output heads', coco.heads.every(h => !h.bad), coco.heads.map(h => h.shape));
   ok('SETUP: the reference output varies (a constant one would agree with anything)',
      coco.heads.every(h => h.range > 0.001), coco.heads.map(h => +(h.range || 0).toFixed(4)));

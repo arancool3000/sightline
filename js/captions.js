@@ -44,8 +44,48 @@ var CAPS = (function () {
   var interim = '';
   var tcache = U.Cache('tr', 200);
   var restartTimer = null;
+  /* WHY A WATCHDOG.
+
+     Reported as "they either work or fail, mostly fail". Every failure path
+     here was silent: 'network' and 'no-speech' returned and waited for
+     onend to respin - and when the engine dies without firing onend, which
+     Safari does, nothing ever restarted and the bar simply sat there. There
+     was no way to tell a quiet room from a dead recogniser.
+
+     So: nothing fails silently any more, and a recogniser that has gone
+     quiet without saying so is restarted on a timer rather than trusted. */
+  var lastSign = 0;          // when the engine last showed any sign of life
+  var watchdog = null;
+  var netFails = 0;
+  var WATCH_MS = 9000;
+  var lastNote = '';
+
+  function sign() { lastSign = Date.now(); }
+
+  function note(txt) {
+    lastNote = txt;
+    if (window.UI && UI.captionNote) UI.captionNote(txt);
+  }
+
+  function watch() {
+    clearInterval(watchdog);
+    watchdog = setInterval(function () {
+      if (!wantOn) { clearInterval(watchdog); watchdog = null; return; }
+      if (Date.now() - lastSign < WATCH_MS) return;
+      /* No results, no end event, no error: the engine is gone. */
+      note('RESTARTING');
+      sign();
+      try { if (rec) rec.abort(); } catch (e) {}
+      on = false;
+      clearTimeout(restartTimer);
+      restartTimer = setTimeout(spin, 250);
+    }, 2000);
+  }
 
   function supported() { return !!SR; }
+  function health() { return { supported: !!SR, wantOn: wantOn, listening: on,
+                               note: lastNote, netFails: netFails,
+                               quietMs: lastSign ? Date.now() - lastSign : -1 }; }
 
   function srcLang() {
     var v = SET.get('capFrom');
@@ -55,8 +95,16 @@ var CAPS = (function () {
   function shortOf(code) { return String(code || '').split('-')[0].toLowerCase(); }
 
   function start() {
-    if (!supported()) { U.toast('This browser has no speech recognition. Try Chrome, Edge or Safari.'); return false; }
+    if (!supported()) {
+      note('NOT SUPPORTED BY THIS BROWSER');
+      U.toast('This browser has no speech recognition. Chrome and Edge have it; Safari on iOS often does not.', 6000);
+      return false;
+    }
     wantOn = true;
+    netFails = 0;
+    sign();
+    note('STARTING');
+    watch();
     spin();
     return true;
   }
@@ -70,12 +118,14 @@ var CAPS = (function () {
     rec.interimResults = true;
     rec.maxAlternatives = 1;
 
-    rec.onstart = function () { on = true; UI.captionState('listening'); };
+    rec.onstart = function () { on = true; sign(); netFails = 0; note('LISTENING'); UI.captionState('listening'); };
 
     rec.onresult = function (ev) {
       /* Engines flush a final result AFTER stop(). Without this guard that
          late result redraws the caption bar the user just closed. */
       if (!wantOn) return;
+      sign();
+      note('LISTENING');
       var fresh = '';
       interim = '';
       for (var i = ev.resultIndex; i < ev.results.length; i++) {
@@ -89,13 +139,27 @@ var CAPS = (function () {
 
     rec.onerror = function (ev) {
       var e = ev.error;
+      sign();
       if (e === 'not-allowed' || e === 'service-not-allowed') {
         wantOn = false; on = false;
+        clearInterval(watchdog); watchdog = null;
+        note('MICROPHONE BLOCKED');
         UI.captionState('denied');
         U.toast('Microphone permission is needed for captions');
         return;
       }
-      if (e === 'no-speech' || e === 'aborted' || e === 'network') return;   // onend restarts
+      if (e === 'no-speech') { note('NO SPEECH HEARD'); return; }
+      if (e === 'aborted') { return; }
+      if (e === 'network') {
+        /* Safari sends the audio to a server to be recognised, and that
+           request fails often. Backing off beats hammering it, and saying so
+           beats an empty bar. */
+        netFails++;
+        note(netFails > 3 ? 'SPEECH SERVICE UNREACHABLE - STILL TRYING'
+                          : 'RECONNECTING (' + netFails + ')');
+        return;
+      }
+      note(String(e || 'error').toUpperCase().replace(/-/g, ' '));
       UI.captionState('error');
     };
 
@@ -103,10 +167,14 @@ var CAPS = (function () {
        to stop, with a small gap so a permission failure cannot hot-loop. */
     rec.onend = function () {
       on = false;
+      sign();
       if (!wantOn) { UI.captionState('off'); return; }
       UI.captionState('paused');
       clearTimeout(restartTimer);
-      restartTimer = setTimeout(spin, 350);
+      /* Back off when the service keeps refusing, so a broken network does
+         not become a restart loop that flattens the battery. */
+      var gap = netFails > 3 ? Math.min(6000, 600 * netFails) : 350;
+      restartTimer = setTimeout(spin, gap);
     };
 
     try { rec.start(); }
@@ -119,6 +187,9 @@ var CAPS = (function () {
   function stop() {
     wantOn = false;
     clearTimeout(restartTimer);
+    clearInterval(watchdog); watchdog = null;
+    netFails = 0;
+    note('');
     if (rec) {
       /* abort() discards a pending utterance; stop() delivers it, which is
          exactly the late result that redrew the bar. */
@@ -184,5 +255,6 @@ var CAPS = (function () {
   function running() { return wantOn; }
 
   return { LANGS: LANGS, TARGETS: TARGETS, supported: supported, start: start,
-           stop: stop, clear: clear, relang: relang, running: running, shortOf: shortOf };
+           stop: stop, clear: clear, relang: relang, running: running,
+           shortOf: shortOf, health: health };
 })();

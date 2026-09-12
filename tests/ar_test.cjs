@@ -228,6 +228,14 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
     const v = document.createElement('canvas');
     v.width = 640; v.height = 480;
     v.videoWidth = 640; v.videoHeight = 480;
+    /* Give it structure. A blank canvas is correctly rejected now as "no
+       object here", which is the point of the detail guard - so a fixture
+       that is flat black would be testing the wrong thing. */
+    const g = v.getContext('2d');
+    for (let y = 0; y < 480; y += 12) for (let x = 0; x < 640; x += 12) {
+      g.fillStyle = ((x + y) / 12) % 2 ? '#e8e2d6' : '#2a2f3a';
+      g.fillRect(x, y, 12, 12);
+    }
     const wait = () => new Promise(r => setTimeout(r, 30));
 
     // Case 1: the same region answers differently every pass.
@@ -249,6 +257,21 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
   ok('a region that says something different every pass shows nothing', r.unstable === 0, r.unstable);
   ok('CONTROL: a region that repeats itself IS believed', r.steady >= 1, r);
   ok('CONTROL: and it is the answer it kept giving', /espresso/i.test(r.name || ''), r.name);
+
+  r = await page.evaluate(() => {
+    const flat = document.createElement('canvas');
+    flat.width = 224; flat.height = 224;
+    const g = flat.getContext('2d'); g.fillStyle = '#d8d2c6'; g.fillRect(0, 0, 224, 224);
+    const busy = document.createElement('canvas');
+    busy.width = 224; busy.height = 224;
+    const h = busy.getContext('2d');
+    for (let y = 0; y < 224; y += 8) for (let x = 0; x < 224; x += 8) {
+      h.fillStyle = ((x + y) / 8) % 2 ? '#eee' : '#222'; h.fillRect(x, y, 8, 8);
+    }
+    return { flat: LOCAL._testDetail(flat), busy: LOCAL._testDetail(busy) };
+  });
+  ok('a flat crop - carpet, wall, sky - is not sent to be named', r.flat === false, r);
+  ok('CONTROL: a crop with something in it still is', r.busy === true, r);
 
   ok('no page errors throughout', errs.length === 0, errs);
 

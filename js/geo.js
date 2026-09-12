@@ -162,5 +162,6 @@ var GEO = (function () {
 
   return { start: start, stop: stop, state: state, refresh: refresh, on: on,
            askCompass: askCompass, metres: metres, bearing: bearing, sky: sky,
-           _set: function (p, h, pl) { pos = p; heading = h; if (pl) places = pl; emit(); } };
+           _set: function (p, h, pl, wx) { pos = p; heading = h; if (pl) places = pl;
+                                          if (wx) weather = wx; emit(); } };
 })();

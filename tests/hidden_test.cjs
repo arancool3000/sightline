@@ -26,7 +26,7 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
 
   // Every id the markup ever hides, plus the panels shown by class.
   const ids=await page.evaluate(()=>Array.prototype.map.call(document.querySelectorAll('[id]'),e=>e.id));
-  const hideable=['statusStrip','sceneChip','reticle','captionBar','sheet','settings','toast'];
+  const hideable=['statusStrip','sceneChip','captionBar','sheet','settings','toast','wxCard','nearCard','mapPanel'];
   ok('SETUP: every panel under test exists in the page',hideable.every(i=>ids.indexOf(i)!==-1),
      hideable.filter(i=>ids.indexOf(i)===-1));
 

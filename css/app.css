@@ -39,126 +39,168 @@ input,select{font:inherit;color:inherit}
 #cam.mirror{transform:scaleX(-1)}
 #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 
-/* ---------- viewport frame ---------- */
-.frame{position:absolute;inset:0;pointer-events:none;z-index:3}
-.fc{position:absolute;width:22px;height:22px;border:1px solid var(--acc-dim)}
-.fc.tl{left:12px;top:calc(var(--safe-t) + 12px);border-right:0;border-bottom:0}
-.fc.tr{right:12px;top:calc(var(--safe-t) + 12px);border-left:0;border-bottom:0}
-.fc.bl{left:12px;bottom:calc(var(--safe-b) + 12px);border-right:0;border-top:0}
-.fc.br{right:12px;bottom:calc(var(--safe-b) + 12px);border-left:0;border-top:0}
+/* ---------- the lens ---------- */
+/* A soft vignette instead of corner brackets: the reference is a pair of
+   glasses, and what a lens does at its edge is fall off, not draw a bracket. */
+.frame{position:absolute;inset:0;pointer-events:none;z-index:3;
+  background:radial-gradient(120% 90% at 50% 50%,transparent 55%,rgba(0,0,0,.42) 100%)}
+.fc{display:none}
 
-/* ---------- telemetry ---------- */
-#hudTL{position:absolute;left:24px;top:calc(var(--safe-t) + 22px);z-index:6;pointer-events:none}
-.wordmark{font-family:var(--mono);font-size:11.5px;font-weight:600;letter-spacing:.3em;color:var(--ink);margin-bottom:8px}
-.tele{display:grid;grid-template-columns:auto auto;gap:3px 14px;font-family:var(--mono);font-size:10px;letter-spacing:.08em}
-.tele span{display:flex;gap:7px;white-space:nowrap}
-.tele b{font-weight:500;color:var(--faint)}
-.tele span>span{color:var(--acc);min-width:5ch}
-
-#hudTR{position:absolute;right:24px;top:calc(var(--safe-t) + 20px);z-index:6;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
-.clock{font-family:var(--mono);font-size:22px;font-weight:300;letter-spacing:.06em;line-height:1;color:var(--ink);font-variant-numeric:tabular-nums}
-.mode{font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--dim)}
-.hbtns{display:flex;gap:6px;margin-top:4px}
-.hbtn{
-  font-family:var(--mono);font-size:10.5px;letter-spacing:.18em;color:var(--ink);
-  border:1px solid var(--line);padding:8px 12px;min-height:38px;
-  background:var(--plate);pointer-events:auto
+/* ---------- glass ---------- */
+/* Every panel is the same material: a dark translucent pane, a hairline of
+   its own colour, a soft glow. One rule, so a new panel cannot look like a
+   different app. */
+.glass{
+  position:relative;
+  background:linear-gradient(180deg,rgba(12,20,32,.72),rgba(8,13,22,.78));
+  border:1px solid rgba(120,190,255,.26);
+  border-radius:14px;
+  box-shadow:0 2px 22px rgba(0,0,0,.42),inset 0 1px 0 rgba(190,225,255,.10);
+  backdrop-filter:blur(14px) saturate(1.2);-webkit-backdrop-filter:blur(14px) saturate(1.2);
+  color:var(--ink)
 }
-.hbtn.ic{display:grid;place-items:center;width:38px;padding:0}
+.glass-k{
+  font-size:10px;font-weight:600;letter-spacing:.06em;color:rgba(190,225,255,.72);
+  padding:9px 12px 5px
+}
+
+/* ---------- top left ---------- */
+#hudTL{
+  position:absolute;left:14px;top:calc(var(--safe-t) + 14px);z-index:6;
+  display:flex;flex-direction:column;align-items:flex-start;gap:9px;pointer-events:none;
+  max-width:min(46vw,220px)
+}
+.chip{
+  display:flex;align-items:center;gap:9px;padding:6px 12px;
+  background:rgba(10,16,26,.6);border:1px solid rgba(120,190,255,.2);border-radius:999px;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  font-size:13px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:.01em
+}
+.chip-b,.chip-t{font-size:10.5px;color:var(--dim);font-weight:500}
+.chip-t{letter-spacing:.1em}
+
+.wx{display:flex;align-items:center;gap:11px;padding:11px 14px 11px 12px}
+.wx-ic{flex:0 0 auto;color:#ffd479;display:flex}
+.wx-txt{display:flex;flex-direction:column;min-width:0}
+.wx-txt b{font-size:26px;font-weight:600;line-height:1.05;letter-spacing:-.02em}
+.wx-txt i{font-style:normal;font-size:12px;line-height:1.35;color:rgba(230,236,241,.86);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wx-sub{color:var(--dim)!important;font-size:11px!important}
+
+.tele{
+  display:grid;grid-template-columns:auto auto;gap:1px 10px;
+  font-family:var(--mono);font-size:8.5px;letter-spacing:.06em;opacity:.5
+}
+.tele span{display:flex;gap:5px;white-space:nowrap}
+.tele b{font-weight:500;color:var(--faint)}
+.tele span>span{color:rgba(120,190,255,.85);min-width:4ch}
+
+/* ---------- top right ---------- */
+#hudTR{position:absolute;right:14px;top:calc(var(--safe-t) + 14px);z-index:6;display:flex;gap:8px}
+.hbtn{
+  display:grid;place-items:center;min-width:44px;min-height:44px;padding:0 12px;
+  font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--ink);
+  background:rgba(10,16,26,.6);border:1px solid rgba(120,190,255,.22);border-radius:12px;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);pointer-events:auto
+}
+.hbtn.ic{width:44px;min-height:44px;padding:0}
 .hbtn:active{border-color:var(--acc);color:var(--acc)}
 
-/* ---------- reticle ---------- */
-#reticle{
-  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-  width:min(60vw,60vh);height:min(60vw,60vh);z-index:4;pointer-events:none
+/* ---------- bottom left: the map ---------- */
+#radarPod{
+  position:absolute;left:14px;bottom:calc(var(--safe-b) + 74px);z-index:6;
+  display:flex;align-items:center;gap:10px;padding:9px 14px 9px 9px;text-align:left;
+  pointer-events:auto
 }
-#reticle .ring{position:absolute;inset:-8%;width:116%;height:116%;opacity:.45;animation:spin 9s linear infinite}
-#reticle .ring circle{fill:none;stroke:var(--acc);stroke-width:.6;stroke-dasharray:14 86}
-#reticle.hot .ring{opacity:.85;animation-duration:4s}
-@keyframes spin{to{transform:rotate(360deg)}}
-.rc{position:absolute;width:16px;height:16px;border:1px solid var(--faint);transition:border-color .2s}
-.rc.tl{left:0;top:0;border-right:0;border-bottom:0}
-.rc.tr{right:0;top:0;border-left:0;border-bottom:0}
-.rc.bl{left:0;bottom:0;border-right:0;border-top:0}
-.rc.br{right:0;bottom:0;border-left:0;border-top:0}
-#reticle.hot .rc{border-color:var(--acc)}
-.tick{position:absolute;background:var(--faint)}
-.tick.t{left:50%;top:-1px;width:1px;height:8px;margin-left:-.5px}
-.tick.b{left:50%;bottom:-1px;width:1px;height:8px;margin-left:-.5px}
-.tick.l{top:50%;left:-1px;width:8px;height:1px;margin-top:-.5px}
-.tick.r{top:50%;right:-1px;width:8px;height:1px;margin-top:-.5px}
-#reticle.hot .tick{background:var(--acc)}
+#radar{width:56px;height:56px;display:block;flex:0 0 auto;border-radius:50%}
+.pod-txt{display:flex;flex-direction:column;min-width:0;max-width:104px}
+.pod-txt b{font-size:12.5px;font-weight:600;line-height:1.25;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pod-txt i{font-style:normal;font-size:10.5px;color:var(--dim)}
 
-/* ---------- scene readout ---------- */
+/* ---------- bottom right: things nearby ---------- */
+#nearCard{
+  position:absolute;right:14px;bottom:calc(var(--safe-b) + 74px);z-index:6;
+  width:min(45vw,192px);padding-bottom:5px;pointer-events:none;overflow:hidden
+}
+.near-row{display:flex;align-items:baseline;gap:8px;padding:4px 12px;font-size:12px}
+.near-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.near-row i{font-style:normal;font-size:10.5px;color:var(--dim);flex:0 0 auto;
+  font-variant-numeric:tabular-nums}
+
+/* ---------- the centre readout ---------- */
 #sceneChip{
   position:absolute;left:50%;transform:translateX(-50%);
-  top:calc(50% + min(30vw,30vh) + 22px);z-index:7;
-  display:flex;flex-direction:column;align-items:flex-start;gap:5px;
-  min-width:200px;max-width:86vw;padding:10px 14px 9px 14px;text-align:left;
-  background:var(--plate);border:1px solid var(--line);border-left:2px solid var(--acc);
-  animation:in .16s ease
+  bottom:calc(var(--safe-b) + 148px);z-index:7;
+  display:flex;align-items:center;gap:10px;max-width:76vw;
+  padding:9px 12px 9px 14px;text-align:left;pointer-events:auto
 }
+.sc-kicker{font-size:10px;font-weight:600;letter-spacing:.08em;color:rgba(190,225,255,.7);
+  text-transform:uppercase;flex:0 0 auto}
+.sc-name{font-size:15px;font-weight:600;letter-spacing:-.01em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sc-go{color:rgba(190,225,255,.6);font-size:17px;line-height:1;flex:0 0 auto}
 #sceneChip:active{border-color:var(--acc)}
-.sc-kicker{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--acc);display:flex;gap:8px}
-.sc-kicker .sep{color:var(--faint)}
-.sc-name{font-size:20px;font-weight:600;letter-spacing:-.015em;line-height:1.15;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.sc-bar{display:block;width:100%;height:2px;background:var(--line)}
-.sc-bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .2s}
-.sc-hint{font-family:var(--mono);font-size:9px;letter-spacing:.2em;color:var(--faint)}
-body.caps-on #sceneChip{top:auto;bottom:calc(var(--safe-b) + 176px)}
-@keyframes in{from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%)}}
 
 /* ---------- captions ---------- */
 #captionBar{
-  position:absolute;left:16px;right:16px;bottom:calc(var(--safe-b) + 78px);z-index:5;
-  pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:4px
+  position:absolute;left:14px;right:14px;bottom:calc(var(--safe-b) + 74px);z-index:8;
+  pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:5px
 }
-.cap-src{font-family:var(--mono);font-size:11px;letter-spacing:.02em;color:var(--dim);background:var(--plate);padding:5px 10px;max-width:min(720px,100%);text-align:center;border:1px solid var(--line)}
+.cap-src,.cap-main,.cap-meta{
+  background:linear-gradient(180deg,rgba(12,20,32,.76),rgba(8,13,22,.82));
+  border:1px solid rgba(120,190,255,.24);border-radius:12px;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  max-width:min(680px,100%);text-align:center
+}
+.cap-src{font-size:12px;color:var(--dim);padding:6px 12px}
 .cap-src:empty{display:none}
-.cap-main{
-  font-size:19px;font-weight:500;line-height:1.35;letter-spacing:-.005em;color:var(--ink);
-  background:var(--plate);padding:10px 16px;max-width:min(720px,100%);text-align:center;
-  border:1px solid var(--line);border-top:1px solid var(--acc-dim)
-}
+.cap-main{font-size:17px;font-weight:500;line-height:1.35;padding:10px 16px}
 .cap-main:empty{display:none}
 .cap-main .interim{color:var(--dim)}
-.cap-meta{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.cap-meta{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:rgba(190,225,255,.7);
+  padding:4px 10px}
 .cap-meta:empty{display:none}
+body.caps-on #radarPod,body.caps-on #nearCard,body.caps-on #sceneChip{display:none}
 
-/* ---------- rail ---------- */
+/* ---------- the dock ---------- */
 #rail{
-  position:absolute;left:0;right:0;bottom:0;z-index:6;
-  display:flex;align-items:stretch;gap:0;
-  padding:0 12px calc(var(--safe-b) + 14px);
-  background:linear-gradient(to top,rgba(5,6,7,.82),rgba(5,6,7,0))
+  position:absolute;left:0;right:0;bottom:0;z-index:9;
+  display:flex;align-items:center;gap:8px;
+  padding:0 14px calc(var(--safe-b) + 12px)
 }
-.rbtn{
-  flex:0 0 44px;height:44px;display:grid;place-items:center;
-  font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--ink);
-  border:1px solid var(--line);background:var(--plate);align-self:flex-end
-}
-.rbtn[aria-pressed="true"]{border-color:var(--acc);color:var(--acc)}
-.rbtn:active{border-color:var(--acc)}
 .modes{
-  /* flex:1 1 0 + min-width:0 stops the strip sizing to its content and
-     spilling past the fixed buttons either side of it.
-     justify-content is flex-start, NOT center: a centred flex row that
-     overflows spills in BOTH directions, which cuts the first and last mode
-     in half with no way to scroll to them. From the start it simply scrolls. */
-  flex:1 1 0;min-width:0;
-  display:flex;justify-content:flex-start;gap:0;
-  overflow-x:auto;scrollbar-width:none;padding:0 2px;align-self:flex-end
+  /* Full width, five equal shares. Fitting five words into a content-sized
+     pill clipped PEOPLE at 390px and 360px; sharing the width cannot. */
+  flex:1 1 auto;min-width:0;display:flex;gap:2px;
+  padding:4px;border-radius:999px;
+  background:linear-gradient(180deg,rgba(12,20,32,.74),rgba(8,13,22,.8));
+  border:1px solid rgba(120,190,255,.22);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)
 }
 .modes::-webkit-scrollbar{display:none}
 .mbtn{
-  /* Type is tuned so all five fit a 414px screen without scrolling; narrower
-     phones scroll from the left, which is the natural reading order. */
-  flex:0 0 auto;font-family:var(--mono);font-size:10px;letter-spacing:.08em;
-  color:var(--dim);padding:0 7px;height:44px;border-bottom:1px solid transparent;white-space:nowrap
+  flex:1 1 0;min-width:0;font-size:10.5px;font-weight:600;letter-spacing:.02em;
+  color:var(--dim);padding:0 4px;height:44px;border-radius:999px;white-space:nowrap
 }
-.mbtn[aria-pressed="true"]{color:var(--acc);border-bottom-color:var(--acc)}
+.mbtn[aria-pressed="true"]{color:#061018;background:var(--acc)}
+.rbtn{
+  flex:0 0 44px;height:44px;display:grid;place-items:center;border-radius:14px;
+  font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--ink);
+  background:linear-gradient(180deg,rgba(12,20,32,.74),rgba(8,13,22,.8));
+  border:1px solid rgba(120,190,255,.22);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)
+}
+.rbtn[aria-pressed="true"]{border-color:var(--acc);color:var(--acc)}
 
-/* ---------- gate ---------- */
+@media (max-width:380px){
+  .mbtn{font-size:9.5px;padding:0 2px}
+  #hudTL{max-width:52vw}
+  .wx-txt b{font-size:22px}
+  #nearCard{width:44vw}
+  .pod-txt{max-width:84px}
+}
+
 #gate{
   position:absolute;inset:0;z-index:20;display:grid;place-items:center;padding:28px;
   background:
@@ -199,9 +241,6 @@ body.caps-on #sceneChip{top:auto;bottom:calc(var(--safe-b) + 176px)}
 .d-kicker{font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--acc);margin:0 0 8px;padding-right:80px}
 .d-title{font-size:26px;font-weight:650;letter-spacing:-.025em;margin:0 0 3px;line-height:1.15;padding-right:80px}
 .d-sci{font-family:var(--mono);font-size:12px;letter-spacing:.02em;color:var(--dim);margin:0 0 14px}
-.d-conf{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--dim);margin:0 0 16px}
-.d-conf .bar{flex:0 0 72px;height:2px;background:var(--line)}
-.d-conf .bar i{display:block;height:100%;background:var(--acc)}
 .d-hero{position:relative;margin:0 0 16px;background:#000}
 .d-hero img{display:block;width:100%;height:180px;object-fit:cover;opacity:.92}
 .d-hero:before,.d-hero:after{content:"";position:absolute;width:14px;height:14px;border:1px solid var(--acc)}
@@ -296,123 +335,63 @@ body.caps-on #sceneChip{top:auto;bottom:calc(var(--safe-b) + 176px)}
 #statusText{flex:1;min-width:0;word-break:break-word}
 
 /* ---------- AR cards -------------------------------------------------- */
-/* One card per identified thing, sitting above it and moving with it. The
-   canvas underneath draws the dot on the object and the line up to the card,
-   so the answer is visibly attached to its subject rather than floating. */
+/* The label for a thing in the scene, in the same material as everything
+   else, tinted by what kind of thing it is. The canvas underneath draws the
+   dot on the object and the line up to the card. */
 
-#arLayer{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden}
+#arLayer{position:absolute;inset:0;z-index:5;pointer-events:none;overflow:hidden}
 
 .ar-card{
   position:absolute;left:0;top:0;
-  display:flex;align-items:center;gap:8px;
-  max-width:min(62vw,260px);
-  padding:6px 10px 6px 7px;
-  background:rgba(6,9,12,.74);
-  border:1px solid var(--kc,var(--acc-dim));
-  border-left-width:2px;
-  border-radius:3px;
+  display:flex;align-items:center;gap:9px;
+  max-width:min(58vw,230px);
+  padding:8px 12px 8px 9px;
+  background:linear-gradient(180deg,rgba(12,20,32,.74),rgba(8,13,22,.8));
+  border:1px solid var(--kc,rgba(120,190,255,.3));
+  border-radius:13px;
+  box-shadow:0 2px 18px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.03) inset;
+  backdrop-filter:blur(14px) saturate(1.2);-webkit-backdrop-filter:blur(14px) saturate(1.2);
   color:var(--ink);
-  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
   will-change:transform;
-  /* No transition on transform: the card must sit ON the object, and easing
-     it means it lags behind whatever the camera is pointed at. */
+  /* No transform transition: the card must sit ON its object, and easing it
+     means it lags behind whatever the camera is pointed at. */
   transition:opacity .18s linear,border-color .18s linear;
 }
-.ar-ic{display:flex;flex:0 0 auto;color:var(--kc,var(--acc));opacity:.9}
+.ar-ic{
+  flex:0 0 auto;display:grid;place-items:center;width:28px;height:28px;border-radius:9px;
+  background:var(--kbg,rgba(120,190,255,.14));color:var(--kc,#8fd4ff)
+}
 .ar-txt{display:flex;flex-direction:column;min-width:0;gap:1px}
 .ar-title{
-  font-size:12.5px;font-weight:600;letter-spacing:.01em;line-height:1.15;
+  font-size:13.5px;font-weight:600;letter-spacing:-.005em;line-height:1.2;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis
 }
 .ar-sub,.ar-dist{
-  font-family:var(--mono);font-size:9px;letter-spacing:.11em;text-transform:uppercase;
-  font-style:normal;color:var(--dim);line-height:1.3;
+  font-size:11px;font-style:normal;line-height:1.3;color:rgba(230,236,241,.66);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis
 }
 .ar-sub:empty,.ar-dist:empty{display:none}
-.ar-dist{color:var(--kc,var(--acc));opacity:.8}
+.ar-dist{color:rgba(230,236,241,.5);font-variant-numeric:tabular-nums}
 
-/* Kind sets the accent, and the icon and border take it from one variable
-   so a new kind needs one line, not four. */
-.ar-card.k-person{--kc:#8ab4ff}
-.ar-card.k-animal{--kc:#ff8fd0}
-.ar-card.k-plant{--kc:#5ddc8c}
-.ar-card.k-insect{--kc:#ffb347}
-.ar-card.k-vehicle{--kc:#7aa2ff}
-.ar-card.k-object{--kc:#4fe3ff}
+/* Kind sets the accent once; the icon tile and the border both read it. */
+.ar-card.k-person{--kc:#8ab4ff;--kbg:rgba(138,180,255,.16)}
+.ar-card.k-animal{--kc:#ff9ad4;--kbg:rgba(255,154,212,.16)}
+.ar-card.k-plant{--kc:#6ee7a0;--kbg:rgba(110,231,160,.16)}
+.ar-card.k-insect{--kc:#ffc46b;--kbg:rgba(255,196,107,.16)}
+.ar-card.k-vehicle{--kc:#9db4ff;--kbg:rgba(157,180,255,.16)}
+.ar-card.k-object{--kc:#7fd8ff;--kbg:rgba(127,216,255,.14)}
 
-/* Not yet named: quieter, and the type is monospace because it is a state,
-   not an answer. */
-.ar-card:not(.named){background:rgba(6,9,12,.56);border-color:var(--line)}
-.ar-card:not(.named) .ar-title{
-  font-family:var(--mono);font-size:10px;font-weight:500;
-  letter-spacing:.14em;text-transform:uppercase;color:var(--dim)
-}
-.ar-card.scan{border-color:var(--kc,var(--acc-dim))}
-.ar-card.scan .ar-title{color:var(--ink)}
-.ar-card.dim{opacity:.42}
-.ar-card.dim .ar-ic{display:none}
-
-/* A device guess is provisional until the specific identity lands. Saying so
-   is the point: "Backpack" and "Mous Extreme Luggage, GBP 290" are not the
-   same claim and must not look the same. */
-.ar-card.prov .ar-title:after{content:"…";color:var(--dim);margin-left:3px}
-.ar-card.prov{border-style:dashed}
+/* Not yet named: quieter, but the same shape, so nothing jumps when the
+   name arrives. */
+.ar-card:not(.named){opacity:.8}
+.ar-card:not(.named) .ar-title{font-weight:500;color:rgba(230,236,241,.78)}
+.ar-card.dim{opacity:.4}
 
 @media (max-width:400px){
-  .ar-card{max-width:70vw;padding:5px 8px 5px 6px;gap:6px}
-  .ar-title{font-size:11.5px}
+  .ar-card{max-width:66vw;padding:7px 10px 7px 8px;gap:8px}
+  .ar-title{font-size:12.5px}
+  .ar-ic{width:25px;height:25px;border-radius:8px}
 }
-
-/* ---------- ambient instruments --------------------------------------- */
-/* The scene is the subject. These hug the edges, stay small, and carry only
-   what a heads-up display should: where you are, which way you face, what
-   the sky is doing, and what has just been identified. */
-
-#radarPod{
-  position:absolute;right:14px;top:calc(var(--safe-t) + 150px);z-index:6;
-  width:88px;display:flex;flex-direction:column;align-items:center;gap:4px;
-  padding:6px 6px 5px;background:rgba(6,9,12,.5);
-  border:1px solid var(--line);border-radius:50% 50% 3px 3px;
-  backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)
-}
-#radar{width:76px;height:76px;display:block}
-.pod-note{
-  font-family:var(--mono);font-size:8px;letter-spacing:.12em;color:var(--dim);
-  max-width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center
-}
-
-#ambient{
-  position:absolute;right:14px;top:calc(var(--safe-t) + 268px);z-index:6;
-  display:flex;flex-direction:column;gap:7px;align-items:flex-end;pointer-events:none
-}
-.amb-row{display:flex;flex-direction:column;align-items:flex-end;line-height:1.1}
-.amb-row b{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink)}
-.amb-row i{font-family:var(--mono);font-size:8px;font-style:normal;letter-spacing:.18em;color:var(--faint)}
-
-#scanlog{
-  position:absolute;left:14px;top:calc(var(--safe-t) + 150px);z-index:6;
-  width:126px;pointer-events:none;display:flex;flex-direction:column;gap:5px
-}
-.log-k{font-family:var(--mono);font-size:8px;letter-spacing:.2em;color:var(--faint)}
-.log-row{
-  display:flex;flex-direction:column;gap:1px;
-  padding:4px 6px;background:rgba(6,9,12,.44);
-  border-left:2px solid var(--acc-dim);
-  animation:logIn .22s ease-out
-}
-.log-row b{font-size:10.5px;font-weight:600;line-height:1.2;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.log-row i{font-family:var(--mono);font-size:7.5px;font-style:normal;letter-spacing:.14em;color:var(--faint)}
-.log-row.k-person{border-left-color:#8ab4ff}
-.log-row.k-plant{border-left-color:#5ddc8c}
-.log-row.k-animal{border-left-color:#ff8fd0}
-.log-row.k-insect{border-left-color:#ffb347}
-.log-row.k-vehicle{border-left-color:#7aa2ff}
-@keyframes logIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
-
-/* Hide the margin notes when something is actually being read. */
-body.reading #scanlog,body.reading #ambient,body.reading #radarPod{display:none}
 
 /* ---------- the map --------------------------------------------------- */
 #mapPanel{
@@ -439,16 +418,13 @@ body.reading #scanlog,body.reading #ambient,body.reading #radarPod{display:none}
 .mr-d{font-family:var(--mono);font-size:10px;color:var(--dim);flex:0 0 auto}
 
 @media (max-height:720px){
-  #radarPod{top:calc(var(--safe-t) + 128px);width:74px}
-  #radar{width:62px;height:62px}
-  #ambient{top:calc(var(--safe-t) + 222px)}
-  #scanlog{top:calc(var(--safe-t) + 128px);width:112px}
+  #radar{width:48px;height:48px}
+  .pod-txt b{font-size:11.5px}
 }
 
-/* A guess is a square of the scene classified by the on-device model, not a
-   detected object. It said "Sweatshirt" over a bare wall in the same type as
-   a real identification, so it does not get that type. */
-.ar-card.guess{border-style:dashed;background:rgba(6,9,12,.5)}
-.ar-card.guess .ar-title{font-weight:500;color:rgba(230,236,241,.82)}
-.ar-card.guess .ar-sub{color:var(--warn);opacity:.85}
-.ar-card.guess .ar-ic{opacity:.5}
+/* A guess is a square of the scene classified by the on-device model rather
+   than a detected object. It is drawn a shade quieter - but with no
+   percentage on it: a number beside a guess reads as precision it has not
+   got, and the owner asked for them gone. */
+.ar-card.guess{opacity:.85}
+.ar-card.guess .ar-title{font-weight:500}

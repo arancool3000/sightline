@@ -26,6 +26,7 @@ var UI = (function () {
     MAP.init();
     GEO.on(ambient);
     ambient(GEO.state());
+    startBattery();
     resize();
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
@@ -87,13 +88,13 @@ var UI = (function () {
     tracks.forEach(function (t) { if (t.scan === 'relevant' || t.scan === 'dismissed') settled++; });
     tele('#tTgt', plotted ? settled + '/' + plotted : '--');
     statusFromEngine();
+    AR.begin();
 
     tracks.forEach(function (t) {
       var s = CAM.toScreen(t.box);
       var kind = IDENT.kindOf(t.cls);
       var col = COLOR[kind] || COLOR.object;
       var named = !!t.label;
-      if (named) logTarget(t, kind);
 
       var x = s[0], y = s[1], bw = s[2], bh = s[3];
       /* Was 24px, which threw away most objects in a cluttered scene. A small
@@ -166,17 +167,6 @@ var UI = (function () {
       }
       ctx.globalAlpha = named ? 0.95 : dismissed ? 0.3 : scanning ? 0.75 : 0.5;
 
-      /* A scan line crossing the target: the one piece of motion in the
-         interface, and it only runs while something is genuinely being
-         analysed. */
-      if (scanning) {
-        var phase = (now % 1100) / 1100;
-        ctx.globalAlpha = 0.5;
-        ctx.beginPath();
-        ctx.moveTo(x + 2, y + bh * phase);
-        ctx.lineTo(x + bw - 2, y + bh * phase);
-        ctx.stroke();
-      }
       ctx.restore();
 
       /* A target is not simply labelled or blank. It is PLOTTED, then
@@ -268,13 +258,8 @@ var UI = (function () {
 
   /* ---------- dossier ---------- */
 
-  function showSheet(html) { sheetBody.innerHTML = html; sheet.hidden = false; }
+  function showSheet(html) { sheetBody.innerHTML = html; pruneHero(sheetBody); sheet.hidden = false; }
   function closeSheet() { sheet.hidden = true; openTrackId = null; }
-
-  function confBar(c) {
-    var pct = Math.round(U.clamp(c, 0, 1) * 100);
-    return '<div class="d-conf"><span>CONFIDENCE</span><span class="bar"><i style="width:' + pct + '%"></i></span><span>' + pct + '%</span></div>';
-  }
 
   function grid(pairs) {
     var live = pairs.filter(function (p) { return p[1]; });
@@ -351,8 +336,9 @@ var UI = (function () {
                '</div>';
     html += '<h3 class="d-title">' + U.esc(rec.name) + '</h3>';
     if (rec.scientific) html += '<p class="d-sci">' + U.esc(rec.scientific) + '</p>';
-    html += confBar(rec.confidence);
-    if (w.thumb) html += '<div class="d-hero"><img src="' + U.esc(w.thumb) + '" alt="" loading="lazy"></div>';
+    /* No confidence bar. A number beside an answer that might be wrong does
+       not make it less wrong, and the owner asked for them gone. */
+    if (w.thumb) html += '<div class="d-hero" data-hero><img src="' + U.esc(w.thumb) + '" alt="" loading="lazy"></div>';
 
     /* Model-supplied specs come first for objects - that is the whole point
        of pointing a camera at a 3D printer or a robot. */
@@ -416,6 +402,21 @@ var UI = (function () {
     openPending('Identifying ' + U.titleCase(t.cls) + '…');
   }
 
+  /* A picture that will not load leaves a black box with corner marks on it,
+     which is worse than no picture: half the things scanned showed one. The
+     URL existing is not the same as the image arriving, so the box is taken
+     out when it does not. CSP forbids inline handlers, hence the listener. */
+  function pruneHero(root) {
+    var hero = root && root.querySelector('[data-hero]');
+    if (!hero) return;
+    var img = hero.querySelector('img');
+    if (!img) { hero.parentNode.removeChild(hero); return; }
+    var drop = function () { if (hero.parentNode) hero.parentNode.removeChild(hero); };
+    img.addEventListener('error', drop);
+    /* A cached image may already have failed before the listener attached. */
+    if (img.complete && !img.naturalWidth) drop();
+  }
+
   function refreshOpen() {
     if (openTrackId == null || sheet.hidden) return;
     var t = TRACK.byId(openTrackId);
@@ -427,28 +428,24 @@ var UI = (function () {
   var sceneCur = null;
 
   function sceneLabel(r) {
-    var chip = U.$('#sceneChip'), ret = U.$('#reticle');
-    ret.hidden = false;
-
-    if (!r) {
+    var chip = U.$('#sceneChip');
+    if (!chip) return;
+    /* The centre readout only earns its space when nothing has been boxed.
+       With cards on the objects themselves it is a duplicate answer sitting
+       over the scene. */
+    if (!r || arCards()) {
       if (!chip.hidden) chip.hidden = true;
-      ret.classList.remove('hot');
       sceneCur = null;
       return;
     }
     sceneCur = r;
-    ret.classList.add('hot');
-
-    var pct = Math.round(r.score * 100);
-    /* The centre readout is on-device too, so it carries the same caveat:
-       it is a category, and the dossier is where the identity lives. */
     tele('#sceneName', r.name);
-    tele('#scenePct', pct + '%');
-    tele('#sceneKind', (r.kind || 'TARGET').toUpperCase());
-    var bar = U.$('#sceneBar');
-    var wpc = pct + '%';
-    if (bar && bar.style.width !== wpc) bar.style.width = wpc;
+    tele('#sceneKind', r.kind || 'target');
     if (chip.hidden) chip.hidden = false;
+  }
+  function arCards() {
+    var l = U.$('#arLayer');
+    return !!(l && l.querySelector('.ar-card'));
   }
 
   /* Tapping the live label resolves its page - keyless, so this path works
@@ -503,10 +500,18 @@ var UI = (function () {
   function captionState(s) {
     var btn = U.$('#btnCaptions');
     btn.setAttribute('aria-pressed', s === 'listening' || s === 'paused' ? 'true' : 'false');
-    var meta = U.$('#capMeta');
-    if (s === 'denied') meta.textContent = 'MICROPHONE BLOCKED';
-    else if (s === 'error') meta.textContent = 'CAPTION ERROR';
     if (s === 'off') U.$('#captionBar').hidden = true;
+  }
+
+  /* One line saying what the recogniser is actually doing. Captions "either
+     work or fail, mostly fail" because every failure was silent - a dead
+     engine and a quiet room looked identical. They do not now. */
+  function captionNote(txt) {
+    var meta = U.$('#capMeta');
+    if (!meta) return;
+    txt = String(txt || '');
+    if (meta.textContent !== txt) meta.textContent = txt;
+    if (txt) U.$('#captionBar').hidden = false;
   }
 
   /* ---------- settings ---------- */
@@ -636,45 +641,84 @@ var UI = (function () {
     });
   }
 
-  /* ---------- ambient readouts and the scan log ---------- */
+  /* ---------- the weather card, the battery, things nearby ---------- */
 
   /* Guarded writes only. These update on a position fix and on the minute,
      not every frame, but the guard is the habit that stops a repaint
      costing anything when nothing changed. */
-  function ambient(s) {
-    var w = s.weather;
-    set('#ambSky', s.sky ? s.sky.toUpperCase() : '--');
-    set('#ambTemp', w ? (w.temp + '\u00b0') : '--');
-    set('#ambHead', typeof s.heading === 'number' ? compass(s.heading) : '--');
+  function ambient(st) {
+    var w = st.weather, card = U.$('#wxCard');
+    if (card) {
+      if (w) {
+        set('#wxTemp', w.temp + '\u00b0C');
+        set('#wxSky', st.sky);
+        set('#wxWind', 'Wind ' + w.wind + ' km/h' +
+            (typeof st.heading === 'number' ? ' \u00b7 facing ' + compass(st.heading) : ''));
+        var ic = U.$('#wxIcon');
+        if (ic && ic.dataset.code !== String(w.code)) {
+          ic.dataset.code = String(w.code);
+          ic.innerHTML = wxSvg(w.code);
+        }
+      }
+      card.hidden = !w;
+    }
+    nearby(st);
   }
+
+  /* Things nearby, from the same geosearch the map draws. Rebuilt only when
+     the list actually changes - it is on screen over a live camera. */
+  var nearKey = '';
+  function nearby(st) {
+    var box = U.$('#nearRows'), card = U.$('#nearCard');
+    if (!box || !card) return;
+    var list = (st.places || []).slice(0, 4);
+    var key = list.map(function (p) { return p.title + p.dist; }).join('|');
+    card.hidden = !list.length;
+    if (key === nearKey) return;
+    nearKey = key;
+    box.textContent = '';
+    list.forEach(function (p) {
+      var row = document.createElement('div');
+      row.className = 'near-row';
+      var n = document.createElement('span'); n.textContent = p.title;
+      var d = document.createElement('i');
+      d.textContent = p.dist < 1000 ? (p.dist + ' m') : ((p.dist / 1000).toFixed(1) + ' km');
+      row.appendChild(n); row.appendChild(d);
+      box.appendChild(row);
+    });
+  }
+
   function set(sel, v) { var el = U.$(sel); if (el && el.textContent !== v) el.textContent = v; }
   var ROSE = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   function compass(deg) { return ROSE[Math.round(((deg % 360) + 360) % 360 / 45) % 8]; }
 
-  /* The last few things identified, newest first. It is the one part of the
-     display that shows the app is doing something over time rather than
-     only right now. */
-  var logged = {}, logRows = [];
-  function logTarget(t, kind) {
-    if (!t.label || logged[t.id]) return;
-    logged[t.id] = 1;
-    logRows.unshift({ label: t.label, kind: kind, at: Date.now() });
-    while (logRows.length > 4) logRows.pop();
-    paintLog();
+  /* One drawing per weather family. currentColor, so the tint is CSS's. */
+  function wxSvg(code) {
+    var o = '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">';
+    if (code === 0 || code === 1)
+      return o + '<circle cx="12" cy="12" r="4.4"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>';
+    if (code === 2 || code === 3 || code === 45 || code === 48)
+      return o + '<path d="M7 18h9.5a3.5 3.5 0 0 0 .3-7 5 5 0 0 0-9.6-1A3.6 3.6 0 0 0 7 18z"/></svg>';
+    if (code >= 71 && code <= 77 || code === 85 || code === 86)
+      return o + '<path d="M7 15h9.5a3.5 3.5 0 0 0 .3-7 5 5 0 0 0-9.6-1A3.6 3.6 0 0 0 7 15z"/><path d="M9 19h.01M12 20.5h.01M15 19h.01"/></svg>';
+    if (code >= 95)
+      return o + '<path d="M7 15h9.5a3.5 3.5 0 0 0 .3-7 5 5 0 0 0-9.6-1A3.6 3.6 0 0 0 7 15z"/><path d="M13 17l-2.5 4h4L12 24"/></svg>';
+    return o + '<path d="M7 15h9.5a3.5 3.5 0 0 0 .3-7 5 5 0 0 0-9.6-1A3.6 3.6 0 0 0 7 15z"/><path d="M9 18.5l-1 2.5M12.5 18.5l-1 2.5M16 18.5l-1 2.5"/></svg>';
   }
-  function paintLog() {
-    var box = U.$('#logRows');
-    if (!box) return;
-    box.textContent = '';
-    logRows.forEach(function (r) {
-      var d = document.createElement('div');
-      d.className = 'log-row k-' + r.kind;
-      var b = document.createElement('b'); b.textContent = r.label;
-      var i = document.createElement('i');
-      i.textContent = new Date(r.at).toTimeString().slice(0, 5) + ' \u00b7 ' + r.kind.toUpperCase();
-      d.appendChild(b); d.appendChild(i);
-      box.appendChild(d);
-    });
+
+  /* The battery is on the chip when the browser will say. */
+  function startBattery() {
+    if (!navigator.getBattery) return;
+    navigator.getBattery().then(function (b) {
+      function show() {
+        var el = U.$('#tBatt');
+        if (!el) return;
+        el.hidden = false;
+        set('#tBatt', Math.round(b.level * 100) + '%');
+      }
+      show();
+      b.addEventListener('levelchange', show);
+    }).catch(function () {});
   }
 
   /* A place from the map opens in the same dossier everything else uses. */
@@ -691,11 +735,11 @@ var UI = (function () {
     });
   }
 
-  return { init: init, draw: draw, openPlace: openPlace, logTarget: logTarget, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
+  return { init: init, draw: draw, openPlace: openPlace, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
            status: status,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
            refreshOpen: refreshOpen, sceneLabel: sceneLabel, openScene: openScene,
-           captionDraw: captionDraw, captionState: captionState,
+           captionDraw: captionDraw, captionState: captionState, captionNote: captionNote,
            get needsDraw() { return needsDraw; } };
 })();
