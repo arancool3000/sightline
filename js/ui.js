@@ -653,6 +653,24 @@ var UI = (function () {
     U.$('#optCapTo').addEventListener('change', function () { SET.set('capTo', this.value); });
     U.$('#optCapBoth').addEventListener('change', function () { SET.set('capBoth', this.checked); });
 
+    var agree = U.$('#btnAgree');
+    if (agree) agree.addEventListener('click', function () {
+      if (!SET.hasApi()) { setText('#agreeStatus', 'Set an endpoint first.'); return; }
+      agree.disabled = true;
+      setText('#agreeStatus', 'Sending the agreement…');
+      IDENT.post('/v1/agree', {})
+        .then(function (r) {
+          agree.disabled = false;
+          setText('#agreeStatus', r && r.ok
+            ? 'Accepted. The sharper model is available to this endpoint now.'
+            : 'Not accepted: ' + ((r && r.error) || 'unknown'));
+        })
+        .catch(function (e) {
+          agree.disabled = false;
+          setText('#agreeStatus', 'Could not reach the endpoint: ' + String(e && e.message || e).slice(0, 70));
+        });
+    });
+
     U.$$('.mbtn[data-mode]').forEach(function (b) {
       b.addEventListener('click', function () {
         U.$$('.mbtn[data-mode]').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
@@ -733,6 +751,7 @@ var UI = (function () {
   }
 
   function set(sel, v) { var el = U.$(sel); if (el && el.textContent !== v) el.textContent = v; }
+  function setText(sel, v) { set(sel, v); }
   var ROSE = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   function compass(deg) { return ROSE[Math.round(((deg % 360) + 360) % 360 / 45) % 8]; }
 

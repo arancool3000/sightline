@@ -147,6 +147,12 @@
         <p class="shelp">Your Cloudflare Worker. It runs identification on Workers AI with no keys at all. Leave blank to run on-device only.</p>
         <div id="apiStatus" class="status"></div>
         <button id="btnTest" class="obtn">TEST CONNECTION</button>
+
+        <p class="shelp">Cloudflare gates Meta's sharper vision model behind their licence, and until it is
+        accepted once, identification never runs and every name stays generic. Accepting it is yours to do,
+        not the app's - this sends the word "agree" to your own Worker, once.</p>
+        <button id="btnAgree" class="obtn">ACCEPT THE MODEL LICENCE</button>
+        <div id="agreeStatus" class="status"></div>
       </div>
 
       <div class="sgroup">
@@ -216,6 +222,7 @@
 <script src="js/wiki.js" defer></script>
 <script src="js/camera.js" defer></script>
 <script src="js/geo.js" defer></script>
+<script src="js/roads.js" defer></script>
 <script src="js/map.js" defer></script>
 <script src="js/track.js" defer></script>
 <script src="js/local.js" defer></script>

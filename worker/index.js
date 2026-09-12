@@ -23,6 +23,9 @@
 const DEFAULTS = {
   MODEL: 'gemini-2.0-flash',
   CF_VISION_MODEL: '@cf/meta/llama-3.2-11b-vision-instruct',
+  /* Open weights, no licence gate. Used when the one above is not
+     available to this account. */
+  CF_VISION_FALLBACK: '@cf/llava-hf/llava-1.5-7b-hf',
   CF_TRANSLATE_MODEL: '@cf/meta/m2m100-1.2b',
   CF_STT_MODEL: '@cf/openai/whisper',
   ALLOW_ORIGIN: '*',
@@ -283,13 +286,45 @@ async function workersAI(env, image, hint) {
     '\nReply with ONLY a JSON object with keys: kind, name, scientific, confidence, note, alt, specs. No prose.';
 
   const bytes = Uint8Array.from(atob(img.b64), c => c.charCodeAt(0));
-  const model = cfg(env, 'CF_VISION_MODEL');
 
-  let out = null;
-  /* Workers AI vision models have taken two input shapes over time; try the
-     messages form first and fall back to the older prompt+image form. */
+  /* Llama's vision model is the sharpest of these, and Cloudflare gates it
+     behind Meta's licence: until the account has sent the prompt "agree"
+     once, every call comes back 5016 and identification simply never
+     happens. That is not something to accept on someone's behalf, so the
+     open model is tried next and the licence is offered as a choice in
+     settings (POST /v1/agree). */
+  const models = [cfg(env, 'CF_VISION_MODEL'), cfg(env, 'CF_VISION_FALLBACK')]
+    .filter((m, i, a) => m && a.indexOf(m) === i);
+
+  let out = null, lastErr = '', gated = false;
+  for (const model of models) {
+    try {
+      out = await runVision(env, model, prompt, image, bytes);
+      if (out) break;
+    } catch (e) {
+      lastErr = String(e && e.message || e);
+      if (/\b5016\b|must submit the prompt/i.test(lastErr)) gated = true;
+      out = null;
+    }
+  }
+  if (!out) {
+    return { ok: false, status: 502,
+             error: gated ? 'the sharper vision model needs its licence accepted once - Settings has the button'
+                          : 'workers ai: ' + lastErr.slice(0, 120),
+             gatedModel: gated ? models[0] : '' };
+  }
+
+  const text = (out && (out.response || out.description || out.text)) || '';
+  const rec = normalise(looseJson(text), hint);
+  rec.source = 'workers-ai';
+  return rec;
+}
+
+/* Workers AI vision models have taken two input shapes over time; try the
+   messages form first and fall back to the older prompt+image form. */
+async function runVision(env, model, prompt, image, bytes) {
   try {
-    out = await env.AI.run(model, {
+    return await env.AI.run(model, {
       messages: [{ role: 'user', content: [
         { type: 'text', text: prompt },
         { type: 'image_url', image_url: { url: image } }
@@ -297,17 +332,11 @@ async function workersAI(env, image, hint) {
       max_tokens: 400, temperature: 0.1
     });
   } catch (e1) {
-    try {
-      out = await env.AI.run(model, { prompt, image: Array.from(bytes), max_tokens: 400, temperature: 0.1 });
-    } catch (e2) {
-      return { ok: false, error: 'workers ai: ' + String(e2 && e2.message || e2).slice(0, 120), status: 502 };
-    }
+    /* A licence refusal is about the model, not the input shape, so there is
+       no point trying the other one. */
+    if (/\b5016\b|must submit the prompt/i.test(String(e1 && e1.message || e1))) throw e1;
+    return await env.AI.run(model, { prompt, image: Array.from(bytes), max_tokens: 400, temperature: 0.1 });
   }
-
-  const text = (out && (out.response || out.description || out.text)) || '';
-  const rec = normalise(looseJson(text), hint);
-  rec.source = 'workers-ai';
-  return rec;
 }
 
 async function workersAITranslate(env, text, from, to) {
@@ -579,6 +608,29 @@ export default {
         return json({ ok: true, text, language: (out && out.language) || '', via: 'whisper' }, 200, env);
       } catch (e) {
         return err('transcription failed', 502, env, { detail: String(e && e.message || e).slice(0, 160) });
+      }
+    }
+
+    /* ---- accept the model licence ----
+
+       Cloudflare requires the account to send the prompt "agree" once before
+       Meta's vision model will run. The app will not do that by itself: it
+       is a licence, and it is the account owner's to accept. This route
+       exists so they can, deliberately, from settings. */
+    if (path === '/v1/agree') {
+      if (!env.AI) return err('no AI binding on this endpoint', 501, env);
+      const model = String(body.model || cfg(env, 'CF_VISION_MODEL')).slice(0, 120);
+      try {
+        await env.AI.run(model, { prompt: 'agree' });
+        return json({ ok: true, model, accepted: true }, 200, env);
+      } catch (e) {
+        const m = String(e && e.message || e);
+        /* Some models answer the agreement with an ordinary completion
+           error, which still means the agreement landed. */
+        if (!/\b5016\b|must submit the prompt/i.test(m)) {
+          return json({ ok: true, model, accepted: true, note: m.slice(0, 120) }, 200, env);
+        }
+        return err('the licence was not accepted: ' + m.slice(0, 140), 502, env);
       }
     }
 
