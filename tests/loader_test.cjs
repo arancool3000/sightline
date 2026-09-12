@@ -55,6 +55,25 @@ const server=http.createServer((q,res)=>{
     sceneShown: !document.querySelector('#sceneChip').hidden
   }));
 
+  /* A FIXED SLEEP IS A PIN ON A TIMING. The scene pass is paced, so 1200ms
+     after the classifier reports ready is not long enough for one to have
+     run, and this read false for a build that was working. Poll, and say
+     how long it took. */
+  let sceneMs = -1;
+  try {
+    const t0 = Date.now();
+    await page.waitForFunction(() => {
+      const c = document.querySelector('#sceneChip');
+      return c && !c.hidden && (document.querySelector('#sceneName')||{}).textContent;
+    }, null, { timeout: 25000 });
+    sceneMs = Date.now() - t0;
+  } catch (e) { /* left at -1: nothing was ever put on the screen */ }
+  const scene = await page.evaluate(() => ({
+    shown: !document.querySelector('#sceneChip').hidden,
+    name: (document.querySelector('#sceneName')||{}).textContent || '',
+    kind: (document.querySelector('#sceneKind')||{}).textContent || ''
+  }));
+
   t('the detector was attempted', r.calls.detector >= 1, r.calls.detector);
   /* Pin the PROPERTY, not the loader. Counting mobilenet.load() calls broke
      the moment the classifier started loading vendored weights directly -
@@ -66,7 +85,14 @@ const server=http.createServer((q,res)=>{
   t('the classifier is ready despite the detector failing', r.ready === true, r.ready);
   t('diagnostics report the detector as failed', /failed/.test(r.diag.detector), r.diag.detector);
   t('diagnostics report the classifier as ok', r.diag.classifier === 'ok', r.diag.classifier);
-  t('a live label is still shown', r.sceneShown === true, r.sceneShown);
+  /* The property is that losing the detector does not leave the screen
+     blank - the classifier carries on and the reader is given something to
+     act on. Which of the two it is depends on what the fake camera is
+     pointed at, and pinning that would be pinning the stub. */
+  t('the screen is not left blank when the detector fails',
+    scene.shown === true, JSON.stringify({ ...scene, waitedMs: sceneMs }));
+  t('and what it says is either a name or an offer to identify',
+    scene.shown && scene.name.length > 0, JSON.stringify(scene));
   /* CONTROLS - these pass either way and stop the fix over-reaching. */
   /* The service-worker self-heal must refresh an UPDATED build, never a first
      visit. Reloading every new visitor once is a real cost and it destroyed
