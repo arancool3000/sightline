@@ -145,16 +145,26 @@ function promptFor(hint) {
   }
   if (hint === 'object') {
     return common +
-      'This crop shows a manufactured object, device or machine. Identify it as specifically as you can: ' +
-      'make and model if visible (for example "Prusa MK4 3D printer", "MacBook Pro 14-inch", "Boston Dynamics Spot"). ' +
-      'Put what it is for in "note". Fill "specs" with up to six short facts a curious person would want - ' +
-      'maker, type, released, key capability, typical price band, what it is commonly used for - as {k, v} pairs. ' +
+      'This crop shows a manufactured object, device or machine.\n' +
+      'A generic noun is USELESS here. "Chair", "printer", "laptop" tell the viewer nothing they cannot see. ' +
+      'Your job is the specific identity: the full model name and manufacturer, as precisely as the image supports ' +
+      '(for example "Prusa MK4S", "Bambu Lab X1 Carbon", "MacBook Pro 14-inch M3", "Herman Miller Aeron Size B").\n' +
+      'Put the manufacturer in specs, and fill the rest of "specs" with what someone looking at this would actually ' +
+      'want to know, as {k, v} pairs, in this order where you can: Manufacturer, Model, Released, Price from, ' +
+      'Where to buy, and one standout specification.\n' +
+      '"Price from" should be an approximate current starting price with a currency symbol. "Where to buy" should ' +
+      'name the usual retailers or the maker\'s own store. If you are unsure of a price or retailer, omit that ' +
+      'row rather than inventing one.\n' +
+      'If you genuinely cannot tell the model apart from the generic category, return the generic name but set ' +
+      'confidence below 0.4 so it is treated as a weak guess.\n' +
       'Set kind to "object".';
   }
   return common +
     'Work out for yourself what the subject is and set "kind" accordingly. It may be a plant, an animal, ' +
     'an insect, a vehicle, a manufactured object or machine, or a person.\n' +
-    'For a manufactured object give make and model where visible and fill "specs" with up to six {k, v} facts.\n' +
+    'For a manufactured object a generic noun is useless: give the full model name and manufacturer as precisely ' +
+    'as the image supports, and fill "specs" with {k, v} rows for Manufacturer, Model, Released, Price from and ' +
+    'Where to buy, omitting any you are unsure of rather than inventing it.\n' +
     'If it is a person, the strict rule applies: name them only if they are a widely photographed public ' +
     'figure, otherwise return an empty name with confidence 0.\n' +
     'For living things give the binomial in "scientific".';

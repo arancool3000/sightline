@@ -136,8 +136,13 @@ var UI = (function () {
          SCANNING, then given a verdict - relevant or dismissed with a
          reason. Showing the rejection is the point: it is visible that the
          thing was considered, not overlooked. */
+      /* A label from the device is PROVISIONAL - it can only be a generic
+         noun. It is shown dimmed with a trailing mark while the specific
+         identity is still being fetched, and only a cloud answer (a real
+         model name) is presented as settled. */
+      var provisional = named && t.tier !== 'cloud' && SET.hasApi() && t.state !== 'done';
       var text;
-      if (named) text = t.label;
+      if (named) text = t.label + (provisional ? ' …' : '');
       else if (t.scan === 'scanning' || t.state === 'queued') text = 'SCANNING';
       else if (t.scan === 'dismissed') text = t.why || 'DISMISSED';
       else text = String(t.cls).toUpperCase();
@@ -175,7 +180,7 @@ var UI = (function () {
       ctx.strokeStyle = 'rgba(230,236,241,.18)';
       ctx.strokeRect(px + 0.5, py + 0.5, tw + padX * 2 - 1, plateH - 1);
 
-      ctx.fillStyle = named ? '#e6ecf1' : 'rgba(230,236,241,.66)';
+      ctx.fillStyle = (named && !provisional) ? '#e6ecf1' : 'rgba(230,236,241,.66)';
       ctx.textBaseline = 'middle';
       ctx.fillText(text, px + padX, py + plateH / 2 + 0.5);
       ctx.restore();
@@ -355,6 +360,8 @@ var UI = (function () {
     ret.classList.add('hot');
 
     var pct = Math.round(r.score * 100);
+    /* The centre readout is on-device too, so it carries the same caveat:
+       it is a category, and the dossier is where the identity lives. */
     tele('#sceneName', r.name);
     tele('#scenePct', pct + '%');
     tele('#sceneKind', (r.kind || 'TARGET').toUpperCase());

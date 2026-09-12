@@ -333,6 +333,82 @@ var LOCAL = (function () {
 
   function sceneLast() { return scenePrev; }
 
+  /* ---- GRID SCAN: plotting targets with NO detector -------------------
+     coco-ssd is the only piece still fetched from a third party, and when it
+     cannot load nothing gets plotted at all - a chair and a person are both
+     classes it knows, so their absence is the tell.
+     This sweeps the frame in overlapping regions, classifies ONE per pass
+     with the vendored model, and reports the regions that come back
+     confident. It needs no detector, no network and no key, so targets
+     appear even when everything external is unreachable. Boxes are region
+     shaped rather than object shaped - a real trade, and far better than a
+     blank screen. */
+
+  var GRID = [];           // [x,y,w,h] in 0..1, built once per aspect
+  var gridAt = 0;
+  var gridHits = [];       // { box, name, score, at }
+  var gridBusy = false;
+  var GRID_TTL = 6000;
+
+  function buildGrid() {
+    if (GRID.length) return;
+    var step = 1 / 3, size = 0.42;
+    for (var r = 0; r < 3; r++) {
+      for (var c = 0; c < 3; c++) {
+        var cx = step * (c + 0.5), cy = step * (r + 0.5);
+        GRID.push([
+          Math.max(0, cx - size / 2), Math.max(0, cy - size / 2),
+          Math.min(size, 1 - Math.max(0, cx - size / 2)),
+          Math.min(size, 1 - Math.max(0, cy - size / 2))
+        ]);
+      }
+    }
+  }
+
+  /* One region per call: a full sweep costs nine classifications, so doing
+     them all in a frame would stall the interface. */
+  function gridStep(video) {
+    if (!net || gridBusy) return;
+    var vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    buildGrid();
+
+    var g = GRID[gridAt % GRID.length];
+    var idx = gridAt % GRID.length;
+    gridAt++;
+
+    var box = [g[0] * vw, g[1] * vh, g[2] * vw, g[3] * vh];
+    pctx.fillStyle = '#000';
+    pctx.fillRect(0, 0, 224, 224);
+    pctx.drawImage(video, box[0], box[1], box[2], box[3], 0, 0, 224, 224);
+
+    gridBusy = true;
+    var t0 = performance.now();
+    net.classify(pad, 2).then(function (preds) {
+      gridBusy = false;
+      var ms = performance.now() - t0;
+      stats.n++; stats.total += ms; stats.last = ms;
+      considerStepDown();
+
+      var now = performance.now();
+      gridHits = gridHits.filter(function (h) { return (now - h.at) < GRID_TTL && h.idx !== idx; });
+
+      if (!preds || !preds.length) return;
+      var top = preds[0];
+      var name = tidy(top.className);
+      if (top.probability < MIN_SCORE || JUNK.test(name)) return;
+
+      gridHits.push({ idx: idx, box: box, name: name, score: top.probability,
+                      kind: kindOfLabel(name), at: now });
+    }).catch(function () { gridBusy = false; });
+  }
+
+  function gridTargets() {
+    var now = performance.now();
+    gridHits = gridHits.filter(function (h) { return (now - h.at) < GRID_TTL; });
+    return gridHits;
+  }
+
   function timing() {
     return {
       backend: backend,
@@ -348,5 +424,6 @@ var LOCAL = (function () {
 
   return { load: load, ready: ready, lastError: lastError, label: label, sweep: sweep, age: age,
            scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
+           gridStep: gridStep, gridTargets: gridTargets,
            timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget };
 })();

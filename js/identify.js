@@ -35,7 +35,14 @@ var IDENT = (function () {
   var lastSent = 0;
   var quotaBlockedUntil = 0;
 
-  function kindOf(cls) { return ROUTE[cls] || 'object'; }
+  /* Grid targets carry their kind as the class directly, since there is no
+     detector vocabulary behind them. */
+  var KINDS = { person:1, animal:1, plant:1, insect:1, vehicle:1, object:1 };
+  function kindOf(cls) {
+    if (ROUTE[cls]) return ROUTE[cls];
+    if (KINDS[cls]) return cls;
+    return 'object';
+  }
 
   function busy() { return inFlight > 0 || queue.length > 0; }
 

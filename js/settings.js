@@ -5,8 +5,14 @@ var SET = (function () {
 
   var KEY = 'sightline.settings.v1';
 
+  /* The analysis endpoint defaults to the deployed Worker. Leaving it blank
+     meant every install ran on-device only, which can only ever produce a
+     generic noun - "chair", "printer" - and that is not an answer worth
+     showing. Clearing the field still switches the cloud tier off. */
+  var DEFAULT_API = 'https://sightline-api.arancool3000.workers.dev';
+
   var DEFAULTS = {
-    apiBase: '',
+    apiBase: DEFAULT_API,
     faces: true,
     conf: 0.75,
     pace: 1400,

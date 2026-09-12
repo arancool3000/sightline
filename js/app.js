@@ -81,9 +81,10 @@
       if (!haveScene) {
         U.toast('Could not load the recogniser. ' + (LOCAL.lastError() || detectorErr || 'Check your connection.') + ' Tap CFG to retry.', 7000);
       } else if (!model) {
-        /* Boxes are gone, live labelling is not. Say exactly that rather than
-           implying the app is broken. */
-        U.toast('Multi-object boxes unavailable. Live labelling is working.', 4500);
+        /* Boxes from the detector are gone; the grid sweep replaces them. Say
+           so on screen - the console is no use on a phone. */
+        U.toast('Detector unavailable - scanning the frame directly instead.', 4500);
+        UI.tele('#tEng', 'GRID');
       }
       UI.tele('#tGpu', (LOCAL.timing().backend || '--').toUpperCase());
       return model;
@@ -155,10 +156,48 @@
       detectOnce(now);
     }
 
+    /* No detector, no targets - which is exactly what happened: a chair and a
+       person are both classes it knows, so nothing plotting at all was the
+       tell that it never loaded. Sweep the frame ourselves instead, using the
+       model that IS available locally. */
+    if (!model && LOCAL.ready() && now - lastGrid >= 260) {
+      lastGrid = now;
+      LOCAL.gridStep(U.$('#cam'));
+      gridToTracks(now);
+    }
+
     UI.draw(TRACK.all());
   }
 
-  var sceneRec = null, sceneFirstAt = 0, detectCost = 0;
+  var sceneRec = null, sceneFirstAt = 0, detectCost = 0, lastGrid = 0;
+
+  /* Turn confident grid regions into tracks so they render, are tappable and
+     carry a verdict exactly like detector targets do. */
+  function gridToTracks(now) {
+    var hits = LOCAL.gridTargets();
+    var dets = hits.map(function (hh) {
+      return { cls: hh.kind === 'object' ? 'grid' : hh.kind, box: hh.box.slice(), score: hh.score };
+    });
+    var tracks = TRACK.update(dets, now);
+    tracks.forEach(function (t) {
+      var hit = null, best = 0;
+      hits.forEach(function (hh) {
+        var o = U.iou(t.box, hh.box);
+        if (o > best) { best = o; hit = hh; }
+      });
+      if (!hit || best < 0.3) return;
+      t.label = hit.name;
+      t.tier = 'local';
+      t.scan = 'relevant';
+      t.localState = 'done';
+      t.local = { name: hit.name, score: hit.score, ms: 0, alt: [] };
+      if (!t.labelMs) {
+        t.labelMs = Math.round(performance.now() - t.born);
+        latency.push(t.labelMs);
+        while (latency.length > 30) latency.shift();
+      }
+    });
+  }
 
   /* How often the detector may run. Derived from what it actually costs on
      this device, never a fixed number: a phone that needs 600ms a pass must
@@ -171,13 +210,15 @@
   /* Does this track still need a server? Only when the device cannot know the
      answer, or was not confident. Everything else stays purely local, which
      keeps the free allowance for the things that actually need it. */
+  /* What counts as identified changed: a generic noun is not an answer.
+     "Chair", "printer", "laptop" tell the viewer nothing they cannot already
+     see, and the on-device model can produce nothing better - so a CONFIDENT
+     local label is exactly as much a reason to ask for detail as a weak one
+     was. Previously a confident local guess skipped the cloud entirely,
+     which is why nothing ever gained a model name or a price. */
   function needsCloud(t) {
-    var kind = IDENT.kindOf(t.cls);
-    if (kind === 'person') return SET.get('faces');      // no on-device model knows who anyone is
-    if (kind === 'vehicle') return true;                 // make/model/generation is not in ImageNet
-    if (kind === 'plant') return true;                   // species precision needs a specialist
-    if (!t.local) return true;                           // the device had no confident answer
-    return t.local.score < 0.55;                         // weak local guess: ask for a better one
+    if (IDENT.kindOf(t.cls) === 'person') return SET.get('faces');
+    return true;
   }
 
   function latencyReport() {
