@@ -372,7 +372,9 @@ var UI = (function () {
 
     var w = rec.wiki || {};
     var html = '<div class="d-kicker">' + U.esc(kicker) +
-               (rec.source === 'on-device' ? ' / ON-DEVICE' : rec.source === 'workers-ai' ? ' / WORKERS AI' : '') +
+               (rec.source === 'on-device' ? ' / ON-DEVICE'
+                : rec.source === 'on-device species' ? ' / ON-DEVICE, ' + rec.kind.toUpperCase() + ' MODEL'
+                : rec.source === 'workers-ai' ? ' / WORKERS AI' : '') +
                '</div>';
     html += '<h3 class="d-title">' + U.esc(rec.name) + '</h3>';
     if (rec.scientific) html += '<p class="d-sci">' + U.esc(rec.scientific) + '</p>';

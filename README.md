@@ -78,6 +78,7 @@ enough to have something on screen.
 
 | what | why it is uncapped |
 |---|---|
+| **The species classifiers** | 2,102 plants, 1,021 insects and 965 birds, running in your browser. Apache 2.0, and there is no request to count. |
 | **The detector and the classifier** | They run in your browser. The weights are served from this site and nothing is sent anywhere. There is no request to count. |
 | **Your position, heading, speed and distance** | The device's own GPS and compass. Nothing leaves the phone. |
 | **Wikipedia and Wikidata** | No key, no account, no quota for a reader. They are read the same way a person reading an article reads them. |
@@ -105,30 +106,38 @@ There is deliberately **no** Google Vision, no PlantNet, no Gemini key and no
 tile provider in the default build. The Worker supports them if you set the
 keys, and it works completely without them.
 
-### The one thing that is not solved
+### Species identification, which used to be the one thing that was not solved
 
-**Naming a tree species from a photograph, free and unlimited, does not
-currently have an answer**, and it is worth being straight about why rather
-than pretending otherwise.
+It is solved, and on the device.
 
-- Every keyless species API (iNaturalist, Pl@ntNet) either needs an account
-  or does not do image identification without one.
-- The only truly unlimited route is a model running on the device, and there
-  is no species classifier published in a form this app can vendor. The AIY
-  plant and insect classifiers exist but are not available as TensorFlow.js.
-- ImageNet, which is what the on-device classifier knows, has almost no tree
-  species in it. That is where "rapeseed", "pot" and "valley" for one tree
-  came from, and why the on-device tier is now forbidden from naming a
-  species at all.
+Google's AIY iNaturalist classifiers are mirrored in
+[google-coral/test_data](https://github.com/google-coral/test_data) under
+Apache 2.0, and TFLite runs in a browser over WebAssembly:
 
-So species identification goes to the detail tier — Workers AI, or your own
-Pi — and everything Wikidata knows is layered on top of whatever name comes
-back: the binomial, the rank, the genus or family it belongs to, its other
-common names, and its conservation status. That part *is* unlimited.
+| model | species it knows | size |
+|---|---|---|
+| plants | 2,102 | 5.1 MB |
+| insects | 1,021 | 3.7 MB |
+| birds | 965 | 3.6 MB |
 
-If a species classifier ever ships in a form that can be vendored here, it
-drops into the same slot the other two models use and the whole thing
-becomes unlimited. Until then this is the honest position.
+No key, no account, no quota, and it answers in about 40 ms. The labels carry
+both halves — `Betula lenta (Sweet birch)` — so a result is a binomial *and* a
+name a person would use.
+
+**One model at a time.** Five megabytes of plant names is not fetched because
+you pointed the camera at a bee; the model for a kind loads the first time
+that kind is seen.
+
+`tests/species_test.cjs` proves it on the reference photographs those models
+ship with — a sunflower comes back *Helianthus*, a parrot comes back a bird,
+and a drawn green ellipse is correctly refused rather than named. A model
+that answered "sunflower" to everything would pass the first of those on its
+own, which is what the other two are for.
+
+What is still beyond it: a crossbreed or a cultivar. A Maltipoo is not in any
+classifier's vocabulary, so the app watches the *gap* between the top two
+answers — wide for a real match, collapsed when the model is torn — and when
+that gap is narrow it says so instead of picking one.
 
 ## Stack
 

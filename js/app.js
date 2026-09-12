@@ -246,6 +246,56 @@
     });
   }
 
+  /* THE SPECIES PASS.
+
+     A plant, an insect or a bird gets a second opinion from a classifier
+     that actually knows species - 2,102 plants, 1,021 insects, 965 birds,
+     on the device. The general classifier's answer stands until this one
+     comes back with something it is sure of, and only then is it replaced:
+     "Sunflower" is worth having over "daisy", and neither is worth having
+     over nothing.
+
+     One track a pass, largest first, because this runs alongside everything
+     else on the same thread. */
+  var lastSpecies = 0;
+  function speciesPass(tracks) {
+    if (!window.SPECIES || !SPECIES.available()) return;
+    var now = performance.now();
+    if (now - lastSpecies < 260) return;
+
+    var want = null;
+    for (var i = 0; i < tracks.length; i++) {
+      var t = tracks[i];
+      if (t.speciesAt && (now - t.speciesAt) < 4000) continue;
+      var kind = IDENT.kindOf(t.cls);
+      if (!SPECIES.modelFor(kind)) continue;
+      if (!want || (t.box[2] * t.box[3]) > (want.box[2] * want.box[3])) want = t;
+    }
+    if (!want) return;
+    lastSpecies = now;
+    want.speciesAt = now;
+
+    var kind = IDENT.kindOf(want.cls);
+    SPECIES.identify(U.$('#cam'), want.raw || want.box, kind).then(function (r) {
+      if (!r || !TRACK.byId(want.id)) return;
+      want.species = r;
+      /* The cloud tier, when it has answered, knows more than this does -
+         it can say "a young English oak" where this says "Quercus robur".
+         So a species answer sharpens a device label and never overwrites a
+         cloud one. */
+      if (want.tier !== 'cloud' && r.sure) {
+        want.label = r.name;
+        want.tier = 'species';
+        want.unsure = false;
+        want.data = {
+          kind: kind, name: r.name, scientific: r.scientific,
+          confidence: r.score, alt: r.alt || [], source: 'on-device species'
+        };
+      }
+      UI.dirty();
+    });
+  }
+
   /* How often the detector may run. Derived from what it actually costs on
      this device, never a fixed number: a phone that needs 600ms a pass must
      not be asked for one every 90ms, or the scene label never gets the GPU. */
@@ -265,6 +315,11 @@
      which is why nothing ever gained a model name or a price. */
   function needsCloud(t) {
     if (IDENT.kindOf(t.cls) === 'person') return SET.get('faces');
+    /* A species the on-device classifier is sure of does not need a second
+       opinion, and asking for one spends somebody's allowance to be told
+       the same thing. The unsure ones still go - that is exactly where a
+       larger model earns its keep. */
+    if (t.species && t.species.sure) return false;
     return true;
   }
 
@@ -330,6 +385,7 @@
          A track created this pass is classified this pass. */
       LOCAL.age(tracks, now);
       LOCAL.sweep(U.$('#cam'), tracks);
+      speciesPass(tracks);
 
       /* Record how long each object actually took to get a real label.
          The half-second target is a measurement, not a claim. */

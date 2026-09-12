@@ -168,6 +168,10 @@ var AR = (function () {
        word already on the box, it has told us nothing. */
     if (cls && lab === cls) return false;
     if (t.tier === 'cloud') return true;
+    /* A species name is the whole point of this app - "Helianthus annuus"
+       for a flower is exactly the thing the person holding the camera does
+       not already know. */
+    if (t.tier === 'species') return true;
     /* A guess about a square of the scene is never specific enough to
        deserve words on screen. */
     if (t.tier === 'guess') return false;
@@ -197,7 +201,7 @@ var AR = (function () {
     /* An on-device answer the model was torn over is shown as unsettled -
        dashed, with the mark - rather than in the same type as a confident
        one. It is still the best guess; it is just not presented as a fact. */
-    var provisional = t.tier !== 'cloud' || !!t.unsure;
+    var provisional = (t.tier !== 'cloud' && t.tier !== 'species') || !!t.unsure;
     var guess = t.tier === 'guess';
     /* A target that has not been named yet shows the plain noun the
        detector gave, not a state machine. "SCANNING" and a percentage told
@@ -209,7 +213,8 @@ var AR = (function () {
     /* The second line answers the question the owner actually asks of an
        object: what is it and what does it cost. A price beats the maker,
        the maker beats the category. A living thing gets its binomial. */
-    var sub = (t.data && t.data.scientific) || specLine(t.data) ||
+    var sub = (t.species && t.species.scientific) ||
+              (t.data && t.data.scientific) || specLine(t.data) ||
               (named ? sentence(kind) : '');
     var dist = distance(t.cls, screen[2], screen[3], frameW);
 
