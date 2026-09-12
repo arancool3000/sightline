@@ -295,7 +295,13 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
   ok('it is still one target after moving', r.tracks === 1, r.tracks);
   ok('CONTROL: and it kept the name it was given', r.kept === true, r.kept);
   ok('the card moved right with the object', r.after.x - r.before.x > 120, { from: Math.round(r.before.x), to: Math.round(r.after.x) });
-  ok('the card moved down with the object', r.after.y - r.before.y > 200, { from: Math.round(r.before.y), to: Math.round(r.after.y) });
+  /* Not "moved down by at least N": which side of the box the card sits on
+     is a placement decision that flips when the card grows a line, and a
+     pin on it went red for a taller card. The property is that it is
+     still WITH its object - within the box's own height of it. */
+  ok('the card is still on its object after the move',
+     !!r.box && Math.abs(r.after.y - r.box[1]) < r.box[3] + 60,
+     { cardY: Math.round(r.after.y), boxY: Math.round(r.box ? r.box[1] : -1), boxH: r.box && r.box[3] });
   ok('the card sits horizontally over its object', Math.abs((r.after.x + r.after.w / 2) - (r.box[0] + r.box[2] / 2)) < 40,
      { card: Math.round(r.after.x + r.after.w / 2), obj: Math.round(r.box[0] + r.box[2] / 2) });
   ok('the card sits just above its object, not floating elsewhere',

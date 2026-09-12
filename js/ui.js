@@ -264,7 +264,7 @@ var UI = (function () {
   function navArrows(ctx, w, h) {
     if (!window.MAP || !MAP.dest) return;
     var dest = MAP.dest();
-    if (!dest) { document.body.classList.remove('navigating'); ROUTE.clear(); navPlanned = null; navShapes = []; return; }
+    if (!dest) { document.body.classList.remove('navigating'); ROUTE.clear(); navPlanned = null; navShapes = []; navRow(''); return; }
     var st = GEO.state();
     if (!st.pos) return;
     document.body.classList.add('navigating');
@@ -387,6 +387,7 @@ var UI = (function () {
     if (f.arrived) txt = 'You have arrived · ' + dest.title;
     else if (f.next && f.turn) txt = 'Then ' + f.turn + (f.next.name ? ' into ' + f.next.name : '');
     else txt = (f.leg.name || 'Follow the road') + '  ' + fmtM(f.legLeft);
+    navRow(fmtM(f.remaining) + (f.turn && !f.arrived ? ' · ' + (f.turn.charAt(0).toUpperCase() + f.turn.slice(1)) : ''));
     if (!drew && !f.arrived) txt = (f.turn === 'back' ? 'Turn around · ' : 'Turn until the arrows appear · ') + txt;
     navLabel(ctx, w, h, txt, fmtM(f.remaining) + ' to go');
   }
@@ -536,11 +537,12 @@ var UI = (function () {
     if (!msg) {
       U.$('#statusText').textContent = '';
       strip.hidden = true;
+      document.body.classList.remove('saying');
       return;
     }
     U.$('#statusText').textContent = msg;
     strip.className = cls || '';
-    strip.hidden = false;
+    strip.hidden = false; document.body.classList.add('saying');
   }
 
   /* Every failure message carries the build and how many lifecycle events the
@@ -1134,6 +1136,9 @@ var UI = (function () {
       if (!VOICE.state().on) { SET.set('voice', true); if (vb) vb.checked = true; startVoice(); }
       VOICE.wake();
     });
+    /* The pill with the words on is the same door as the microphone. */
+    var ask = U.$('#askChip');
+    if (ask && vbtn) ask.addEventListener('click', function () { vbtn.click(); });
 
     var fm = U.$('#optFaceMem');
     if (fm) {
@@ -1546,6 +1551,7 @@ var UI = (function () {
     if (card) {
       if (w) {
         set('#wxTemp', w.temp + '\u00b0C');
+    airRow();
         set('#wxSky', st.sky);
         set('#wxWind', 'Wind ' + w.wind + ' km/h' +
             (typeof st.heading === 'number' ? ' \u00b7 facing ' + compass(st.heading) : ''));
@@ -1580,6 +1586,9 @@ var UI = (function () {
     list.forEach(function (p) {
       var row = document.createElement('div');
       row.className = 'near-row';
+      var ic = document.createElement('span'); ic.className = 'n-ic';
+      ic.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10z"/><circle cx="12" cy="11" r="2.2"/></svg>';
+      row.appendChild(ic);
       var n = document.createElement('span'); n.textContent = p.title;
       var d = document.createElement('i');
       d.textContent = p.dist < 1000 ? (p.dist + ' m') : ((p.dist / 1000).toFixed(1) + ' km');
@@ -1587,6 +1596,30 @@ var UI = (function () {
       box.appendChild(row);
     });
   }
+
+  /* ---- the rows under the weather ----
+     Each row is shown only while its line is TRUE. The stack hides itself
+     when none is, so an empty pane never sits on the glass. */
+  function row(id, txtId, text) {
+    var r = U.$('#' + id), t = U.$('#' + txtId);
+    if (!r || !t) return;
+    var show = !!text;
+    if (t.textContent !== (text || '')) t.textContent = text || '';
+    if (r.hidden !== !show) r.hidden = !show;
+    var st = U.$('#hudStack');
+    if (st) {
+      var any = !!st.querySelector('.srow:not([hidden])');
+      if (st.hidden !== !any) st.hidden = !any;
+    }
+  }
+  function aqWords(v) {
+    return v <= 20 ? 'Good' : v <= 40 ? 'Fair' : v <= 60 ? 'Moderate' : v <= 80 ? 'Poor' : v <= 100 ? 'Very poor' : 'Extremely poor';
+  }
+  function airRow() {
+    var w = GEO.state && GEO.state().weather;
+    row('aqRow', 'aqRowTxt', (w && typeof w.aqi === 'number') ? (aqWords(w.aqi) + ' · AQI ' + w.aqi) : '');
+  }
+  function navRow(text) { row('navRow', 'navRowTxt', text || ''); }
 
   function set(sel, v) { var el = U.$(sel); if (el && el.textContent !== v) el.textContent = v; }
   function setText(sel, v) { set(sel, v); }
@@ -1611,6 +1644,8 @@ var UI = (function () {
   function startBattery() {
     if (!navigator.getBattery) return;
     navigator.getBattery().then(function (b) {
+      var batt = function () { row('battRow', 'battRowTxt', Math.round(b.level * 100) + '%' + (b.charging ? ' · charging' : '')); };
+      batt(); b.addEventListener('levelchange', batt); b.addEventListener('chargingchange', batt);
       function show() {
         var el = U.$('#tBatt');
         if (!el) return;

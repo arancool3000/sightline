@@ -192,10 +192,19 @@ var GEO = (function () {
     var u = 'https://api.open-meteo.com/v1/forecast?latitude=' + here.lat.toFixed(3) +
             '&longitude=' + here.lon.toFixed(3) +
             '&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto';
+    var a = 'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + here.lat.toFixed(3) +
+            '&longitude=' + here.lon.toFixed(3) + '&current=european_aqi';
     return fetch(u).then(function (r) { return r.json(); }).then(function (j) {
       var c = j && j.current;
       if (!c) return;
-      weather = { temp: Math.round(c.temperature_2m), code: c.weather_code, wind: Math.round(c.wind_speed_10m) };
+      weather = { temp: Math.round(c.temperature_2m), code: c.weather_code, wind: Math.round(c.wind_speed_10m),
+                  aqi: weather && weather.aqi };
+      /* Air quality from the same keyless service. Best-effort: the row
+         only appears when a number comes back. */
+      return fetch(a).then(function (r) { return r.json(); }).then(function (q) {
+        var v = q && q.current && q.current.european_aqi;
+        if (typeof v === 'number' && weather) weather.aqi = Math.round(v);
+      }).catch(function () {});
     }).catch(function () {});
   }
 

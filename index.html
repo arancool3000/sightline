@@ -40,6 +40,25 @@
       </span>
     </div>
 
+    <!-- The stack under the weather: only rows that are TRUE right now.
+         Navigation appears with a destination, air quality with a
+         reading, battery where the device reports one. Nothing is drawn
+         to fill the space. -->
+    <div class="glass stack" id="hudStack" hidden>
+      <div class="srow" id="navRow" hidden>
+        <span class="s-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V9a3 3 0 0 1 3-3h9M14 3l3 3-3 3"/></svg></span>
+        <span class="s-t"><b>Navigation</b><i id="navRowTxt"></i></span>
+      </div>
+      <div class="srow" id="aqRow" hidden>
+        <span class="s-ic ok"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 21V9M12 9c0-3 2-5 5-5 0 3-2 5-5 5zM12 13c0-3-2-5-5-5 0 3 2 5 5 5z"/></svg></span>
+        <span class="s-t"><b>Air quality</b><i id="aqRowTxt"></i></span>
+      </div>
+      <div class="srow" id="battRow" hidden>
+        <span class="s-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="7" width="15" height="10" rx="2"/><path d="M21 11v2"/></svg></span>
+        <span class="s-t"><b>Battery</b><i id="battRowTxt"></i></span>
+      </div>
+    </div>
+
     <!-- Diagnostics, kept because this app is hard to debug on a phone, but
          no longer shouting over the scene. -->
     <div class="tele" id="tele">
@@ -53,6 +72,7 @@
 
   <!-- Top right: the two controls, and nothing else. -->
   <div id="hudTR">
+   <div class="hud-btns">
     <button id="btnFlip" class="hbtn ic" aria-label="Switch camera">
       <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"/></svg>
     </button>
@@ -66,6 +86,12 @@
     <button id="btnSettings" class="hbtn ic" aria-label="Settings">
       <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.5a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
     </button>
+   </div>
+   <!-- The same door as the microphone, with words on it. -->
+   <button id="askChip" class="glass ask" aria-label="Ask the assistant">
+     <span class="ask-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 12h2M8 8v8M12 5v14M16 8v8M20 12h2"/></svg></span>
+     <span class="ask-t"><b>Gemini</b><i>Tap to ask anything&hellip;</i></span>
+   </button>
   </div>
 
   <!-- Bottom left: where you are. Tapping it opens the full map. -->
@@ -163,7 +189,9 @@
 
   <!-- Status. Visible whenever the recogniser is not simply working, because
        "nothing on screen" and "everything is broken" looked identical. -->
-  <div id="statusStrip" hidden><span id="statusDot"></span><span id="statusText"></span></div>
+  <!-- What the assistant says, where the reference puts it: a pill over the
+       pavement, with the same mark as the ask button. -->
+  <div id="statusStrip" hidden><span id="statusDot"></span><span id="statusText"></span><span class="st-go" aria-hidden="true">&rsaquo;</span></div>
 
   <!-- Live captions -->
   <div id="captionBar" hidden>

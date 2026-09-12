@@ -133,7 +133,7 @@ var AR = (function () {
       '<span class="ar-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" ' +
       'stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' +
       '<path d="' + (ICON[kind] || ICON.object) + '"/></svg></span>' +
-      '<span class="ar-txt"><b class="ar-title"></b>' +
+      '<span class="ar-txt"><i class="ar-kind">' + kind + '</i><b class="ar-title"></b>' +
       '<i class="ar-sub"></i><i class="ar-dist"></i></span>';
     layer.appendChild(el);
     cards[id] = el;
