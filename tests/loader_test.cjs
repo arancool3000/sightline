@@ -91,8 +91,25 @@ const server=http.createServer((q,res)=>{
      pointed at, and pinning that would be pinning the stub. */
   t('the screen is not left blank when the detector fails',
     scene.shown === true, JSON.stringify({ ...scene, waitedMs: sceneMs }));
-  t('and what it says is either a name or an offer to identify',
-    scene.shown && scene.name.length > 0, JSON.stringify(scene));
+  /* And the half the polled line CANNOT settle: when the reading is weak,
+     the readout must offer a way to identify rather than go blank. The
+     species model also writes this chip, so waiting for the camera to
+     produce a weak reading proves nothing - it is driven directly.
+
+     (Found by planting: removing the offer left the polled line green,
+     because the species pass had put a name up in the meantime.) */
+  const weak = await page.evaluate(() => {
+    document.querySelectorAll('.arCard').forEach(el => el.remove());
+    UI.sceneLabel({ name: 'spaghetti squash', score: 0.31, margin: 0.04, kind: 'object' });
+    const c = document.querySelector('#sceneChip');
+    return { shown: c && !c.hidden,
+             name: (document.querySelector('#sceneName')||{}).textContent || '',
+             kind: (document.querySelector('#sceneKind')||{}).textContent || '' };
+  });
+  t('a reading it is not sure of offers to identify, it does not go blank',
+    weak.shown === true && weak.name.length > 0, JSON.stringify(weak));
+  t('and it does not state the weak guess as a fact',
+    weak.name.toLowerCase().indexOf('squash') < 0, JSON.stringify(weak));
   /* CONTROLS - these pass either way and stop the fix over-reaching. */
   /* The service-worker self-heal must refresh an UPDATED build, never a first
      visit. Reloading every new visitor once is a real cost and it destroyed
