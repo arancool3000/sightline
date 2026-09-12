@@ -63,8 +63,16 @@
     var jobs = [];
 
     if (!model && window.cocoSsd) {
+      /* The detector's weights are vendored too now. It was the last piece
+         fetched from a third party, and on a device that could not reach it
+         there were no object boxes at all - only grid regions. Local first,
+         remote only if the local copy is somehow missing. */
       jobs.push(
-        cocoSsd.load({ base: 'lite_mobilenet_v2' })
+        cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: 'vendor/models/coco-ssd-lite/model.json' })
+          .catch(function (e) {
+            detectorErr = 'local detector failed (' + String(e && e.message || e).slice(0, 50) + ')';
+            return cocoSsd.load({ base: 'lite_mobilenet_v2' });
+          })
           .then(function (m) { model = m; detectorErr = ''; })
           .catch(function (e) {
             detectorErr = String(e && e.message || e).slice(0, 120);

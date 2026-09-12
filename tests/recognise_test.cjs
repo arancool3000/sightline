@@ -119,8 +119,12 @@ const server=http.createServer((q,res)=>{
   const classifierLocal = reqs.some(u => /\/vendor\/models\/mobilenet/.test(u));
   t('the classifier weights came from our own origin', classifierLocal, classifierLocal ? 'vendor/models/…' : 'NOT SERVED LOCALLY');
   t('tfhub.dev was never contacted', !hosts.some(h => /tfhub/.test(h)), hosts.join(',') || 'none');
-  t('any third-party host is the optional detector only',
-    hosts.every(h => h === 'storage.googleapis.com'), hosts.join(',') || 'none');
+  /* The detector's weights are vendored now too, so the claim is absolute:
+     identification contacts NOTHING outside this origin. That is what makes
+     it work on a network that blocks Google hosts, and offline. */
+  t('NO third-party host is contacted at all', hosts.length === 0, hosts.join(',') || 'none');
+  t('the detector weights also came from our own origin',
+    reqs.some(u => /\/vendor\/models\/coco-ssd-lite/.test(u)), 'vendor/models/coco-ssd-lite');
   t('CONTROL - the page did not throw', errs.length === 0, errs.join('|').slice(0,120));
 
   await browser.close(); server.close();
