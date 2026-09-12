@@ -169,6 +169,11 @@
     UI.draw(TRACK.all());
   }
 
+  /* Ring of recent time-to-label measurements. Its declaration was lost in an
+     earlier edit while eight call sites kept using it - under strict mode
+     that throws a ReferenceError on every grid pass, which is the primary
+     path when the detector is unavailable. */
+  var latency = [];
   var sceneRec = null, sceneFirstAt = 0, detectCost = 0, lastGrid = 0;
 
   /* Turn confident grid regions into tracks so they render, are tappable and
