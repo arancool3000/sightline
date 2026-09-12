@@ -143,7 +143,7 @@ var ROADS = (function () {
   }
 
   /* Every way within reach of a point, from whatever tiles are held. */
-  function near(lat, lon) {
+  function near() {
     var out = [];
     Object.keys(tiles).forEach(function (k) {
       var t = tiles[k];

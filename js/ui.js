@@ -217,83 +217,181 @@ var UI = (function () {
 
   /* ---------- walking directions, in the camera ----------
 
-     The chevrons Google Maps calls Live View: a line of arrows lying on the
-     pavement in front of you, pointing at where you are going. There is no
-     depth sensing behind this and there does not need to be - the ground is
-     flat, the phone is held at chest height, and the bearing to the
-     destination is known. That is enough to put an arrow on the floor.
+     The owner's design, and it is better than what was here: an arrow that
+     points straight at the destination points through walls. These lie
+     along the ROAD, round its curve, to the end of it - and when that end
+     is reached they recalibrate onto the next road of the route.
 
-     They appear only when a destination has been set, and they turn with
-     the compass, so they are the one thing on screen that answers "which
-     way" without being asked. */
-  var ARROWS = 5;
+     The road is real geometry from OpenStreetMap, so a curved street gets
+     curved arrows. Each point of the road ahead is put on the ground plane
+     the same way the map puts buildings there: known bearing, known
+     distance, camera at chest height, ground assumed flat. That is enough
+     to lay a chevron on the pavement without any depth sensing at all. */
+  var navPlanAt = 0, navPlanned = null;
+
   function navArrows(ctx, w, h) {
     if (!window.MAP || !MAP.dest) return;
     var dest = MAP.dest();
-    if (!dest) return;
+    if (!dest) { document.body.classList.remove('navigating'); ROUTE.clear(); navPlanned = null; return; }
     var st = GEO.state();
-    if (!st.pos || typeof st.heading !== 'number') return;
+    if (!st.pos) return;
+    document.body.classList.add('navigating');
 
-    /* How far off straight ahead the destination is. */
-    var rel = ((GEO.bearing(st.pos, dest) - st.heading) + 540) % 360 - 180;
-    var left = rel * Math.PI / 180;
+    /* Re-plan when the destination changes, when there is no route, or
+       every so often as more of the map arrives. */
+    var now = performance.now();
+    if (navPlanned !== dest || !ROUTE.get() || (now - navPlanAt) > 12000) {
+      navPlanAt = now;
+      navPlanned = dest;
+      ROUTE.plan([st.pos.lat, st.pos.lon], [dest.lat, dest.lon]);
+    }
 
-    /* Behind you: one arrow at the edge pointing the way to turn, rather
-       than five arrows drawn off the screen. */
-    var behind = Math.abs(rel) > 100;
+    var f = ROUTE.follow([st.pos.lat, st.pos.lon]);
+    if (!f) { navBearing(ctx, w, h, st, dest); return; }   // no road data yet
+    if (typeof st.heading !== 'number') { navLabel(ctx, w, h, 'Turn until the arrows appear'); return; }
 
-    var horizon = h * 0.52;
-    var col = '#4fe3ff';
+    /* The road ahead, as points on the ground in front of the camera. */
+    var mPerLat = 111320, mPerLon = 111320 * Math.cos(st.pos.lat * Math.PI / 180);
+    var head = st.heading * Math.PI / 180;
+    var horizon = h * 0.5;
+
+    function onGround(pt) {
+      var dN = (pt[0] - st.pos.lat) * mPerLat;
+      var dE = (pt[1] - st.pos.lon) * mPerLon;
+      var right = dE * Math.cos(head) - dN * Math.sin(head);
+      var fwd = dE * Math.sin(head) + dN * Math.cos(head);
+      if (fwd < 1.5) return null;                    // beside or behind you
+      /* Chest height, roughly, over a flat pavement. */
+      var eye = 1.5, focal = h * 0.62;
+      return { x: w / 2 + (right / fwd) * focal,
+               y: horizon + (eye / fwd) * focal,
+               d: fwd, r: right };
+    }
+
+    /* Walk the road ahead at even spacing so the chevrons are evenly spread
+       whatever shape the street is. */
+    var line = f.ahead;
+    var placed = [], walked = 0, want = 6, step = Math.max(5, Math.min(18, f.legLeft / want));
+    var target = step;
+    for (var i = 1; i < line.length && placed.length < want; i++) {
+      var segLen = ROUTE.metres(line[i - 1], line[i]);
+      while (walked + segLen >= target && placed.length < want) {
+        var t = (target - walked) / (segLen || 1);
+        var pt = [line[i - 1][0] + (line[i][0] - line[i - 1][0]) * t,
+                  line[i - 1][1] + (line[i][1] - line[i - 1][1]) * t];
+        placed.push({ pt: pt, along: target });
+        target += step;
+      }
+      walked += segLen;
+    }
+
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
+    var drew = 0;
+    for (var k = 0; k < placed.length; k++) {
+      var g0 = onGround(placed[k].pt);
+      if (!g0) continue;
+      /* Point the chevron the way the road runs AT that point, so it turns
+         with the curve instead of all of them facing the same way. */
+      var nextPt = placed[k + 1] ? placed[k + 1].pt : line[line.length - 1];
+      var g1 = onGround(nextPt);
+      var ang = g1 ? Math.atan2(g1.y - g0.y, g1.x - g0.x) : -Math.PI / 2;
 
-    for (var i = 0; i < (behind ? 1 : ARROWS); i++) {
-      /* Nearer arrows are lower on screen and larger: the same perspective
-         the map uses, with the ground assumed flat. */
-      var t = i / ARROWS;
+      var size = Math.max(9, Math.min(46, (h * 0.5) / g0.d));
+      var fade = Math.max(0.18, 1 - (k / want));
+      drew++;
+
+      ctx.globalAlpha = fade * 0.35;
+      ctx.strokeStyle = 'rgba(0,0,0,.9)';
+      ctx.lineWidth = Math.max(4, size * 0.44);
+      chevron(ctx, g0.x, g0.y, size, ang);
+      ctx.globalAlpha = fade * 0.95;
+      ctx.strokeStyle = '#4fe3ff';
+      ctx.lineWidth = Math.max(3, size * 0.3);
+      chevron(ctx, g0.x, g0.y, size, ang);
+    }
+    ctx.restore();
+
+    /* What road, how far, and what happens at the end of it. */
+    var txt;
+    if (f.arrived) txt = 'You have arrived · ' + dest.title;
+    else if (f.next && f.turn) txt = 'Then ' + f.turn + (f.next.name ? ' into ' + f.next.name : '');
+    else txt = (f.leg.name || 'Follow the road') + '  ' + fmtM(f.legLeft);
+    if (!drew && !f.arrived) txt = (f.turn === 'back' ? 'Turn around · ' : 'Turn until the arrows appear · ') + txt;
+    navLabel(ctx, w, h, txt, fmtM(f.remaining) + ' to go');
+  }
+
+  function chevron(ctx, x, y, size, ang) {
+    var c = Math.cos(ang), s2 = Math.sin(ang);
+    function at(dx, dy) { return [x + dx * c - dy * s2, y + dx * s2 + dy * c]; }
+    var p1 = at(-size * 0.55, -size * 0.6), p2 = at(size * 0.35, 0), p3 = at(-size * 0.55, size * 0.6);
+    ctx.beginPath();
+    ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]);
+    ctx.stroke();
+  }
+
+  function fmtM(m) { return m < 1000 ? (m + ' m') : ((m / 1000).toFixed(1) + ' km'); }
+
+  /* No road data for here yet - fall back to the direction, and say that is
+     what it is rather than pretending to know the streets. */
+  function navBearing(ctx, w, h, st, dest) {
+    if (typeof st.heading !== 'number') return;
+    var rel = ((GEO.bearing(st.pos, dest) - st.heading) + 540) % 360 - 180;
+    var left = rel * Math.PI / 180;
+    var behind = Math.abs(rel) > 100;
+    var horizon = h * 0.52;
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    for (var i = 0; i < (behind ? 1 : 5); i++) {
+      var t = i / 5;
       var y = h * 0.94 - (h * 0.94 - horizon) * (0.18 + t * 0.72);
       var depth = 1 - t;
       var size = (h * 0.055) * (0.45 + depth * 0.75);
-      /* Drift sideways with the turn, so a destination to your left has the
-         arrows curving left as they recede. */
       var x = w / 2 + Math.sin(left) * (w * 0.34) * (1 - depth) +
               (behind ? (rel > 0 ? w * 0.3 : -w * 0.3) : 0);
-
-      ctx.globalAlpha = 0.92 - t * 0.5;
-      ctx.strokeStyle = col;
-      ctx.lineWidth = Math.max(3, size * 0.34);
-      ctx.beginPath();
-      ctx.moveTo(x - size * 0.8, y + size * 0.42);
-      ctx.lineTo(x, y - size * 0.42);
-      ctx.lineTo(x + size * 0.8, y + size * 0.42);
-      ctx.stroke();
-      /* A dark edge under it, because a cyan arrow over a pale pavement is
-         invisible in daylight. */
       ctx.globalAlpha = (0.92 - t * 0.5) * 0.35;
       ctx.strokeStyle = 'rgba(0,0,0,.9)';
-      ctx.lineWidth = Math.max(1, size * 0.1);
-      ctx.stroke();
+      ctx.lineWidth = Math.max(4, size * 0.44);
+      chevron(ctx, x, y, size, -Math.PI / 2);
+      ctx.globalAlpha = 0.92 - t * 0.5;
+      ctx.strokeStyle = '#4fe3ff';
+      ctx.lineWidth = Math.max(3, size * 0.34);
+      chevron(ctx, x, y, size, -Math.PI / 2);
     }
-
-    /* What it is and how far, under the arrows. */
+    ctx.restore();
     var d = Math.round(GEO.metres(st.pos, dest));
-    var txt = (behind ? (rel > 0 ? 'Turn right \u00b7 ' : 'Turn left \u00b7 ') : '') +
-              dest.title + '  ' + (d < 1000 ? d + ' m' : (d / 1000).toFixed(1) + ' km');
+    navLabel(ctx, w, h,
+      (behind ? (rel > 0 ? 'Turn right · ' : 'Turn left · ') : '') + dest.title + '  ' + fmtM(d),
+      'Direct line - no street data here yet');
+  }
+
+  function navLabel(ctx, w, h, txt, sub) {
+    ctx.save();
     ctx.globalAlpha = 1;
-    ctx.font = '600 13px -apple-system,system-ui,sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.font = '600 13px -apple-system,system-ui,sans-serif';
     var tw = ctx.measureText(txt).width;
-    var by = h * 0.955;
-    ctx.fillStyle = 'rgba(6,9,12,.72)';
-    roundRect(ctx, w / 2 - tw / 2 - 12, by - 15, tw + 24, 30, 15);
+    var sw = 0;
+    if (sub) { ctx.font = '500 10.5px -apple-system,system-ui,sans-serif'; sw = ctx.measureText(sub).width; }
+    var bw = Math.min(w - 28, Math.max(tw, sw) + 28);
+    var bh = sub ? 46 : 30;
+    var by = h * 0.955 - (sub ? 8 : 0);
+    ctx.fillStyle = 'rgba(6,9,12,.74)';
+    roundRect(ctx, w / 2 - bw / 2, by - bh / 2, bw, bh, 15);
     ctx.fill();
     ctx.strokeStyle = 'rgba(120,190,255,.3)';
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = '#e6ecf1';
-    ctx.fillText(txt, w / 2, by);
+    ctx.font = '600 13px -apple-system,system-ui,sans-serif';
+    ctx.fillText(txt, w / 2, by - (sub ? 9 : 0));
+    if (sub) {
+      ctx.fillStyle = 'rgba(230,236,241,.62)';
+      ctx.font = '500 10.5px -apple-system,system-ui,sans-serif';
+      ctx.fillText(sub, w / 2, by + 11);
+    }
     ctx.restore();
   }
 
