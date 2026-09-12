@@ -272,3 +272,19 @@ body.caps-on #sceneChip{top:auto;bottom:calc(var(--safe-b) + 176px)}
   .clock{font-size:18px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- status strip ---------- */
+#statusStrip{
+  position:absolute;left:12px;right:12px;top:calc(var(--safe-t) + 108px);z-index:9;
+  display:flex;align-items:center;gap:9px;
+  padding:9px 12px;background:var(--plate-solid);
+  border:1px solid var(--line);border-left:2px solid var(--warn);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;line-height:1.5;
+  color:var(--ink);max-width:640px;margin:0 auto
+}
+#statusStrip.bad{border-left-color:var(--bad)}
+#statusStrip.busy{border-left-color:var(--acc)}
+#statusDot{flex:0 0 6px;height:6px;background:var(--warn)}
+#statusStrip.bad #statusDot{background:var(--bad)}
+#statusStrip.busy #statusDot{background:var(--acc)}
+#statusText{flex:1;min-width:0;word-break:break-word}

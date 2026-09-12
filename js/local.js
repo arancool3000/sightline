@@ -16,7 +16,10 @@
 
 var LOCAL = (function () {
 
-  var net = null, loading = null, backend = '', variant = 'v2', lastErr = '';
+  /* fails counts CONSECUTIVE failures: any success resets it. Counting
+     cumulatively left the warning stuck on after a couple of benign early
+     misses, which is worse than not warning at all. */
+  var net = null, loading = null, backend = '', variant = 'v2', lastErr = '', fails = 0;
   var pad = document.createElement('canvas');
   pad.width = pad.height = 224;
   var pctx = pad.getContext('2d', { willReadFrequently: true });
@@ -205,6 +208,23 @@ var LOCAL = (function () {
 
   /* Classify one track NOW. Returns a promise, but the caller does not wait
      on it - the label is written onto the track when it lands. */
+  /* iOS Safari can initialise WebGL happily and then throw on the first real
+     inference. Falling back only at init time left the app silently dead on
+     exactly those devices, so a failing inference now demotes the backend to
+     CPU once and retries. Slower, but it runs. */
+  var demoted = false;
+  function demoteAndRetry(e) {
+    if (demoted || !window.tf) return Promise.reject(e);
+    demoted = true;
+    lastErr = 'gpu inference failed, retrying on cpu: ' + String(e && e.message || e).slice(0, 70);
+    return tf.setBackend('cpu').then(function () {
+      return tf.ready();
+    }).then(function () {
+      backend = 'cpu';
+      return true;
+    });
+  }
+
   function label(video, t) {
     if (!net || t.localState === 'busy') return Promise.resolve(null);
     if (!drawCrop(video, t.raw || t.box)) return Promise.resolve(null);
@@ -221,6 +241,7 @@ var LOCAL = (function () {
 
       t.localState = 'done';
       t.localAt = performance.now();
+      fails = 0;                 // a success clears the streak
 
       if (!preds || !preds.length) return null;
       var top = preds[0];
@@ -249,11 +270,17 @@ var LOCAL = (function () {
       t.why = '';
       t.settled = performance.now();
       return t.local;
-    }).catch(function () {
+    }).catch(function (e) {
       t.localState = 'failed';
       t.scan = 'dismissed';
       t.why = 'SCAN FAILED';
       t.settled = performance.now();
+      /* Never swallow this. A silently caught inference error is
+         indistinguishable from "the app found nothing", which is precisely
+         how this went undiagnosed. */
+      lastErr = 'classify: ' + String(e && e.message || e).slice(0, 90);
+      fails++;
+      demoteAndRetry(e).catch(function () {});
       return null;
     });
   }
@@ -309,6 +336,7 @@ var LOCAL = (function () {
       stats.n++; stats.total += ms; stats.last = ms;
       if (ms > stats.worst) stats.worst = ms;
       considerStepDown();
+      fails = 0;                 // it ran; a weak result is still a working engine
 
       if (!preds || !preds.length) return;
       var top = preds[0];
@@ -322,12 +350,18 @@ var LOCAL = (function () {
         cb(null);
         return;
       }
+      fails = 0;
       scenePrev = { name: name, score: top.probability, ms: Math.round(ms),
                     kind: kindOfLabel(name),
                     alt: preds.slice(1).map(function (p) { return tidy(p.className); }) };
       sceneHold = performance.now();
       cb(scenePrev);
-    }).catch(function () { sceneBusy = false; });
+    }).catch(function (e) {
+      sceneBusy = false;
+      lastErr = 'scene: ' + String(e && e.message || e).slice(0, 90);
+      fails++;
+      demoteAndRetry(e).catch(function () {});
+    });
   }
   var sceneBusy = false;
 
@@ -390,6 +424,7 @@ var LOCAL = (function () {
       stats.n++; stats.total += ms; stats.last = ms;
       considerStepDown();
 
+      fails = 0;
       var now = performance.now();
       gridHits = gridHits.filter(function (h) { return (now - h.at) < GRID_TTL && h.idx !== idx; });
 
@@ -400,13 +435,26 @@ var LOCAL = (function () {
 
       gridHits.push({ idx: idx, box: box, name: name, score: top.probability,
                       kind: kindOfLabel(name), at: now });
-    }).catch(function () { gridBusy = false; });
+    }).catch(function (e) {
+      gridBusy = false;
+      lastErr = 'grid: ' + String(e && e.message || e).slice(0, 90);
+      fails++;
+      demoteAndRetry(e).catch(function () {});
+    });
   }
 
   function gridTargets() {
     var now = performance.now();
     gridHits = gridHits.filter(function (h) { return (now - h.at) < GRID_TTL; });
     return gridHits;
+  }
+
+  /* One place the UI can ask "what is actually going on", so a failure is
+     never rendered as an empty screen. */
+  function state() {
+    if (net) return { code: fails > 3 ? 'erroring' : 'ready', detail: fails ? lastErr : '' };
+    if (loading) return { code: 'loading', detail: '' };
+    return { code: 'failed', detail: lastErr || 'not started' };
   }
 
   function timing() {
@@ -422,7 +470,7 @@ var LOCAL = (function () {
 
   function setBudget(n) { perFrame = U.clamp(n | 0, 1, 8); }
 
-  return { load: load, ready: ready, lastError: lastError, label: label, sweep: sweep, age: age,
+  return { load: load, ready: ready, lastError: lastError, state: state, label: label, sweep: sweep, age: age,
            scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
            gridStep: gridStep, gridTargets: gridTargets,
            timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget };

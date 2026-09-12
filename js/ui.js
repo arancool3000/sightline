@@ -78,6 +78,7 @@ var UI = (function () {
     var settled = 0;
     tracks.forEach(function (t) { if (t.scan === 'relevant' || t.scan === 'dismissed') settled++; });
     tele('#tTgt', plotted ? settled + '/' + plotted : '--');
+    statusFromEngine();
 
     tracks.forEach(function (t) {
       var s = CAM.toScreen(t.box);
@@ -187,6 +188,31 @@ var UI = (function () {
     });
 
     needsDraw = false;
+  }
+
+  /* Show what the recogniser is doing whenever that is not simply "working".
+     An empty screen and a broken engine looked identical before this, which
+     is how several rounds went by with nothing to diagnose from. */
+  var lastStatus = '';
+  function status(msg, cls) {
+    var strip = U.$('#statusStrip');
+    if (!strip) return;
+    var key = cls + '|' + msg;
+    if (key === lastStatus) return;          // guarded: this runs every frame
+    lastStatus = key;
+    if (!msg) { strip.hidden = true; return; }
+    U.$('#statusText').textContent = msg;
+    strip.className = cls || '';
+    strip.hidden = false;
+  }
+
+  function statusFromEngine() {
+    if (!window.LOCAL || !LOCAL.state) return;
+    var st = LOCAL.state();
+    if (st.code === 'ready') { status('', ''); return; }
+    if (st.code === 'loading') { status('LOADING RECOGNISER — FIRST RUN DOWNLOADS ~6MB', 'busy'); return; }
+    if (st.code === 'erroring') { status('RECOGNISER ERRORING — ' + (st.detail || 'unknown'), 'bad'); return; }
+    status('RECOGNISER FAILED — ' + (st.detail || 'unknown') + ' — TRY CFG > RELOAD MODELS', 'bad');
   }
 
   /* ---------- dossier ---------- */
@@ -556,6 +582,7 @@ var UI = (function () {
   }
 
   return { init: init, draw: draw, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
+           status: status,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
            refreshOpen: refreshOpen, sceneLabel: sceneLabel, openScene: openScene,

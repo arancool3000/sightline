@@ -388,6 +388,19 @@
     });
   };
 
+  /* An uncaught error used to leave a live camera and no explanation. */
+  window.addEventListener('error', function (ev) {
+    if (window.UI && UI.status) {
+      UI.status('ERROR — ' + String((ev && ev.message) || 'unknown').slice(0, 110), 'bad');
+    }
+  });
+  window.addEventListener('unhandledrejection', function (ev) {
+    var r = ev && ev.reason;
+    if (window.UI && UI.status) {
+      UI.status('ERROR — ' + String((r && r.message) || r || 'unknown').slice(0, 110), 'bad');
+    }
+  });
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 })();
