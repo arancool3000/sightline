@@ -207,8 +207,101 @@ var UI = (function () {
       }
     });
 
+    navArrows(ctx, w, h);
     AR.sweep();
     needsDraw = false;
+  }
+
+  /* ---------- walking directions, in the camera ----------
+
+     The chevrons Google Maps calls Live View: a line of arrows lying on the
+     pavement in front of you, pointing at where you are going. There is no
+     depth sensing behind this and there does not need to be - the ground is
+     flat, the phone is held at chest height, and the bearing to the
+     destination is known. That is enough to put an arrow on the floor.
+
+     They appear only when a destination has been set, and they turn with
+     the compass, so they are the one thing on screen that answers "which
+     way" without being asked. */
+  var ARROWS = 5;
+  function navArrows(ctx, w, h) {
+    if (!window.MAP || !MAP.dest) return;
+    var dest = MAP.dest();
+    if (!dest) return;
+    var st = GEO.state();
+    if (!st.pos || typeof st.heading !== 'number') return;
+
+    /* How far off straight ahead the destination is. */
+    var rel = ((GEO.bearing(st.pos, dest) - st.heading) + 540) % 360 - 180;
+    var left = rel * Math.PI / 180;
+
+    /* Behind you: one arrow at the edge pointing the way to turn, rather
+       than five arrows drawn off the screen. */
+    var behind = Math.abs(rel) > 100;
+
+    var horizon = h * 0.52;
+    var col = '#4fe3ff';
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    for (var i = 0; i < (behind ? 1 : ARROWS); i++) {
+      /* Nearer arrows are lower on screen and larger: the same perspective
+         the map uses, with the ground assumed flat. */
+      var t = i / ARROWS;
+      var y = h * 0.94 - (h * 0.94 - horizon) * (0.18 + t * 0.72);
+      var depth = 1 - t;
+      var size = (h * 0.055) * (0.45 + depth * 0.75);
+      /* Drift sideways with the turn, so a destination to your left has the
+         arrows curving left as they recede. */
+      var x = w / 2 + Math.sin(left) * (w * 0.34) * (1 - depth) +
+              (behind ? (rel > 0 ? w * 0.3 : -w * 0.3) : 0);
+
+      ctx.globalAlpha = 0.92 - t * 0.5;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = Math.max(3, size * 0.34);
+      ctx.beginPath();
+      ctx.moveTo(x - size * 0.8, y + size * 0.42);
+      ctx.lineTo(x, y - size * 0.42);
+      ctx.lineTo(x + size * 0.8, y + size * 0.42);
+      ctx.stroke();
+      /* A dark edge under it, because a cyan arrow over a pale pavement is
+         invisible in daylight. */
+      ctx.globalAlpha = (0.92 - t * 0.5) * 0.35;
+      ctx.strokeStyle = 'rgba(0,0,0,.9)';
+      ctx.lineWidth = Math.max(1, size * 0.1);
+      ctx.stroke();
+    }
+
+    /* What it is and how far, under the arrows. */
+    var d = Math.round(GEO.metres(st.pos, dest));
+    var txt = (behind ? (rel > 0 ? 'Turn right \u00b7 ' : 'Turn left \u00b7 ') : '') +
+              dest.title + '  ' + (d < 1000 ? d + ' m' : (d / 1000).toFixed(1) + ' km');
+    ctx.globalAlpha = 1;
+    ctx.font = '600 13px -apple-system,system-ui,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    var tw = ctx.measureText(txt).width;
+    var by = h * 0.955;
+    ctx.fillStyle = 'rgba(6,9,12,.72)';
+    roundRect(ctx, w / 2 - tw / 2 - 12, by - 15, tw + 24, 30, 15);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,190,255,.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#e6ecf1';
+    ctx.fillText(txt, w / 2, by);
+    ctx.restore();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
   }
 
   /* Show what the recogniser is doing whenever that is not simply "working".

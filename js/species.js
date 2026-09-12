@@ -48,7 +48,45 @@ var SPECIES = (function () {
     return '';
   }
 
+  /* THE RUNTIME IS FETCHED ON DEMAND.
+
+     It is 1.2 MB, and most of the time the camera is pointed at a room. So
+     it is not part of the boot - the whole point of deferring the libraries
+     was to stop the page waiting on megabytes it might not need. It arrives
+     the first time something alive is on screen, and after that it is
+     cached. */
+  var runtime = null;        // a promise, once asked for
+  var runtimeErr = '';
+
   function available() { return !!(window.tflite && tflite.loadTFLiteModel); }
+
+  function runtimeReady() {
+    if (available()) return Promise.resolve(true);
+    if (runtimeErr) return Promise.resolve(false);
+    if (runtime) return runtime;
+    runtime = new Promise(function (res) {
+      var sc = document.createElement('script');
+      sc.src = 'vendor/tf-tflite.min.js';
+      sc.async = true;
+      sc.onload = function () {
+        if (available()) { setPath(); res(true); }
+        else { runtimeErr = 'the tflite runtime loaded but is incomplete'; res(false); }
+      };
+      sc.onerror = function () { runtimeErr = 'the tflite runtime could not be fetched'; res(false); };
+      document.head.appendChild(sc);
+      /* A script that never fires either handler would leave every species
+         lookup waiting for ever. */
+      setTimeout(function () {
+        if (!available() && !runtimeErr) { runtimeErr = 'the tflite runtime timed out'; res(false); }
+      }, 30000);
+    });
+    return runtime;
+  }
+
+  function setPath() {
+    if (pathsSet || !available()) return;
+    try { tflite.setWasmPath('vendor/'); pathsSet = true; } catch (e) {}
+  }
 
   function canvas() {
     if (pad) return pad;
@@ -64,12 +102,14 @@ var SPECIES = (function () {
     if (loaded[k]) return Promise.resolve(loaded[k]);
     if (failed[k]) return Promise.resolve(null);
     if (loading[k]) return loading[k];
-    if (!available()) { failed[k] = 'the tflite runtime did not load'; return Promise.resolve(null); }
 
-    loading[k] = Promise.all([
-      tflite.loadTFLiteModel(MODELS[k].file),
-      fetch(MODELS[k].labels).then(function (r) { return r.json(); })
-    ]).then(function (r) {
+    loading[k] = runtimeReady().then(function (ready) {
+      if (!ready) throw new Error(runtimeErr || 'no tflite runtime');
+      return Promise.all([
+        tflite.loadTFLiteModel(MODELS[k].file),
+        fetch(MODELS[k].labels).then(function (r) { return r.json(); })
+      ]);
+    }).then(function (r) {
       loaded[k] = { model: r[0], labels: r[1] };
       delete loading[k];
       return loaded[k];
@@ -154,6 +194,8 @@ var SPECIES = (function () {
   function state() {
     return {
       available: available(),
+      runtime: available() ? 'loaded' : (runtime ? 'loading' : 'not asked for yet'),
+      runtimeError: runtimeErr,
       loaded: Object.keys(loaded),
       loading: Object.keys(loading),
       failed: failed,
@@ -162,15 +204,10 @@ var SPECIES = (function () {
   }
 
   /* The runtime probes for SIMD support while its own script is being
-     evaluated - before any of this file runs - so there is no moment at
-     which setWasmPath could be called early enough. Its files therefore sit
-     where it looks by default, beside the library, and the path is set as
-     well for the loads that do respect it. */
-  (function () {
-    if (!available()) return;
-    try { tflite.setWasmPath('vendor/'); pathsSet = true; } catch (e) {}
-  })();
+     evaluated, so its files sit where it looks by default - beside the
+     library - and the path is set as well for the loads that respect it. */
+  setPath();
 
   return { load: load, identify: identify, state: state, modelFor: modelFor,
-           available: available };
+           available: available, runtimeReady: runtimeReady };
 })();

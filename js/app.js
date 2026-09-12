@@ -259,7 +259,7 @@
      else on the same thread. */
   var lastSpecies = 0;
   function speciesPass(tracks) {
-    if (!window.SPECIES || !SPECIES.available()) return;
+    if (!window.SPECIES) return;
     var now = performance.now();
     if (now - lastSpecies < 260) return;
 

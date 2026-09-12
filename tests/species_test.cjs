@@ -34,7 +34,14 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   await page.goto('http://127.0.0.1:8745/',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>window.SPECIES,null,{timeout:30000});
 
-  ok('the tflite runtime is present', await page.evaluate(()=>SPECIES.available()));
+  /* The runtime is 1.2 MB and most sessions never point at anything alive,
+     so it is NOT part of the boot. That is a property worth pinning: a
+     future change that loads it eagerly undoes the whole point of
+     deferring the libraries. */
+  ok('the runtime is not fetched at boot',
+     await page.evaluate(()=>SPECIES.state().runtime) === 'not asked for yet');
+  ok('it arrives when something alive is asked about',
+     await page.evaluate(()=>SPECIES.runtimeReady()) === true);
 
   /* Draws a photograph into a canvas that answers like a video element, so
      the real identify() path runs unchanged. */

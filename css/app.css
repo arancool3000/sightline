@@ -167,6 +167,9 @@ input,select{font:inherit;color:inherit}
 /* Captions must not take the rest of the display away with them - the map
    in particular. They sit above the bottom row instead. */
 body.caps-on #captionBar{bottom:calc(var(--safe-b) + 152px)}
+/* The walking arrows live at the foot of the camera view, so a caption bar
+   over them would cover the one thing that answers "which way". */
+body.navigating #captionBar{bottom:calc(var(--safe-b) + 186px)}
 body.caps-on #sceneChip{display:none}
 
 /* ---------- the dock ---------- */

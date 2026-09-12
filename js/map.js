@@ -112,6 +112,7 @@ var MAP = (function () {
   function showResults(list) { results = list; fillList(); }
 
   function setDest(p) {
+    if (!p) { clearDest(); return; }
     sel = p;
     results = null;
     var box = document.getElementById('mapSearch');
@@ -198,11 +199,16 @@ var MAP = (function () {
   }
   function paint(ctx, w, h, big) {
     var s = GEO.state();
-    /* Both sizes are the same view now. The corner card is a small city in
-       front of you, not a compass rose - which is what the reference shows
-       and what you can actually walk by. */
-    var cx = w / 2, cy = h * (big ? 0.62 : 0.70);
-    var R = Math.min(w, h * 1.15) / 2 - (big ? 18 : 2);
+    /* THE CORNER CARD IS THE 3D ONE.
+
+       A small city in front of you is what you glance at while walking; a
+       full-screen tilted view is harder to read than an ordinary map, so
+       the panel is a plain plan view - north-up rotated to your heading,
+       nothing foreshortened. The owner asked for exactly this split and it
+       is the right way round. */
+    var plan = big;
+    var cx = w / 2, cy = plan ? h / 2 : h * 0.70;
+    var R = Math.min(w, plan ? h : h * 1.15) / 2 - (big ? 18 : 2);
     ctx.clearRect(0, 0, w, h);
 
     var acc = '#4fe3ff';
@@ -213,12 +219,15 @@ var MAP = (function () {
       var a = head * Math.PI / 180;
       var right = dEast * Math.cos(a) - dNorth * Math.sin(a);
       var fwd = dEast * Math.sin(a) + dNorth * Math.cos(a);
+      if (plan) return [cx + (right / range) * R, cy - (fwd / range) * R];
       return ground(right, fwd, R, cx, cy, range, 0);
     }
     function placeUp(dEast, dNorth, height) {
       var a = head * Math.PI / 180;
       var right = dEast * Math.cos(a) - dNorth * Math.sin(a);
       var fwd = dEast * Math.sin(a) + dNorth * Math.cos(a);
+      /* On a plan view a building has no height; it is its footprint. */
+      if (plan) return [cx + (right / range) * R, cy - (fwd / range) * R];
       return ground(right, fwd, R, cx, cy, range, height);
     }
 
@@ -226,10 +235,11 @@ var MAP = (function () {
        a perspective view reads as a glitch. */
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, Math.max(0, cy - R * HORIZON), w, h);
+    if (plan) ctx.rect(0, 0, w, h);
+    else ctx.rect(0, Math.max(0, cy - R * HORIZON), w, h);
     ctx.clip();
 
-    {
+    if (!plan) {
       /* The ground itself, so the horizon is visible before anything stands
          on it. */
       var horizonY = Math.max(0, cy - R * HORIZON);
@@ -300,12 +310,12 @@ var MAP = (function () {
         vis.push({ b: b, d: d });
       });
       vis.sort(function (p, q) { return q.d - p.d; });
-      vis.slice(big ? -90 : -34).forEach(function (v) {
-        drawBuilding(ctx, v.b, toLocal, place, placeUp, big);
+      vis.slice(plan ? -220 : -34).forEach(function (v) {
+        drawBuilding(ctx, v.b, toLocal, place, placeUp, big, plan);
       });
     }
 
-    /* ---- distance rings, on the ground ---- */
+    /* ---- distance rings ---- */
     if (big) {
     ctx.save();
     ctx.strokeStyle = 'rgba(200,230,255,.25)';
@@ -404,7 +414,7 @@ var MAP = (function () {
 
     /* ---- you ---- */
     ctx.save();
-    var me = [cx, cy + R * 0.52];
+    var me = plan ? [cx, cy] : [cx, cy + R * 0.52];
     ctx.translate(me[0], me[1]);
     if (s.pos && s.pos.acc) {
       var ar = Math.min(R, (s.pos.acc / range) * R);
@@ -446,7 +456,7 @@ var MAP = (function () {
      and only the ones whose outward normal points toward the camera - the
      rest are behind the building and drawing them makes it a wireframe
      rather than a solid. */
-  function drawBuilding(ctx, b, toLocal, place, placeUp, big) {
+  function drawBuilding(ctx, b, toLocal, place, placeUp, big, plan) {
     var n = b.pts.length;
     if (n < 4) return;
     var roof = [], base = [], ok = true;
@@ -460,6 +470,19 @@ var MAP = (function () {
     if (!ok) return;
 
     ctx.save();
+    if (plan) {
+      /* A plan view has no walls - a building is the shape it covers. */
+      ctx.beginPath();
+      roof.forEach(function (p, i3) { if (!i3) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(70,120,170,.32)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(150,200,245,.35)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     /* Walls. A face is toward us when the base edge runs left-to-right on
        screen, which for a footprint wound consistently is one sign test. */
     for (var j = 0; j < n - 1; j++) {
