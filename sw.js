@@ -21,7 +21,7 @@ const SHELL = [
   './js/util.js', './js/settings.js', './js/wiki.js', './js/camera.js',
   './js/track.js', './js/local.js', './js/identify.js', './js/captions.js',
   './js/ui.js', './js/app.js',
-  './vendor/tf.min.js', './vendor/coco-ssd.min.js', './vendor/mobilenet.min.js',
+  './vendor/tf.min.js', './vendor/tf.es2017.min.js', './vendor/coco-ssd.min.js', './vendor/mobilenet.min.js',
   './vendor/imagenet-classes.js'
 ];
 

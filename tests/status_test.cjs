@@ -140,6 +140,43 @@ const server=http.createServer((q,res)=>{
     await ctx.close();
   }
 
+  /* ---- CASE 1e: the repair for a half-built tf.
+     Reported from an iPad: "tf.loadLayersModel is not a function". The
+     bundle is correct and works elsewhere, so it throws partway through its
+     own execution, leaving tf assigned but incomplete - which every guard
+     for ABSENCE passes straight through.
+     The end-to-end failure could NOT be simulated here: tf's UMD assigns the
+     global first and populates it afterwards, so deleting the method up
+     front achieves nothing. What IS checked is the repair's ingredient -
+     that the alternate build is served and does supply the missing API. ---- */
+  {
+    const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
+    const page=await ctx.newPage();
+    await page.goto('http://localhost:8751/',{waitUntil:'domcontentloaded'});
+    const r = await page.evaluate(async () => {
+      const res = await fetch('vendor/tf.es2017.min.js');
+      const okFetch = res.ok;
+      /* Load it in a clean realm so the check is about the file, not about
+         whatever the page already has. */
+      const f = document.createElement('iframe');
+      f.style.display = 'none';
+      document.body.appendChild(f);
+      await new Promise(z => {
+        const sc = f.contentDocument.createElement('script');
+        sc.src = 'vendor/tf.es2017.min.js';
+        sc.onload = z; sc.onerror = z;
+        f.contentDocument.head.appendChild(sc);
+        setTimeout(z, 30000);
+      });
+      const w = f.contentWindow;
+      return { okFetch, hasTf: !!w.tf, hasLayers: !!(w.tf && typeof w.tf.loadLayersModel === 'function') };
+    });
+    t('the fallback tf build is served', r.okFetch === true, r.okFetch);
+    t('it defines tf', r.hasTf === true, r.hasTf);
+    t('and it supplies the API the iPad was missing', r.hasLayers === true, r.hasLayers);
+    await ctx.close();
+  }
+
   /* ---- CASE 2 (CONTROL): a working recogniser must NOT nag ---- */
   {
     const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});

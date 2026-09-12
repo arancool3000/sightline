@@ -89,6 +89,24 @@ var LOCAL = (function () {
     });
   }
 
+  /* Pull in the alternate tf build and see whether it completes the global.
+     Resolves true only if the API we actually need has appeared. */
+  var repairing = null;
+  function repairTf() {
+    if (repairing) return repairing;
+    repairing = new Promise(function (res) {
+      if (typeof document === 'undefined') return res(false);
+      var sc = document.createElement('script');
+      sc.src = 'vendor/tf.es2017.min.js';
+      sc.async = false;
+      sc.onload = function () { res(typeof (window.tf && tf.loadLayersModel) === 'function'); };
+      sc.onerror = function () { res(false); };
+      document.head.appendChild(sc);
+      setTimeout(function () { res(typeof (window.tf && tf.loadLayersModel) === 'function'); }, 20000);
+    });
+    return repairing;
+  }
+
   var trace = [];
   function mark(m) {
     trace.push(Math.round(performance.now()) + 'ms ' + m);
@@ -117,6 +135,31 @@ var LOCAL = (function () {
     if (!window.KH_IMAGENET) {
       lastErr = 'class names did not load (vendor/imagenet-classes.js)';
       return Promise.resolve(null);
+    }
+
+    /* tf exists but is INCOMPLETE.
+
+       Reported from an iPad: "tf.loadLayersModel is not a function". The
+       bundle is correct - it contains the Layers API and works elsewhere -
+       so it must be throwing partway through its own execution, leaving the
+       global assigned early but only half populated. A partially built
+       library is worse than a missing one, because every guard for absence
+       passes.
+
+       The es2017 build is a separate, smaller compilation of the same
+       library. Loading it over the top repairs the missing half. */
+    if (typeof tf.loadLayersModel !== 'function') {
+      mark('tf incomplete, repairing');
+      return repairTf().then(function (ok) {
+        if (!ok) {
+          lastErr = 'tensorflow loaded but is incomplete (no loadLayersModel) and the ' +
+                    'fallback build did not repair it';
+          mark('repair failed');
+          return null;
+        }
+        mark('tf repaired');
+        return load();
+      });
     }
 
     try {
