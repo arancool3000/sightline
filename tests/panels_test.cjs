@@ -27,7 +27,11 @@ const server=http.createServer((q,res)=>{let p=decodeURIComponent(q.url.split('?
   const f=path.join(ROOT,p);
   if(!f.startsWith(ROOT)||!fs.existsSync(f)||fs.statSync(f).isDirectory()){res.writeHead(404);return res.end('no');}
   res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});res.end(fs.readFileSync(f));});
-let pass=0,fail=0;
+let pass=0,fail=0,crashed='';
+/* A crashed page is neither a pass nor a fail unless somebody says so. The
+   fault this suite was written for kills the renderer, so without this the
+   whole file dies on a stack trace and reports nothing. */
+const watch = p => { p.on('crash', () => { crashed = crashed || 'the page crashed'; }); return p; };
 const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.log('  FAIL '+n+(x===undefined?'':'  '+JSON.stringify(x)));}};
 
 (async()=>{
@@ -39,7 +43,7 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   /* ---- every control on every panel, at the narrowest phone we support ---- */
   for (const size of [{w:390,h:844,name:'iPhone'},{w:768,h:1024,name:'iPad'}]) {
     const ctx=await b.newContext({permissions:['camera'],viewport:{width:size.w,height:size.h},serviceWorkers:'block'});
-    const page=await ctx.newPage();
+    const page=watch(await ctx.newPage());
     /* This half is about where the controls ARE. It does not need twelve
        megabytes of model weights to answer that, and fetching them made the
        suite take minutes. */
@@ -90,7 +94,7 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   /* ---- nothing runs behind a panel ---- */
   console.log('\nNOTHING RUNS BEHIND A PANEL');
   const ctx=await b.newContext({permissions:['camera'],viewport:{width:412,height:892},serviceWorkers:'block'});
-  const page=await ctx.newPage();
+  const page=watch(await ctx.newPage());
   await page.goto('http://127.0.0.1:'+PORT+'/',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>window.UI&&window.SCAN&&window.LOCAL&&window.SPECIES,null,{timeout:30000});
   await page.evaluate(()=>{
@@ -199,6 +203,18 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   });
   ok('there is still a button to ask for a look now', btn.shown === true, btn);
   ok('which meets the touch floor', btn.w >= 44 && btn.h >= 44, btn);
+  done(b);
+})().catch(e => {
+  const why = crashed || String(e && e.message || e).split('\n')[0];
+  fail++;
+  console.log('  FAIL the suite could not finish  ' + JSON.stringify(why));
   console.log('\n'+pass+'/'+(pass+fail)+' passed');
-  await b.close();server.close();process.exit(fail?1:0);
-})();
+  process.exit(1);
+});
+
+function done(b){
+  if (crashed) ok('the page never crashed', false, crashed);
+  console.log('\n'+pass+'/'+(pass+fail)+' passed');
+  b.close().catch(()=>{}); server.close();
+  setTimeout(()=>process.exit(fail?1:0), 100);
+}
