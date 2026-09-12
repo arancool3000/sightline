@@ -24,6 +24,9 @@ var UI = (function () {
     settings = U.$('#settings');
     AR.init();
     MAP.init();
+    SCAN.on(showCode);
+    var cx = U.$('#codeClose');
+    if (cx) cx.addEventListener('click', hideCode);
     GEO.on(ambient);
     ambient(GEO.state());
     startBattery();
@@ -818,6 +821,118 @@ var UI = (function () {
       var t = TRACK.hit(x, y);
       if (t) openTrack(t); else IDENT.atPoint(x, y);
     });
+  }
+
+  /* ---------- a scanned code ---------- */
+
+  var codeRec = null;
+  function hideCode() {
+    var card = U.$('#codeCard');
+    if (card) card.hidden = true;
+    document.body.classList.remove('code-open');
+    codeRec = null;
+  }
+
+  function showCode(hit) {
+    var got = CODES.resolve(hit);
+    if (!got) return;
+    codeRec = got.record;
+    paintCode(got.record, hit);
+    got.done.then(function () { if (codeRec === got.record) paintCode(got.record, hit); });
+  }
+
+  function paintCode(rec, hit) {
+    var card = U.$('#codeCard');
+    if (!card) return;
+    card.hidden = false;
+    document.body.classList.add('code-open');
+
+    var img = U.$('#codeImg');
+    if (rec.image) { img.src = rec.image; img.hidden = false; } else { img.hidden = true; img.removeAttribute('src'); }
+
+    var kicker = rec.kind === 'product' ? ((hit.format || 'barcode').toUpperCase())
+               : rec.kind === 'link' ? ('QR \u00b7 ' + (rec.secure ? 'HTTPS' : 'NOT SECURE'))
+               : (hit.format || 'CODE').toUpperCase();
+    set('#codeKicker', kicker);
+    set('#codeName', rec.pending ? 'Looking it up\u2026' : (rec.title || rec.name || rec.text || ''));
+    set('#codeSub', rec.kind === 'product'
+        ? [rec.brand, rec.quantity].filter(Boolean).join(' \u00b7 ')
+        : rec.kind === 'link' ? (rec.finalUrl || rec.url) : '');
+
+    var sc = U.$('#codeScore');
+    if (rec.health) {
+      sc.hidden = false;
+      sc.className = 'code-score ' + (rec.health.score >= 70 ? 'good' : rec.health.score >= 45 ? 'ok' : 'bad');
+      sc.querySelector('b').textContent = String(rec.health.score);
+    } else { sc.hidden = true; }
+
+    var body = U.$('#codeBody');
+    body.innerHTML = codeBody(rec);
+
+    var go = U.$('#codeGo');
+    if (rec.kind === 'link') {
+      go.hidden = false;
+      go.href = rec.url;
+      go.textContent = 'OPEN ' + (rec.host || '').toUpperCase();
+    } else if (rec.kind === 'product' && rec.code) {
+      go.hidden = false;
+      go.href = 'https://world.openfoodfacts.org/product/' + encodeURIComponent(rec.code);
+      go.textContent = 'SEE THE FULL RECORD';
+    } else { go.hidden = true; }
+  }
+
+  function codeBody(rec) {
+    var h = '';
+    if (rec.pending) return '<p>Looking it up\u2026</p>';
+
+    if (rec.kind === 'link') {
+      if (rec.risks && rec.risks.length) {
+        h += rec.risks.map(function (r) { return '<b class="code-warn">' + U.esc(r) + '</b>'; }).join('');
+      }
+      if (rec.description) h += '<p>' + U.esc(rec.description) + '</p>';
+      if (rec.note) h += '<p>' + U.esc(rec.note) + '</p>';
+      h += '<h4>Full address</h4><p class="mono">' + U.esc(rec.finalUrl || rec.url) + '</p>';
+      return h;
+    }
+
+    if (rec.kind === 'text') return '<p class="mono">' + U.esc(rec.text) + '</p>';
+
+    if (rec.missing || rec.note) h += '<p>' + U.esc(rec.note) + '</p>';
+
+    /* The score is shown WITH its working, because a number out of 100 that
+       nobody can argue with is not a fact, it is a verdict. */
+    if (rec.health) {
+      h += '<h4>How that score is made</h4>';
+      h += rec.health.parts.map(function (p) {
+        return '<div class="code-row"><i>' + U.esc(p.k + (p.v ? '  ' + p.v : '')) + '</i><span>' +
+               (p.d ? (p.d > 0 ? '+' : '') + p.d : U.esc(String(rec.health.base))) + '</span></div>';
+      }).join('');
+      h += '<p>Nutri-Score mapped onto 0-100, then processing and additives. Open Food Facts data.</p>';
+    }
+
+    if (rec.levels && rec.levels.length) {
+      h += '<h4>Per 100 g</h4>' + rec.levels.map(function (l) {
+        return '<div class="code-row"><i>' + U.esc(l.k) + '</i><span>' + U.esc(l.v) + '</span></div>';
+      }).join('');
+    }
+
+    if (rec.additives && rec.additives.length) {
+      h += '<h4>' + rec.additives.length + (rec.additives.length === 1 ? ' additive' : ' additives') + '</h4>';
+      h += rec.additives.map(function (a) {
+        return '<div class="code-e"><b>' + U.esc(a.code) + '</b><span>' +
+               U.esc(a.what || 'not described in the database') + '</span></div>';
+      }).join('');
+    } else if (!rec.missing) {
+      h += '<h4>Additives</h4><p>None recorded.</p>';
+    }
+
+    if (rec.allergens && rec.allergens.length) {
+      h += '<h4>Allergens</h4><p>' + U.esc(rec.allergens.join(', ')) + '</p>';
+    }
+    if (rec.ingredients) {
+      h += '<h4>Ingredients</h4><p>' + U.esc(rec.ingredients.slice(0, 600)) + '</p>';
+    }
+    return h;
   }
 
   /* ---------- the weather card, the battery, things nearby ---------- */

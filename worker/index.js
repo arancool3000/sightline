@@ -350,6 +350,66 @@ async function runVision(env, model, prompt, image, bytes) {
   }
 }
 
+/* ---- link preview helpers ---- */
+
+/* Names and addresses a worker must not be talked into fetching. */
+function isPrivateHost(h) {
+  const host = String(h || '').toLowerCase();
+  if (!host) return true;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (host === '[::1]' || host === '::1') return true;
+  if (host.endsWith('.internal') || host.endsWith('.home.arpa')) return true;
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const a = +m[1], b = +m[2];
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 169 && b === 254) return true;     // link-local, incl. cloud metadata
+    if (a >= 224) return true;                   // multicast and reserved
+  }
+  return false;
+}
+
+async function readSome(res, limit) {
+  const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+  if (!reader) return (await res.text()).slice(0, limit);
+  const dec = new TextDecoder('utf-8', { fatal: false });
+  let out = '';
+  while (out.length < limit) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out += dec.decode(value, { stream: true });
+    /* The head is all that is wanted; stop as soon as it has been passed. */
+    if (/<\/head>/i.test(out)) break;
+  }
+  try { reader.cancel(); } catch (e) {}
+  return out.slice(0, limit);
+}
+
+function meta(html, prop) {
+  const re = new RegExp('<meta[^>]+(?:property|name)=["\']' + prop +
+                        '["\'][^>]*content=["\']([^"\']*)["\']', 'i');
+  const m = html.match(re) || html.match(new RegExp(
+    '<meta[^>]+content=["\']([^"\']*)["\'][^>]*(?:property|name)=["\']' + prop + '["\']', 'i'));
+  return m ? decodeEntities(m[1]).slice(0, 300) : '';
+}
+function metaName(html, name) { return meta(html, name); }
+function tagText(html, tag) {
+  const m = html.match(new RegExp('<' + tag + '[^>]*>([\\s\\S]{0,400}?)</' + tag + '>', 'i'));
+  return m ? decodeEntities(m[1].replace(/\s+/g, ' ')).trim().slice(0, 300) : '';
+}
+function abs(src, base) {
+  if (!src) return '';
+  try { return new URL(src, base).href; } catch (e) { return ''; }
+}
+function decodeEntities(s) {
+  return String(s || '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, function (_, d) { return String.fromCharCode(+d); });
+}
+
 async function workersAITranslate(env, text, from, to) {
   if (!env.AI) return null;
   try {
@@ -643,6 +703,56 @@ export default {
           return json({ ok: true, model, accepted: true, note: m.slice(0, 140) }, 200, env);
         }
         return err('the licence was not accepted: ' + m.slice(0, 140), 502, env);
+      }
+    }
+
+    /* ---- preview a page ----
+
+       A QR code sends you somewhere before you have read where. This fetches
+       the page here so the app can show its title and picture WITHOUT the
+       reader visiting it - previewing a site by loading it is not a preview,
+       it is a visit.
+
+       The address is checked before it is fetched. A worker sits inside
+       Cloudflare's network, so a URL pointing at an internal name is a way
+       to ask this worker to knock on doors on someone's behalf. */
+    if (path === '/v1/preview') {
+      let u;
+      try { u = new URL(String(body.url || '')); }
+      catch (e) { return err('a url is required', 400, env); }
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return err('only http and https', 400, env);
+      if (isPrivateHost(u.hostname)) return err('that address is not reachable from here', 400, env);
+
+      try {
+        const r = await fetch(u.href, {
+          headers: {
+            'User-Agent': 'Sightline/1.0 (link preview; +https://sightline-ai.pages.dev)',
+            'Accept': 'text/html,application/xhtml+xml'
+          },
+          redirect: 'follow',
+          cf: { cacheTtl: 900, cacheEverything: true }
+        });
+        const finalUrl = r.url || u.href;
+        try {
+          const f = new URL(finalUrl);
+          if (isPrivateHost(f.hostname)) return err('that address is not reachable from here', 400, env);
+        } catch (e) {}
+
+        const type = r.headers.get('content-type') || '';
+        if (!/text\/html|application\/xhtml/i.test(type)) {
+          return json({ ok: true, finalUrl, title: '', description: '',
+                        image: '', contentType: type.split(';')[0] }, 200, env);
+        }
+        /* Only the head is needed, and a 40 MB page should not be read to
+           find a title that lives in the first few kilobytes. */
+        const head = await readSome(r, 160 * 1024);
+        return json({ ok: true, finalUrl,
+                      title: meta(head, 'og:title') || tagText(head, 'title'),
+                      description: meta(head, 'og:description') || metaName(head, 'description'),
+                      image: abs(meta(head, 'og:image'), finalUrl),
+                      siteName: meta(head, 'og:site_name') }, 200, env);
+      } catch (e) {
+        return err('the page could not be reached: ' + String(e && e.message || e).slice(0, 100), 502, env);
       }
     }
 

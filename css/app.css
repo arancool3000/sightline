@@ -131,6 +131,56 @@ input,select{font:inherit;color:inherit}
 .near-row i{font-style:normal;font-size:10.5px;color:var(--dim);flex:0 0 auto;
   font-variant-numeric:tabular-nums}
 
+/* ---------- a scanned code ---------- */
+/* Beside the classification, not over it: a barcode is extra information
+   about something you are already looking at. */
+#codeCard{
+  position:absolute;left:14px;right:14px;bottom:calc(var(--safe-b) + 74px);z-index:10;
+  max-width:min(94vw,420px);margin:0 auto;padding:12px 14px 12px;
+  max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch
+}
+.code-x{
+  position:absolute;right:6px;top:4px;width:32px;height:32px;font-size:20px;line-height:1;
+  color:var(--dim);display:grid;place-items:center
+}
+.code-head{display:flex;align-items:flex-start;gap:11px;padding-right:26px}
+#codeImg{width:52px;height:52px;flex:0 0 auto;object-fit:contain;border-radius:9px;
+  background:rgba(255,255,255,.06)}
+.code-id{flex:1;min-width:0}
+.code-id .glass-k{padding:0 0 3px}
+.code-name{font-size:15px;font-weight:600;line-height:1.25;overflow-wrap:anywhere}
+.code-sub{font-size:11.5px;color:var(--dim);margin-top:2px;overflow-wrap:anywhere}
+.code-score{
+  flex:0 0 auto;display:flex;align-items:baseline;gap:1px;padding:2px 9px;border-radius:11px;
+  background:rgba(255,255,255,.06);border:1px solid var(--line)
+}
+.code-score b{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums}
+.code-score i{font-style:normal;font-size:9.5px;color:var(--dim)}
+.code-score.good b{color:#6ee7a0}
+.code-score.ok b{color:#ffc46b}
+.code-score.bad b{color:#ff8080}
+.code-body{margin-top:10px;font-size:12px;line-height:1.5}
+.code-body h4{margin:11px 0 4px;font-size:10px;letter-spacing:.08em;font-weight:600;
+  color:rgba(190,225,255,.72);text-transform:uppercase}
+.code-body p{margin:0 0 6px;color:var(--dim)}
+.code-row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;
+  border-bottom:1px solid rgba(230,236,241,.07)}
+.code-row:last-child{border-bottom:0}
+.code-row i{font-style:normal;color:var(--dim)}
+.code-warn{
+  display:block;padding:7px 10px;margin:4px 0;border-radius:9px;
+  background:rgba(255,128,128,.1);border:1px solid rgba(255,128,128,.3);color:#ffc9c9
+}
+.code-e{display:flex;gap:8px;padding:3px 0;font-size:11.5px}
+.code-e b{flex:0 0 58px;font-weight:600;font-family:var(--mono);font-size:10.5px;color:rgba(190,225,255,.8)}
+.code-e span{flex:1;min-width:0;color:var(--dim)}
+.code-go{
+  display:block;margin-top:11px;min-height:44px;line-height:44px;text-align:center;
+  border-radius:12px;background:var(--acc);color:#061018;font-size:12px;font-weight:700;
+  letter-spacing:.08em;text-decoration:none
+}
+body.code-open #sceneChip{display:none}
+
 /* ---------- the centre readout ---------- */
 #sceneChip{
   position:absolute;left:50%;transform:translateX(-50%);

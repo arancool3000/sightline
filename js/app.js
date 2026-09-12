@@ -138,6 +138,11 @@
         /* Location starts with the camera, not at boot: asking for it before
            the user has pressed anything is two permission prompts at once. */
         GEO.start();
+        /* The decoder is fetched now rather than at boot, and only if the
+           browser has no scanner of its own. */
+        SCAN.start().then(function (ok) {
+          if (!ok) UI.status('CODE SCANNER UNAVAILABLE - ' + (SCAN.error() || 'unknown'), 'bad');
+        });
         UI.resize();
         running = true;
         UI.tele('#tEng', SET.hasApi() ? 'CLOUD' : 'LOCAL');
@@ -177,6 +182,10 @@
         UI.sceneLabel(r);
       });
     }
+
+    /* Codes are read from the same frame as everything else. The scanner
+       paces itself, so calling it every frame costs nothing. */
+    SCAN.step(U.$('#cam'));
 
     if (model && now - lastDetect >= detectEvery()) {
       lastDetect = now;
