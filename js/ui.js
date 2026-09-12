@@ -683,9 +683,32 @@ var UI = (function () {
 
   var sceneCur = null;
 
+  /* A SPECIES BEATS A CATEGORY.
+
+     The general classifier says "daisy" or, for a tree it has never met,
+     "rapeseed". The species model says Bellis perennis. When it answers,
+     that is what the readout shows - with the binomial under it, because a
+     binomial is the thing you cannot get from looking. */
+  var speciesCur = null;
+  function sceneSpecies(r) {
+    speciesCur = r;
+    var chip = U.$('#sceneChip');
+    if (!chip || !r) return;
+    if (arCards()) { chip.hidden = true; return; }
+    sceneCur = { name: r.name, score: r.score, kind: r.kindOf, alt: r.alt || [],
+                 scientific: r.scientific, margin: r.margin, species: true };
+    tele('#sceneName', r.name);
+    tele('#sceneKind', r.scientific || r.kindOf || 'species');
+    chip.hidden = false;
+  }
+
   function sceneLabel(r) {
     var chip = U.$('#sceneChip');
     if (!chip) return;
+    /* A live species answer outranks the general classifier's guess, and
+       must not be overwritten by it a moment later. */
+    if (speciesCur && (performance.now() - speciesCur.at) < 2500) return;
+    speciesCur = null;
     /* The centre readout only earns its space when nothing has been boxed.
        With cards on the objects themselves it is a duplicate answer sitting
        over the scene. */
@@ -708,6 +731,24 @@ var UI = (function () {
      with nothing configured at all. */
   function openScene() {
     if (!sceneCur) return;
+    /* A species answer already has its binomial; go straight to the taxon
+       record rather than asking the general classifier's word about it. */
+    if (sceneCur.species) {
+      openPending(sceneCur.name);
+      var want = sceneCur;
+      WIKI.taxon(want.scientific || want.name).then(function (w) {
+        openRecord({
+          kind: want.kind, name: want.name, scientific: want.scientific,
+          confidence: want.score, alt: want.alt || [], margin: want.margin,
+          wiki: w, source: 'on-device species'
+        });
+      }).catch(function () {
+        openRecord({ kind: want.kind, name: want.name, scientific: want.scientific,
+                     confidence: want.score, alt: want.alt || [], wiki: null,
+                     source: 'on-device species' });
+      });
+      return;
+    }
     var name = sceneCur.name, score = sceneCur.score, alt = sceneCur.alt || [];
     openPending(name);
     WIKI.taxon(name).then(function (w) {
@@ -1137,7 +1178,8 @@ var UI = (function () {
            status: status,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
-           refreshOpen: refreshOpen, sceneLabel: sceneLabel, openScene: openScene,
+           refreshOpen: refreshOpen, sceneLabel: sceneLabel, sceneSpecies: sceneSpecies,
+           openScene: openScene,
            captionDraw: captionDraw, captionState: captionState, captionNote: captionNote,
            get needsDraw() { return needsDraw; } };
 })();

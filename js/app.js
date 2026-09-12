@@ -172,6 +172,19 @@
        always. The detector is the expensive half (measured 555-631ms on
        software GL), so it only runs when there is headroom left over - on a
        slow device it thins out rather than starving the live label. */
+    /* THE PLANT YOU ARE POINTING AT.
+
+       The species pass used to run only on things the DETECTOR had boxed,
+       and the detector's whole vocabulary for plants is "potted plant". A
+       tree, a hedge, a wildflower - nothing in the frame, no track, and the
+       species model never called at all. Which is why it could not identify
+       plants: it was never asked about one.
+
+       So it is asked about the middle of the frame, which is where you
+       point it. The model's own "background" class is what stops a chair
+       coming back as a shrub. */
+    speciesScene(now);
+
     if (LOCAL.ready()) {
       LOCAL.scene(U.$('#cam'), function (r) {
         /* The scene readout is a label on screen like any other, so a mode
@@ -304,6 +317,47 @@
       UI.dirty();
     });
   }
+
+  /* Which species model to try on the centre crop. The general classifier
+     is a poor judge of WHICH species, but a decent judge of what KIND of
+     thing it is looking at, and that is all this needs. */
+  var lastScene = 0, speciesRec = null;
+  function speciesScene(now) {
+    if (!window.SPECIES || now - lastScene < 700) return;
+    var video = U.$('#cam');
+    if (!video || !video.videoWidth) return;
+    lastScene = now;
+
+    var kind = 'plant';
+    var g = sceneRec && sceneRec.kind;
+    if (g === 'insect') kind = 'insect';
+    else if (g === 'animal') kind = 'animal';        // routed to the bird model
+    /* A mode that excludes living things should not be downloading a model
+       for them. */
+    if (!allowedKind(kind === 'animal' ? 'animal' : kind)) return;
+
+    var vw = video.videoWidth, vh = video.videoHeight;
+    var side = Math.min(vw, vh) * 0.7;
+    var box = [(vw - side) / 2, (vh - side) / 2, side, side];
+
+    SPECIES.identify(video, box, kind).then(function (r) {
+      if (!r) {
+        /* Nothing there. Let the old answer go rather than leaving a plant
+           name over an empty wall. */
+        if (speciesRec && (performance.now() - speciesRec.at) > 2500) {
+          speciesRec = null;
+          UI.sceneLabel(sceneRec);
+        }
+        return;
+      }
+      r.at = performance.now();
+      r.box = box;
+      r.kindOf = kind === 'animal' ? 'animal' : kind;
+      speciesRec = r;
+      UI.sceneSpecies(r);
+    });
+  }
+  window.SL_SPECIES = function () { return { last: speciesRec, state: SPECIES.state() }; };
 
   /* How often the detector may run. Derived from what it actually costs on
      this device, never a fixed number: a phone that needs 600ms a pass must

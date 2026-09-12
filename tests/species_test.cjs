@@ -90,6 +90,52 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   ok('SETUP: it knows more than four thousand species',
      st.counts.plant + st.counts.insect + st.counts.bird > 4000, st.counts);
 
+  console.log('\nA PLANT THE DETECTOR CANNOT SEE');
+  /* THE BUG THIS EXISTS TO STOP COMING BACK.
+
+     The species pass used to run only on boxes from the object detector,
+     and that detector's entire vocabulary for plants is "potted plant". A
+     tree, a hedge, a wildflower produced no box, so no track, so the
+     species model was never called - "still can't identify plants", and it
+     had never been asked about one.
+
+     So it is asked about the middle of the frame, with no detector
+     involved at all. */
+  const centre = await page.evaluate(async ()=>{
+    await SPECIES.load('plant');
+    const img = new Image();
+    await new Promise((res,rej)=>{ img.onload=res; img.onerror=rej; img.src='/tests/fixtures/sunflower.bmp'; });
+    const v=document.createElement('canvas'); v.width=img.width; v.height=img.height;
+    Object.defineProperty(v,'videoWidth',{value:img.width});
+    Object.defineProperty(v,'videoHeight',{value:img.height});
+    v.getContext('2d').drawImage(img,0,0);
+
+    /* Exactly what the app crops: the centre 70% of the short side. */
+    const side = Math.min(img.width, img.height) * 0.7;
+    const box = [(img.width-side)/2, (img.height-side)/2, side, side];
+    const r = await SPECIES.identify(v, box, 'plant');
+
+    /* And that it reaches the readout, which is where a person sees it. */
+    let shown = null;
+    if (r) { r.at = performance.now(); r.kindOf='plant'; UI.sceneSpecies(r);
+             shown = { name: document.getElementById('sceneName').textContent,
+                       sub: document.getElementById('sceneKind').textContent,
+                       hidden: document.getElementById('sceneChip').hidden }; }
+    return { r, shown };
+  });
+  ok('the centre of the frame is identified with no detector box at all',
+     !!centre.r && /helianthus/i.test(centre.r.scientific), centre.r && centre.r.scientific);
+  ok('and it reaches the readout on screen', !!centre.shown && centre.shown.hidden === false, centre.shown);
+  ok('showing the common name', !!centre.shown && /sunflower/i.test(centre.shown.name), centre.shown && centre.shown.name);
+  ok('with the binomial under it', !!centre.shown && /helianthus/i.test(centre.shown.sub), centre.shown && centre.shown.sub);
+
+  const held = await page.evaluate(()=>{
+    /* The general classifier answering a moment later must not wipe it. */
+    UI.sceneLabel({ name:'Rapeseed', kind:'plant', score:0.4 });
+    return document.getElementById('sceneName').textContent;
+  });
+  ok('a weaker general guess does not overwrite the species', /sunflower/i.test(held), held);
+
   ok('every file it asked for existed', missing.length === 0, missing);
   ok('no page errors throughout', errs.length === 0, errs);
 
