@@ -194,7 +194,10 @@ var AR = (function () {
     seen[t.id] = 1;
 
     var named = true;                       // nothing reaches here unnamed
-    var provisional = t.tier !== 'cloud';
+    /* An on-device answer the model was torn over is shown as unsettled -
+       dashed, with the mark - rather than in the same type as a confident
+       one. It is still the best guess; it is just not presented as a fact. */
+    var provisional = t.tier !== 'cloud' || !!t.unsure;
     var guess = t.tier === 'guess';
     /* A target that has not been named yet shows the plain noun the
        detector gave, not a state machine. "SCANNING" and a percentage told

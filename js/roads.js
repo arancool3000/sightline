@@ -24,10 +24,10 @@ var ROADS = (function () {
     'https://overpass.kumi.systems/api/interpreter'
   ];
   var TILE = 0.0064;            // degrees of latitude, about 700 m
-  var MAX_TILES = 24;           // what is kept on the device
+  var MAX_TILES = 12;           // what is kept on the device - buildings are bulky
   var STALE_MS = 30 * 86400000; // a month; roads change, but not weekly
 
-  var tiles = {};               // "lat,lon" -> { at, ways:[{ k, pts:[[lat,lon]..] }] }
+  var tiles = {};               // "lat,lon" -> { at, ways:[...], bld:[...] }
   var asking = {}, failedAt = {};
   var listeners = [];
 
@@ -92,10 +92,16 @@ var ROADS = (function () {
 
   function fetchTile(k, box) {
     asking[k] = 1;
-    var q = '[out:json][timeout:20];way["highway"~"^(' +
-            Object.keys(CLASS).join('|') + ')$"](' +
-            box[0].toFixed(5) + ',' + box[1].toFixed(5) + ',' +
-            box[2].toFixed(5) + ',' + box[3].toFixed(5) + ');out geom;';
+    /* Roads AND building footprints in one request. Two requests for one
+       tile would double what a volunteer-run service is asked for, and the
+       buildings are what make the map read as a place rather than a
+       diagram. */
+    var bb = box[0].toFixed(5) + ',' + box[1].toFixed(5) + ',' +
+             box[2].toFixed(5) + ',' + box[3].toFixed(5);
+    var q = '[out:json][timeout:25];(' +
+            'way["highway"~"^(' + Object.keys(CLASS).join('|') + ')$"](' + bb + ');' +
+            'way["building"](' + bb + ');' +
+            ');out geom;';
 
     tryEndpoint(0);
 
@@ -113,19 +119,22 @@ var ROADS = (function () {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       }).then(function (j) {
-        var ways = [];
+        var ways = [], bld = [];
         (j.elements || []).forEach(function (el) {
           if (!el.geometry || el.geometry.length < 2) return;
-          var cls = (el.tags && el.tags.highway) || 'residential';
-          ways.push({
-            k: cls,
-            n: (el.tags && el.tags.name) || '',
-            /* Five decimals is about a metre - far finer than the map draws,
-               and it keeps the stored copy small. */
-            pts: el.geometry.map(function (g) { return [+g.lat.toFixed(5), +g.lon.toFixed(5)]; })
-          });
+          var tags = el.tags || {};
+          /* Five decimals is about a metre - far finer than the map draws,
+             and it keeps the stored copy small. */
+          var pts = el.geometry.map(function (g) { return [+g.lat.toFixed(5), +g.lon.toFixed(5)]; });
+
+          if (tags.building) {
+            if (pts.length < 4) return;           // not a closed footprint
+            bld.push({ h: heightOf(tags), n: tags.name || '', pts: simplify(pts) });
+            return;
+          }
+          ways.push({ k: tags.highway || 'residential', n: tags.name || '', pts: pts });
         });
-        tiles[k] = { at: Date.now(), ways: ways };
+        tiles[k] = { at: Date.now(), ways: ways, bld: bld };
         delete asking[k];
         save();
         emit();
@@ -144,12 +153,52 @@ var ROADS = (function () {
     return out;
   }
 
+  /* How tall to draw it. OpenStreetMap gives an explicit height on some
+     buildings and a storey count on more of them; where it gives neither,
+     a low default is better than a guess that makes a bungalow a tower. */
+  function heightOf(tags) {
+    var h = parseFloat(tags.height || tags['building:height'] || '');
+    if (isFinite(h) && h > 0 && h < 400) return h;
+    var lv = parseFloat(tags['building:levels'] || tags.levels || '');
+    if (isFinite(lv) && lv > 0 && lv < 130) return lv * 3.1 + 1;
+    return 7;
+  }
+
+  /* A footprint traced from aerial imagery can carry a hundred points for a
+     rectangle. Anything within half a metre of the line between its
+     neighbours is dropped - invisible at map scale, and it is the
+     difference between a tile that fits on the device and one that does
+     not. */
+  function simplify(pts) {
+    if (pts.length < 6) return pts;
+    var out = [pts[0]];
+    for (var i = 1; i < pts.length - 1; i++) {
+      var a = out[out.length - 1], b = pts[i], c = pts[i + 1];
+      var ax = (a[1] - c[1]) * 74000, ay = (a[0] - c[0]) * 111320;
+      var bx = (b[1] - c[1]) * 74000, by = (b[0] - c[0]) * 111320;
+      var cross = Math.abs(ax * by - ay * bx);
+      var len = Math.sqrt(ax * ax + ay * ay) || 1;
+      if (cross / len > 0.5) out.push(b);
+    }
+    out.push(pts[pts.length - 1]);
+    return out;
+  }
+
+  /* Every building held, with its footprint. */
+  function buildings() {
+    var out = [];
+    Object.keys(tiles).forEach(function (k) {
+      if (tiles[k] && tiles[k].bld) out = out.concat(tiles[k].bld);
+    });
+    return out;
+  }
+
   function width(cls) { return CLASS[cls] || 2; }
   function have() { return Object.keys(tiles).length; }
   function busy() { return Object.keys(asking).length > 0; }
 
   load();
 
-  return { ensure: ensure, near: near, width: width, on: on, have: have, busy: busy,
+  return { ensure: ensure, near: near, buildings: buildings, width: width, on: on, have: have, busy: busy,
            _tiles: function () { return tiles; } };
 })();

@@ -275,6 +275,7 @@ var IDENT = (function () {
       kind: kind === 'person' ? 'object' : kind,
       name: name,
       confidence: t.local.score,
+      margin: t.local.margin,
       scientific: '',
       note: '',
       alt: t.local.alt || [],

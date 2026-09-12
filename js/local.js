@@ -24,6 +24,9 @@ var LOCAL = (function () {
   pad.width = pad.height = 224;
   var pctx = pad.getContext('2d', { willReadFrequently: true });
 
+  /* Below this gap between the best answer and the next, the best answer is
+     a nearest neighbour rather than a match. */
+  var MARGIN_SURE = 0.18;
   var MIN_SCORE = 0.22;          // below this, keep the generic COCO word
   var perFrame = 3;              // classifications allowed per detector pass
   var stats = { n: 0, total: 0, last: 0, worst: 0 };
@@ -417,14 +420,30 @@ var LOCAL = (function () {
         return null;
       }
 
+      /* HOW SURE IS IT, REALLY?
+
+         A Maltipoo is a poodle crossed with a maltese. It is not one of the
+         classifier's thousand classes and never will be, so asked to name
+         one it returns its nearest neighbour - "Cocker Spaniel" - at a
+         perfectly respectable confidence, and that gets written on the
+         screen as a fact.
+
+         The tell is not the top score, it is the GAP to the next answer.
+         When a picture genuinely is a cocker spaniel the gap is wide; when
+         it is a crossbreed the model is torn between several breeds and the
+         gap collapses. So the gap is carried with the label, a narrow one
+         marks it unsettled, and the runners-up are kept - for a crossbreed
+         the list of breeds it resembles is the honest answer. */
+      var second = preds[1] ? preds[1].probability : 0;
       t.local = {
         name: name,
         score: top.probability,
+        margin: top.probability - second,
         ms: ms,
         alt: preds.slice(1).map(function (p) { return tidy(p.className); })
       };
       /* Only the cloud tier may overwrite a label it has already sharpened. */
-      if (t.tier !== 'cloud') { t.label = name; t.tier = 'local'; }
+      if (t.tier !== 'cloud') { t.label = name; t.tier = 'local'; t.unsure = t.local.margin < MARGIN_SURE; }
       t.scan = 'relevant';
       t.why = '';
       t.settled = performance.now();
@@ -511,6 +530,7 @@ var LOCAL = (function () {
       }
       fails = 0; lastOk = performance.now();
       scenePrev = { name: name, score: top.probability, ms: Math.round(ms),
+                    margin: top.probability - (preds[1] ? preds[1].probability : 0),
                     kind: kindOfLabel(name),
                     alt: preds.slice(1).map(function (p) { return tidy(p.className); }) };
       sceneHold = performance.now();

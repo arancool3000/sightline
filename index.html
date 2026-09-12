@@ -65,7 +65,7 @@
   <!-- Bottom left: where you are. Tapping it opens the full map. -->
   <button id="radarPod" class="glass" aria-label="Open the map">
     <canvas id="radar" width="112" height="112"></canvas>
-    <span class="pod-txt"><b id="radarNote">Locating</b><i id="podSpeed"></i><i class="pod-sub">Surroundings</i></span>
+    <span class="pod-txt"><b id="radarNote">Locating</b><i id="radarTo"></i><i id="podSpeed"></i><i class="pod-sub">Surroundings</i></span>
   </button>
 
   <!-- Bottom right: what is around you, from Wikipedia's geosearch. -->
@@ -81,6 +81,13 @@
       <button id="mapRange" class="hbtn">500 M</button>
       <button id="mapClose" class="hbtn" aria-label="Close">CLOSE</button>
     </header>
+    <form id="mapForm" class="map-find" autocomplete="off">
+      <input id="mapSearch" type="search" placeholder="Where do you want to go?" spellcheck="false">
+      <button type="submit" class="hbtn">FIND</button>
+      <button type="button" id="mapClear" class="hbtn" hidden>CLEAR</button>
+    </form>
+    <div id="mapNote" class="map-note"></div>
+
     <div class="map-stage"><canvas id="mapCanvas"></canvas></div>
 
     <!-- Measured by this device's own GPS, and nothing else. There is no
@@ -95,6 +102,7 @@
       <button id="tripReset" class="hbtn">RESET</button>
     </div>
     <p class="map-note">Drawn from this device's position and Wikipedia's own geosearch. No map service, no key, no limit.</p>
+    <div id="mapListK" class="glass-k">Nearby &middot; tap to set a destination</div>
     <div id="mapList" class="map-list"></div>
   </section>
 

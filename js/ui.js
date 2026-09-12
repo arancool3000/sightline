@@ -423,7 +423,15 @@ var UI = (function () {
     html += '</div>';
 
     if (rec.alt && rec.alt.length) {
-      html += '<p class="d-note">Also possible: ' + U.esc(rec.alt.slice(0, 3).join(' / ')) + '</p>';
+      /* When the model could not separate its top answers, the list IS the
+         answer: a crossbreed is not in its vocabulary, so the breeds it
+         resembles is the most truthful thing that can be said. */
+      var torn = typeof rec.margin === 'number' && rec.margin < 0.18;
+      html += torn
+        ? '<p class="d-note">It could not separate these, which usually means the subject is not in its ' +
+          'vocabulary at all - a crossbreed or a cultivar, say. It resembles: ' +
+          U.esc([rec.name].concat(rec.alt.slice(0, 3)).join(' / ')) + '</p>'
+        : '<p class="d-note">Also possible: ' + U.esc(rec.alt.slice(0, 3).join(' / ')) + '</p>';
     }
     if (!w.url) html += '<p class="d-note">No encyclopedia page matched this one, so the description comes from the model and is less reliable.</p>';
     return html;
@@ -512,7 +520,7 @@ var UI = (function () {
       showSheet(record({
         kind: (w && w.scientific) ? 'plant' : 'object',
         name: name, confidence: score, scientific: (w && w.scientific) || '',
-        alt: alt, wiki: w, source: 'on-device'
+        alt: alt, margin: sceneCur ? sceneCur.margin : undefined, wiki: w, source: 'on-device'
       }));
     });
   }

@@ -18,13 +18,13 @@ var MAP = (function () {
   var range = 500;                    // metres from the centre to the outer ring
   var RANGES = [250, 500, 1000, 3000];
   var open = false, dpr = 1;
-  var sel = null;
+  var sel = null;           // the chosen destination, if there is one
 
   function init() {
     disc = document.getElementById('radar');
     panel = document.getElementById('mapCanvas');
     if (disc) dctx = disc.getContext('2d');
-    if (disc) { disc.width = 112; disc.height = 112; }
+    
     if (panel) pctx = panel.getContext('2d');
     dpr = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -46,7 +46,16 @@ var MAP = (function () {
     });
     if (panel) panel.addEventListener('click', pick);
 
-    GEO.on(function () { draw(); fillList(); trip(); });
+    var form = document.getElementById('mapForm');
+    if (form) form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var box = document.getElementById('mapSearch');
+      if (box) { box.blur(); search(box.value); }
+    });
+    var clr = document.getElementById('mapClear');
+    if (clr) clr.addEventListener('click', clearDest);
+
+    GEO.on(function () { draw(); fillList(); trip(); podLine(); });
     ROADS.on(function () { draw(); });
     size();
     window.addEventListener('resize', function () { size(); draw(); });
@@ -54,6 +63,83 @@ var MAP = (function () {
   }
 
   function label(m) { return m >= 1000 ? (m / 1000) + ' KM' : m + ' M'; }
+
+  /* SETTING A DESTINATION.
+
+     Two ways in: tap anything in the nearby list, or search for a place by
+     name. The search is Nominatim, OpenStreetMap's own geocoder - no key,
+     and the same open data the streets come from. It asks for one result
+     page per search and never on a keystroke, because it is run by
+     volunteers. */
+  var searching = false;
+  function search(q) {
+    q = String(q || '').trim();
+    if (!q || searching || !GEO.state().pos) return;
+    searching = true;
+    note('Searching…');
+    var p = GEO.state().pos;
+    /* Biased to a box around you, so "the post office" means yours. */
+    var d = 0.09;
+    var u = 'https://nominatim.openstreetmap.org/search?format=json&limit=8&q=' +
+            encodeURIComponent(q) +
+            '&viewbox=' + (p.lon - d).toFixed(4) + ',' + (p.lat + d).toFixed(4) + ',' +
+                          (p.lon + d).toFixed(4) + ',' + (p.lat - d).toFixed(4);
+    U.fetchT(u, { headers: { 'Accept': 'application/json' } }, 15000)
+      .then(function (r) { return r.json(); })
+      .then(function (list) {
+        searching = false;
+        if (!list || !list.length) { note('Nothing found for "' + q + '"'); return; }
+        var found = list.map(function (it) {
+          var at = { lat: +it.lat, lon: +it.lon };
+          return { title: (it.display_name || '').split(',')[0] || q,
+                   full: it.display_name || '',
+                   lat: at.lat, lon: at.lon,
+                   dist: Math.round(GEO.metres(p, at)),
+                   bearing: GEO.bearing(p, at) };
+        }).sort(function (a, b) { return a.dist - b.dist; });
+        note('');
+        showResults(found);
+      })
+      .catch(function () { searching = false; note('The search could not be reached'); });
+  }
+
+  function note(t) {
+    var el = document.getElementById('mapNote');
+    if (el && el.textContent !== t) el.textContent = t;
+  }
+
+  var results = null;
+  function showResults(list) { results = list; fillList(); }
+
+  function setDest(p) {
+    sel = p;
+    results = null;
+    var box = document.getElementById('mapSearch');
+    if (box) box.value = '';
+    draw(); fillList(); podLine();
+  }
+  function clearDest() { sel = null; draw(); fillList(); podLine(); }
+
+  /* The line under the corner map: where you are, or where you are going. */
+  function podLine() {
+    var b = document.getElementById('radarNote');
+    if (!b) return;
+    var st = GEO.state();
+    var t;
+    if (sel && st.pos) {
+      var d = Math.round(GEO.metres(st.pos, sel));
+      t = sel.title;
+      var sub = document.getElementById('radarTo');
+      if (sub) sub.textContent = (d < 1000 ? d + ' m' : (d / 1000).toFixed(1) + ' km') +
+                                 ' \u00b7 ' + walkMins(d) + ' min';
+    } else {
+      t = st.pos ? (st.locality || 'No landmarks') : (st.error ? 'No location' : 'Locating');
+      var sub2 = document.getElementById('radarTo');
+      if (sub2) sub2.textContent = '';
+    }
+    if (b.textContent !== t) b.textContent = t;
+  }
+  function walkMins(m) { return Math.max(1, Math.round(m / 80)); }
 
   function size() {
     [[disc, dctx], [panel, pctx]].forEach(function (p) {
@@ -99,18 +185,24 @@ var MAP = (function () {
   var EYE_UP = 0.42;        // and above the ground
   var HORIZON = 0.74;       // how far up the panel the horizon sits, of R
 
-  function ground(right, forward, R, cx, cy, range) {
+  function ground(right, forward, R, cx, cy, range, height) {
     var eye = range * EYE_BACK, up = range * EYE_UP;
     var z = forward + eye;
     if (z < range * 0.04) return null;              // at or behind the camera
     var focal = R * 1.35;
     var horizonY = cy - R * HORIZON;
-    return [cx + (right / z) * focal, horizonY + (up / z) * focal];
+    /* A point `height` metres above the ground is that much nearer the
+       horizon - which is the whole trick that turns a footprint into a
+       building. */
+    return [cx + (right / z) * focal, horizonY + ((up - (height || 0)) / z) * focal];
   }
   function paint(ctx, w, h, big) {
     var s = GEO.state();
-    var cx = w / 2, cy = big ? h * 0.62 : h / 2;
-    var R = Math.min(w, big ? h * 0.8 : h) / 2 - (big ? 18 : 4);
+    /* Both sizes are the same view now. The corner card is a small city in
+       front of you, not a compass rose - which is what the reference shows
+       and what you can actually walk by. */
+    var cx = w / 2, cy = h * (big ? 0.62 : 0.70);
+    var R = Math.min(w, h * 1.15) / 2 - (big ? 18 : 2);
     ctx.clearRect(0, 0, w, h);
 
     var acc = '#4fe3ff';
@@ -121,25 +213,26 @@ var MAP = (function () {
       var a = head * Math.PI / 180;
       var right = dEast * Math.cos(a) - dNorth * Math.sin(a);
       var fwd = dEast * Math.sin(a) + dNorth * Math.cos(a);
-      if (!big) {
-        /* The disc is a plan view: at 56 pixels a tilted one is illegible. */
-        return [cx + (right / range) * R, cy - (fwd / range) * R];
-      }
-      return ground(right, fwd, R, cx, cy, range);
+      return ground(right, fwd, R, cx, cy, range, 0);
+    }
+    function placeUp(dEast, dNorth, height) {
+      var a = head * Math.PI / 180;
+      var right = dEast * Math.cos(a) - dNorth * Math.sin(a);
+      var fwd = dEast * Math.sin(a) + dNorth * Math.cos(a);
+      return ground(right, fwd, R, cx, cy, range, height);
     }
 
     /* Everything is drawn inside the panel; a road running off the edge of
        a perspective view reads as a glitch. */
     ctx.save();
     ctx.beginPath();
-    if (big) ctx.rect(0, cy - R * HORIZON, w, h - (cy - R * HORIZON));
-    else ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.rect(0, Math.max(0, cy - R * HORIZON), w, h);
     ctx.clip();
 
-    if (big) {
+    {
       /* The ground itself, so the horizon is visible before anything stands
          on it. */
-      var horizonY = cy - R * HORIZON;
+      var horizonY = Math.max(0, cy - R * HORIZON);
       var g = ctx.createLinearGradient(0, horizonY, 0, h);
       g.addColorStop(0, 'rgba(20,52,84,.06)');
       g.addColorStop(1, 'rgba(24,70,110,.34)');
@@ -156,6 +249,9 @@ var MAP = (function () {
       ROADS.ensure(s.pos.lat, s.pos.lon);
       var ways = ROADS.near(s.pos.lat, s.pos.lon);
       var mPerLat = 111320, mPerLon = 111320 * Math.cos(s.pos.lat * Math.PI / 180);
+      var toLocal = function (pt) {
+        return [(pt[1] - s.pos.lon) * mPerLon, (pt[0] - s.pos.lat) * mPerLat];   // east, north
+      };
       ctx.save();
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       ways.forEach(function (way) {
@@ -188,9 +284,29 @@ var MAP = (function () {
           });
       });
       ctx.restore();
+
+      /* ---- the buildings ----
+
+         A footprint with a height, drawn as a roof and the two or three
+         walls that face you. Far ones first so near ones cover them, which
+         is the whole of the depth sorting this needs: everything is a prism
+         standing on the same ground. */
+      var blds = ROADS.buildings();
+      var vis = [];
+      blds.forEach(function (b) {
+        var mid = toLocal(b.pts[0]);
+        var d = Math.sqrt(mid[0] * mid[0] + mid[1] * mid[1]);
+        if (d > range * 1.6) return;
+        vis.push({ b: b, d: d });
+      });
+      vis.sort(function (p, q) { return q.d - p.d; });
+      vis.slice(big ? -90 : -34).forEach(function (v) {
+        drawBuilding(ctx, v.b, toLocal, place, placeUp, big);
+      });
     }
 
     /* ---- distance rings, on the ground ---- */
+    if (big) {
     ctx.save();
     ctx.strokeStyle = 'rgba(200,230,255,.25)';
     ctx.lineWidth = 1;
@@ -207,6 +323,7 @@ var MAP = (function () {
       ctx.stroke();
     });
     ctx.restore();
+    }
 
     /* ---- the places ---- */
     var hits = [];
@@ -215,6 +332,7 @@ var MAP = (function () {
         if (p.dist > range) return;
         var rad = p.bearing * Math.PI / 180;
         var xy = place(Math.sin(rad) * p.dist, Math.cos(rad) * p.dist);
+        if (!xy) return;                 // behind the camera, so not on screen
         hits.push({ p: p, x: xy[0], y: xy[1] });
       });
     }
@@ -255,6 +373,7 @@ var MAP = (function () {
         var r2 = brg * Math.PI / 180;
         var c0 = place(Math.sin(r2) * at, Math.cos(r2) * at);
         var c1 = place(Math.sin(r2) * (at + dist / 18), Math.cos(r2) * (at + dist / 18));
+        if (!c0 || !c1) continue;
         var ang = Math.atan2(c1[1] - c0[1], c1[0] - c0[0]);
         var size = (big ? 13 : 6) * (1 - k * 0.12);
         ctx.globalAlpha = 0.85 - k * 0.11;
@@ -285,7 +404,7 @@ var MAP = (function () {
 
     /* ---- you ---- */
     ctx.save();
-    var me = big ? [cx, cy + R * 0.52] : place(0, 0);
+    var me = [cx, cy + R * 0.52];
     ctx.translate(me[0], me[1]);
     if (s.pos && s.pos.acc) {
       var ar = Math.min(R, (s.pos.acc / range) * R);
@@ -323,18 +442,57 @@ var MAP = (function () {
     return hits;
   }
 
+  /* One prism. The walls are drawn from the roof edge down to the ground,
+     and only the ones whose outward normal points toward the camera - the
+     rest are behind the building and drawing them makes it a wireframe
+     rather than a solid. */
+  function drawBuilding(ctx, b, toLocal, place, placeUp, big) {
+    var n = b.pts.length;
+    if (n < 4) return;
+    var roof = [], base = [], ok = true;
+    for (var i = 0; i < n; i++) {
+      var l = toLocal(b.pts[i]);
+      var r = placeUp(l[0], l[1], b.h);
+      var g = place(l[0], l[1]);
+      if (!r || !g) { ok = false; break; }
+      roof.push(r); base.push(g);
+    }
+    if (!ok) return;
+
+    ctx.save();
+    /* Walls. A face is toward us when the base edge runs left-to-right on
+       screen, which for a footprint wound consistently is one sign test. */
+    for (var j = 0; j < n - 1; j++) {
+      var a = base[j], c = base[j + 1];
+      if (c[0] - a[0] <= 0) continue;
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]); ctx.lineTo(c[0], c[1]);
+      ctx.lineTo(roof[j + 1][0], roof[j + 1][1]); ctx.lineTo(roof[j][0], roof[j][1]);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(30,72,112,.5)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,195,255,.30)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    /* Roof. */
+    ctx.beginPath();
+    roof.forEach(function (p, i2) { if (!i2) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(46,104,156,.55)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(150,215,255,.55)';
+    ctx.lineWidth = big ? 1.1 : 0.7;
+    ctx.stroke();
+    ctx.restore();
+  }
+
   var lastHits = [];
 
   function draw() {
     if (dctx && disc) paint(dctx, disc.clientWidth || 96, disc.clientHeight || 96, false);
     if (open && pctx && panel) lastHits = paint(pctx, panel.clientWidth, panel.clientHeight, true);
-    var s = GEO.state();
-    var pod = document.getElementById('radarNote');
-    if (pod) {
-      var txt = s.pos ? (s.locality || 'No landmarks')
-                      : (s.error ? 'No location' : 'Locating');
-      if (pod.textContent !== txt) pod.textContent = txt;
-    }
+    podLine();
   }
 
   function pick(ev) {
@@ -345,7 +503,7 @@ var MAP = (function () {
       var d = Math.hypot(b.x - x, b.y - y);
       if (d < bd) { bd = d; best = b.p; }
     });
-    if (best) { sel = best; draw(); fillList(); }
+    if (best) setDest(best);
   }
 
   /* Guarded writes: this runs on every position fix, over a live camera. */
@@ -365,7 +523,18 @@ var MAP = (function () {
     var box = document.getElementById('mapList');
     if (!box || !open) return;
     var s = GEO.state();
-    var near = s.places.filter(function (p) { return p.dist <= range; }).slice(0, 12);
+    var head2 = document.getElementById('mapListK');
+    var near;
+    if (results && results.length) {
+      near = results.slice(0, 12);
+      if (head2) head2.textContent = 'Search results \u00b7 tap to set a destination';
+    } else {
+      near = s.places.filter(function (p) { return p.dist <= range; }).slice(0, 12);
+      if (head2) head2.textContent = sel ? ('Going to ' + sel.title)
+                                         : 'Nearby \u00b7 tap to set a destination';
+    }
+    var clr = document.getElementById('mapClear');
+    if (clr) clr.hidden = !sel;
     if (!near.length) {
       box.textContent = s.pos ? 'Nothing named within ' + label(range).toLowerCase() + '.'
                               : (s.error || 'Waiting for a position.');
@@ -379,14 +548,12 @@ var MAP = (function () {
                     '<span class="mr-t"></span>' +
                     '<span class="mr-d">' + (p.dist < 1000 ? p.dist + ' m' : (p.dist / 1000).toFixed(1) + ' km') + '</span>';
       b.querySelector('.mr-t').textContent = p.title;
-      b.addEventListener('click', function () {
-        sel = p; draw(); fillList();
-        if (window.UI && UI.openPlace) UI.openPlace(p);
-      });
+      b.addEventListener('click', function () { setDest(p); });
       box.appendChild(b);
     });
   }
 
   return { init: init, draw: draw, setOpen: setOpen, isOpen: function () { return open; },
+           setDest: setDest, dest: function () { return sel; }, search: search,
            range: function () { return range; } };
 })();
