@@ -98,6 +98,18 @@ var AR = (function () {
   /* Rough, and labelled as such. Apparent size against a typical real size,
      with a focal length assumed from a normal phone field of view. It is an
      estimate and the card says so with a "~". */
+  var PREFER = [/price|cost|from\b/i, /manufacturer|maker|brand/i, /model/i];
+  function specLine(data) {
+    var rows = data && data.specs;
+    if (!rows || !rows.length) return '';
+    for (var p = 0; p < PREFER.length; p++) {
+      for (var i = 0; i < rows.length; i++) {
+        if (PREFER[p].test(rows[i].k || '')) return String(rows[i].v || '');
+      }
+    }
+    return String(rows[0].v || '');
+  }
+
   function sentence(w) {
     w = String(w || '').replace(/[_-]+/g, ' ');
     return w.charAt(0).toUpperCase() + w.slice(1);
@@ -145,8 +157,10 @@ var AR = (function () {
     /* What the second line says is a claim about how much to trust the
        first one. A confirmed identification gets its detail; a guess from a
        crop of the scene says so, with the number. */
-    var sub = (t.data && t.data.scientific) ||
-              (t.data && t.data.specs && t.data.specs.length ? t.data.specs[0].v : '') ||
+    /* The second line answers the question the owner actually asks of an
+       object: what is it and what does it cost. A price beats the maker,
+       the maker beats the category. A living thing gets its binomial. */
+    var sub = (t.data && t.data.scientific) || specLine(t.data) ||
               (named ? sentence(kind) : '');
     var dist = distance(t.cls, screen[2], screen[3], frameW);
 

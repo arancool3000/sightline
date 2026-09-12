@@ -243,7 +243,32 @@ var UI = (function () {
     return ' [' + b.sha + ' t' + n + ']';
   }
 
+  /* Which tier is doing the work, said honestly.
+
+     LOCAL     no endpoint - device only, which can only give a generic noun
+     CLOUD ..  an endpoint is set but nothing has come back from it yet
+     CLOUD     at least one specific answer has actually arrived
+     CLOUD X   it is being called and it is failing                        */
+  var toldCloud = false;
+  function engineLine() {
+    if (!SET.hasApi()) { tele('#tEng', 'LOCAL'); return; }
+    var h = (window.IDENT && IDENT.health) ? IDENT.health() : null;
+    if (!h || !h.sent) { tele('#tEng', 'CLOUD'); return; }
+    if (h.ok) { tele('#tEng', 'CLOUD'); return; }
+    if (h.failed >= 2) {
+      tele('#tEng', 'CLOUD X');
+      if (!toldCloud) {
+        toldCloud = true;
+        U.toast('The detail service is not answering (' + h.lastError +
+                '). Names stay generic until it does. Tap CFG to test it.', 6500);
+      }
+      return;
+    }
+    tele('#tEng', 'CLOUD \u2026');
+  }
+
   function statusFromEngine() {
+    engineLine();
     if (!window.LOCAL || !LOCAL.state) return;
     var st = LOCAL.state();
     if (st.code === 'ready') { status('', ''); return; }
@@ -260,6 +285,18 @@ var UI = (function () {
 
   function showSheet(html) { sheetBody.innerHTML = html; pruneHero(sheetBody); sheet.hidden = false; }
   function closeSheet() { sheet.hidden = true; openTrackId = null; }
+
+  var SPEC_ORDER = [/manufacturer|maker|brand/i, /^model/i, /released|launched|year/i,
+                    /price|cost|from\b/i, /where to buy|retail|stockist|buy/i];
+  function orderSpecs(rows) {
+    var rank = function (r) {
+      for (var i = 0; i < SPEC_ORDER.length; i++) if (SPEC_ORDER[i].test(r.k || '')) return i;
+      return SPEC_ORDER.length;
+    };
+    return rows.slice().map(function (r, i) { return { r: r, i: i }; })
+      .sort(function (a, b) { return (rank(a.r) - rank(b.r)) || (a.i - b.i); })
+      .map(function (x) { return x.r; });
+  }
 
   function grid(pairs) {
     var live = pairs.filter(function (p) { return p[1]; });
@@ -343,7 +380,11 @@ var UI = (function () {
     /* Model-supplied specs come first for objects - that is the whole point
        of pointing a camera at a 3D printer or a robot. */
     if (rec.specs && rec.specs.length) {
-      html += grid(rec.specs.map(function (s) { return [s.k, s.v]; }));
+      /* What someone pointing a camera at a backpack wants is the maker, the
+         exact model, the price and where to get one - in that order, at the
+         top. Anything the model was unsure of is simply absent: an omitted
+         row is the honest answer, an invented price is not. */
+      html += grid(orderSpecs(rec.specs).map(function (s) { return [s.k, s.v]; }));
     }
 
     if (rec.kind === 'person') {

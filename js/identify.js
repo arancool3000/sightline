@@ -35,6 +35,18 @@ var IDENT = (function () {
   var lastSent = 0;
   var quotaBlockedUntil = 0;
 
+  /* WHETHER THE CLOUD IS ACTUALLY ANSWERING.
+
+     A failure here used to land in t.reason and stop. On screen that looked
+     exactly like a slow answer: the label kept the on-device noun with a
+     trailing mark, for ever. The owner's HUD read ENG CLOUD while nothing
+     had ever come back, which is how a 3D printer stayed a Polaroid camera.
+
+     So the outcome of every call is counted, and the telemetry says which
+     tier is really doing the work. */
+  var health = { sent: 0, ok: 0, failed: 0, lastError: '', lastAt: 0 };
+  function healthOf() { return health; }
+
   /* Grid targets carry their kind as the class directly, since there is no
      detector vocabulary behind them. */
   var KINDS = { person:1, animal:1, plant:1, insect:1, vehicle:1, object:1 };
@@ -50,6 +62,7 @@ var IDENT = (function () {
 
   function enqueue(job) {
     if (!SET.hasApi()) { job.fail('no-endpoint'); return; }   // on-device already answered
+    health.sent++;
 
     if (Date.now() < quotaBlockedUntil) { job.fail('quota'); return; }
     queue.push(job);
@@ -175,6 +188,7 @@ var IDENT = (function () {
       hint: hint,
       dead: function () { return !TRACK.byId(t.id); },
       done: function (rec) {
+        health.ok++; health.lastAt = Date.now(); health.lastError = '';
         t.state = 'done';
         t.data = rec;
         /* The cloud only overwrites the on-device label when it actually has
@@ -186,6 +200,7 @@ var IDENT = (function () {
         UI.dirty();
       },
       fail: function (why) {
+        if (why !== 'no-endpoint') { health.failed++; health.lastError = String(why || 'failed'); }
         t.state = 'failed';
         t.reason = why;
         if (t.local) { t.label = t.local.name; t.tier = 'local'; }   // fall back, never blank
@@ -279,5 +294,6 @@ var IDENT = (function () {
   }
 
   return { forTrack: forTrack, atPoint: atPoint, kindOf: kindOf, busy: busy, fromLocal: fromLocal,
+           health: healthOf,
            status: status, KICKER: KICKER, post: post };
 })();
