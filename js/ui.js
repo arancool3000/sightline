@@ -256,11 +256,15 @@ var UI = (function () {
      distance, camera at chest height, ground assumed flat. That is enough
      to lay a chevron on the pavement without any depth sensing at all. */
   var navPlanAt = 0, navPlanned = null;
+  /* The corners of the chevrons drawn last frame, in screen pixels. Kept
+     so the shape they make can be measured rather than eyeballed - the
+     "diagonal" fault was invisible to a test that only counted ink. */
+  var navShapes = [];
 
   function navArrows(ctx, w, h) {
     if (!window.MAP || !MAP.dest) return;
     var dest = MAP.dest();
-    if (!dest) { document.body.classList.remove('navigating'); ROUTE.clear(); navPlanned = null; return; }
+    if (!dest) { document.body.classList.remove('navigating'); ROUTE.clear(); navPlanned = null; navShapes = []; return; }
     var st = GEO.state();
     if (!st.pos) return;
     document.body.classList.add('navigating');
@@ -275,7 +279,7 @@ var UI = (function () {
     }
 
     var f = ROUTE.follow([st.pos.lat, st.pos.lon]);
-    if (!f) { navBearing(ctx, w, h, st, dest); return; }   // no road data yet
+    if (!f) { navShapes = []; navBearing(ctx, w, h, st, dest); return; }   // no road data yet
     if (typeof st.heading !== 'number') { navLabel(ctx, w, h, 'Turn until the arrows appear'); return; }
 
     /* The road ahead, as points on the ground in front of the camera. */
@@ -313,31 +317,68 @@ var UI = (function () {
       walked += segLen;
     }
 
+    /* ---- the chevrons are ON THE GROUND, not stuck to the screen ----
+
+       "arrows look strange... diagonal..."
+
+       They were a flat glyph drawn in screen space and rotated by
+       atan2(g1.y - g0.y, g1.x - g0.x) - an angle measured in PIXELS. The
+       perspective divide squashes vertical differences far harder than
+       horizontal ones, so the moment you are not standing exactly on the
+       road's centreline the x term dominates and the angle swings toward
+       the horizontal. Hence diagonal. And an unsquashed glyph reads as a
+       sign floating in the air rather than a marking on the pavement.
+
+       So each chevron is now three corners measured in METRES on the road
+       - tip ahead, two tails back and out to either side - and every
+       corner goes through the same projection as everything else. The
+       direction comes from the road's own geometry, and the foreshortening
+       comes out of the projection instead of being faked. */
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     var drew = 0;
+    navShapes = [];
     for (var k = 0; k < placed.length; k++) {
-      var g0 = onGround(placed[k].pt);
-      if (!g0) continue;
-      /* Point the chevron the way the road runs AT that point, so it turns
-         with the curve instead of all of them facing the same way. */
+      var here = placed[k].pt;
       var nextPt = placed[k + 1] ? placed[k + 1].pt : line[line.length - 1];
-      var g1 = onGround(nextPt);
-      var ang = g1 ? Math.atan2(g1.y - g0.y, g1.x - g0.x) : -Math.PI / 2;
 
-      var size = Math.max(9, Math.min(46, (h * 0.5) / g0.d));
+      /* Which way the road runs here, in metres north and east. */
+      var uN = (nextPt[0] - here[0]) * mPerLat, uE = (nextPt[1] - here[1]) * mPerLon;
+      var uLen = Math.sqrt(uN * uN + uE * uE);
+      if (uLen < 0.01) continue;                     // two points on top of each other
+      uN /= uLen; uE /= uLen;
+      var vN = -uE, vE = uN;                         // across the road
+
+      /* Road markings are stretched with distance for exactly this reason:
+         a shape that is square on the ground is a sliver at fifty metres.
+         These grow the same way, so a far one is still readable without
+         leaving the ground. */
+      var d = Math.max(2, ROUTE.metres([st.pos.lat, st.pos.lon], here));
+      var L = 1.7 + d * 0.10, W = 2.0 + d * 0.035;
+
+      function ground(mF, mR) {
+        return onGround([ here[0] + (uN * mF + vN * mR) / mPerLat,
+                          here[1] + (uE * mF + vE * mR) / mPerLon ]);
+      }
+      var tip = ground(L * 0.62, 0),
+          tl  = ground(-L * 0.38, -W / 2),
+          tr  = ground(-L * 0.38, W / 2);
+      if (!tip || !tl || !tr) continue;              // any corner behind you
+
       var fade = Math.max(0.18, 1 - (k / want));
+      var wide = Math.max(2.5, Math.min(11, 44 / tip.d));
       drew++;
+      navShapes.push({ tip: [tip.x, tip.y], left: [tl.x, tl.y], right: [tr.x, tr.y], d: tip.d });
 
       ctx.globalAlpha = fade * 0.35;
       ctx.strokeStyle = 'rgba(0,0,0,.9)';
-      ctx.lineWidth = Math.max(4, size * 0.44);
-      chevron(ctx, g0.x, g0.y, size, ang);
+      ctx.lineWidth = wide * 1.5;
+      chevron(ctx, tl, tip, tr);
       ctx.globalAlpha = fade * 0.95;
       ctx.strokeStyle = '#4fe3ff';
-      ctx.lineWidth = Math.max(3, size * 0.3);
-      chevron(ctx, g0.x, g0.y, size, ang);
+      ctx.lineWidth = wide;
+      chevron(ctx, tl, tip, tr);
     }
     ctx.restore();
 
@@ -350,12 +391,13 @@ var UI = (function () {
     navLabel(ctx, w, h, txt, fmtM(f.remaining) + ' to go');
   }
 
-  function chevron(ctx, x, y, size, ang) {
-    var c = Math.cos(ang), s2 = Math.sin(ang);
-    function at(dx, dy) { return [x + dx * c - dy * s2, y + dx * s2 + dy * c]; }
-    var p1 = at(-size * 0.55, -size * 0.6), p2 = at(size * 0.35, 0), p3 = at(-size * 0.55, size * 0.6);
+  /* Three points that are already on the screen, because they were already
+     on the ground. Nothing here knows which way is up. */
+  function chevron(ctx, a, tip, b) {
     ctx.beginPath();
-    ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.lineTo(b.x, b.y);
     ctx.stroke();
   }
 
@@ -1518,7 +1560,7 @@ var UI = (function () {
     });
   }
 
-  return { init: init, draw: draw, openPlace: openPlace, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
+  return { _navShapes: function () { return navShapes.slice(); }, init: init, draw: draw, openPlace: openPlace, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
            status: status,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
