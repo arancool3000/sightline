@@ -55,7 +55,10 @@ const server=http.createServer((q,res)=>{
     await page.goto('http://localhost:8751/',{waitUntil:'domcontentloaded'});
     await page.click('#btnStart');
     await page.waitForFunction(()=>window.LOCAL&&LOCAL.ready(),null,{timeout:120000}).catch(()=>{});
-    await page.waitForTimeout(2500);
+    /* Wait for an actual successful classification rather than a fixed sleep:
+       "ready" only means the weights loaded. */
+    await page.waitForFunction(()=>window.LOCAL&&LOCAL.ok&&LOCAL.ok()>0,null,{timeout:60000}).catch(()=>{});
+    await page.waitForTimeout(600);
     const st = await page.evaluate(()=>({
       hidden: document.querySelector('#statusStrip').hidden,
       ready: LOCAL.ready()

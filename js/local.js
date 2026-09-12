@@ -19,7 +19,7 @@ var LOCAL = (function () {
   /* fails counts CONSECUTIVE failures: any success resets it. Counting
      cumulatively left the warning stuck on after a couple of benign early
      misses, which is worse than not warning at all. */
-  var net = null, loading = null, backend = '', variant = 'v2', lastErr = '', fails = 0;
+  var net = null, loading = null, backend = '', variant = 'v2', lastErr = '', fails = 0, lastOk = 0;
   var pad = document.createElement('canvas');
   pad.width = pad.height = 224;
   var pctx = pad.getContext('2d', { willReadFrequently: true });
@@ -241,7 +241,7 @@ var LOCAL = (function () {
 
       t.localState = 'done';
       t.localAt = performance.now();
-      fails = 0;                 // a success clears the streak
+      fails = 0; lastOk = performance.now();   // a success clears the streak
 
       if (!preds || !preds.length) return null;
       var top = preds[0];
@@ -336,7 +336,7 @@ var LOCAL = (function () {
       stats.n++; stats.total += ms; stats.last = ms;
       if (ms > stats.worst) stats.worst = ms;
       considerStepDown();
-      fails = 0;                 // it ran; a weak result is still a working engine
+      fails = 0; lastOk = performance.now();   // it ran; a weak result is still a working engine
 
       if (!preds || !preds.length) return;
       var top = preds[0];
@@ -350,7 +350,7 @@ var LOCAL = (function () {
         cb(null);
         return;
       }
-      fails = 0;
+      fails = 0; lastOk = performance.now();
       scenePrev = { name: name, score: top.probability, ms: Math.round(ms),
                     kind: kindOfLabel(name),
                     alt: preds.slice(1).map(function (p) { return tidy(p.className); }) };
@@ -424,7 +424,7 @@ var LOCAL = (function () {
       stats.n++; stats.total += ms; stats.last = ms;
       considerStepDown();
 
-      fails = 0;
+      fails = 0; lastOk = performance.now();
       var now = performance.now();
       gridHits = gridHits.filter(function (h) { return (now - h.at) < GRID_TTL && h.idx !== idx; });
 
@@ -452,7 +452,14 @@ var LOCAL = (function () {
   /* One place the UI can ask "what is actually going on", so a failure is
      never rendered as an empty screen. */
   function state() {
-    if (net) return { code: fails > 3 ? 'erroring' : 'ready', detail: fails ? lastErr : '' };
+    if (net) {
+      /* A recent success outranks any earlier failures. Without this an
+         engine that stumbled once while the video was warming up reported
+         "erroring" for the rest of the session. */
+      var recentlyOk = lastOk && (performance.now() - lastOk) < 5000;
+      var bad = fails > 3 && !recentlyOk;
+      return { code: bad ? 'erroring' : 'ready', detail: bad ? lastErr : '' };
+    }
     if (loading) return { code: 'loading', detail: '' };
     return { code: 'failed', detail: lastErr || 'not started' };
   }
@@ -470,7 +477,7 @@ var LOCAL = (function () {
 
   function setBudget(n) { perFrame = U.clamp(n | 0, 1, 8); }
 
-  return { load: load, ready: ready, lastError: lastError, state: state, label: label, sweep: sweep, age: age,
+  return { load: load, ready: ready, lastError: lastError, state: state, ok: function(){ return lastOk; }, label: label, sweep: sweep, age: age,
            scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
            gridStep: gridStep, gridTargets: gridTargets,
            timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget };
