@@ -206,17 +206,27 @@ var UI = (function () {
     strip.hidden = false;
   }
 
+  /* Every failure message carries the build and how many lifecycle events the
+     recogniser recorded. A screenshot then identifies its own version, and a
+     trace of zero is conclusive proof of a stale cached page rather than a
+     code fault - which cost several rounds to work out by hand. */
+  function stamp() {
+    var b = window.KH_BUILD || { sha: '?' };
+    var n = (window.LOCAL && LOCAL.trace) ? LOCAL.trace().length : -1;
+    return ' [' + b.sha + ' t' + n + ']';
+  }
+
   function statusFromEngine() {
     if (!window.LOCAL || !LOCAL.state) return;
     var st = LOCAL.state();
     if (st.code === 'ready') { status('', ''); return; }
     if (st.code === 'loading') { status('LOADING RECOGNISER — FIRST RUN DOWNLOADS ~6MB', 'busy'); return; }
     if (st.code === 'retrying') {
-      status('RECOGNISER RETRYING (' + (st.attempt || 1) + '/4) — ' + (st.detail || 'unknown'), 'bad');
+      status('RECOGNISER RETRYING (' + (st.attempt || 1) + '/4) — ' + (st.detail || 'unknown') + stamp(), 'bad');
       return;
     }
-    if (st.code === 'erroring') { status('RECOGNISER ERRORING — ' + (st.detail || 'unknown'), 'bad'); return; }
-    status('RECOGNISER FAILED — ' + (st.detail || 'unknown') + ' — TRY CFG > RELOAD MODELS', 'bad');
+    if (st.code === 'erroring') { status('RECOGNISER ERRORING — ' + (st.detail || 'unknown') + stamp(), 'bad'); return; }
+    status('RECOGNISER FAILED — ' + (st.detail || 'unknown') + stamp() + ' — CFG > CLEAR CACHE & RESTART', 'bad');
   }
 
   /* ---------- dossier ---------- */
@@ -492,7 +502,8 @@ var UI = (function () {
     from.value = SET.get('capFrom');
     to.value = SET.get('capTo');
     U.$('#optCapBoth').checked = !!SET.get('capBoth');
-    U.$('#buildLine').textContent = 'ON-DEVICE TIER: UNLIMITED, NO KEY, WORKS OFFLINE';
+    var b = window.KH_BUILD || { sha: '?', at: '?' };
+    U.$('#buildLine').textContent = 'BUILD ' + b.sha + ' / ' + b.at;
 
     if (!CAPS.supported()) {
       U.$('#btnCaptions').style.opacity = '.4';

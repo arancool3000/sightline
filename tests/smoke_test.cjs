@@ -49,6 +49,10 @@ const server = http.createServer((req, res) => {
   t('mode rail rendered', (await page.$$('.mbtn[data-mode]')).length >= 5);
   t('objects mode present', (await page.$$('.mbtn[data-mode="objects"]')).length === 1);
   t('telemetry present', (await page.$$('#tFps,#tLat,#tGpu,#tEng')).length === 4);
+  /* A page must be able to identify its own build, or a screenshot of a
+     failure cannot be told apart from a stale cached copy. */
+  const build = await page.evaluate(() => window.KH_BUILD || null);
+  t('the page carries a build stamp', !!(build && build.sha), JSON.stringify(build));
 
   // --- the living-person gate: real Wikidata calls
   const gate = await page.evaluate(async () => {

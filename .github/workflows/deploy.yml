@@ -45,6 +45,13 @@ jobs:
           echo "--- publishing ---"
           find dist -type f | sort
 
+      # A page that cannot identify its own build is a page we cannot diagnose.
+      - name: Stamp the build
+        run: |
+          printf 'window.KH_BUILD={sha:"%s",at:"%s"};\n' \
+            "$(git rev-parse --short HEAD)" "$(date -u +%%H:%%MZ\ %%d\ %%b)" > dist/js/build.js
+          cat dist/js/build.js
+
       - name: Syntax-check every shipped script
         run: |
           for f in dist/js/*.js dist/sw.js; do
