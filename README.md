@@ -92,6 +92,28 @@ This is deliberately **not** the public-figure lookup. That one names people
 who are already famous and refuses everyone else. This one names only people
 *you* have met and told it about, and it tells nobody else.
 
+### Talking to it
+
+Say **"hey vision"**, then ask. It answers aloud, and it can change what is
+on screen while it does — box a particular thing, colour it, or hide
+everything it is not talking about.
+
+- **The wake word costs nothing.** It is the same recogniser the captions
+  use, so there is no second model and no audio going anywhere while it
+  waits. Every line it hears asleep is compared against a phrase and thrown
+  away.
+- **What it may do is a fixed list** — box, only, colour, clear, say. The
+  model chooses from that vocabulary; anything else it asks for is ignored
+  rather than guessed at. It cannot run code and it cannot reach anything
+  the app would not reach itself.
+- **With your own Gemini key** it answers in about a second: 3.5 Flash Lite
+  first, 3.1 Flash Lite when that one is at its limit, remembered for
+  fifteen minutes rather than walking into the same wall every time. The key
+  stays in your browser and is sent to Google and nowhere else — not to this
+  app's own Worker.
+- **Without a key** it goes through the Worker instead, which is slower and
+  needs nothing set up.
+
 ### Genuinely uncapped
 
 Nothing meters these, and the app is designed so that these alone are

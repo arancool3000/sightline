@@ -63,7 +63,8 @@ var CAM = (function () {
     var ew = video.clientWidth, eh = video.clientHeight;
     if (!vw || !vh || !ew || !eh) return { scale: 1, dx: 0, dy: 0, vw: vw, vh: vh, ew: ew, eh: eh };
     var scale = Math.max(ew / vw, eh / vh);
-    return { scale: scale, dx: (ew - vw * scale) / 2, dy: (eh - vh * scale) / 2, vw: vw, vh: vh, ew: ew, eh: eh };
+    return {
+      scale: scale, dx: (ew - vw * scale) / 2, dy: (eh - vh * scale) / 2, vw: vw, vh: vh, ew: ew, eh: eh };
   }
 
   /* Frame box [x,y,w,h] -> on-screen CSS box. */
@@ -96,6 +97,23 @@ var CAM = (function () {
     catch (e) { return null; }   // tainted canvas should not happen, but never throw into the loop
   }
 
+  /* A picture of what the camera can see right now, as a data URL, for
+     anything that needs to ASK about the scene rather than measure it. */
+  var shotPad = null;
+  function frame(maxSide) {
+    if (!video || !video.videoWidth) return null;
+    var side = maxSide || 768;
+    var f = Math.min(1, side / Math.max(video.videoWidth, video.videoHeight));
+    var w = Math.round(video.videoWidth * f), h = Math.round(video.videoHeight * f);
+    if (!shotPad) shotPad = document.createElement('canvas');
+    if (shotPad.width !== w || shotPad.height !== h) { shotPad.width = w; shotPad.height = h; }
+    try {
+      shotPad.getContext('2d').drawImage(video, 0, 0, w, h);
+      return shotPad.toDataURL('image/jpeg', 0.72);
+    } catch (e) { return null; }
+  }
+
   return { attach: attach, start: start, stop: stop, flip: flip, current: current,
-           size: size, live: live, crop: crop, toScreen: toScreen, coverMap: coverMap };
+           size: size, live: live, crop: crop, toScreen: toScreen, coverMap: coverMap,
+           frame: frame };
 })();

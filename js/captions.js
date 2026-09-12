@@ -206,6 +206,7 @@ var CAPS = (function () {
 
   function start() {
     wantOn = true;
+    if (arguments[0] === 'captions') silent = false;
     if (!supported()) {
       /* No recogniser in this browser. Rather than refusing - which is what
          "captions don't work" looked like on the owner's iPad - record a few
@@ -250,7 +251,11 @@ var CAPS = (function () {
         else interim += r[0].transcript;
       }
       if (interim) UI.captionDraw(lines, interim, null);
-      if (fresh.trim()) { judge(conf, fresh); push(fresh.trim()); }
+      if (fresh.trim()) {
+        judge(conf, fresh);
+        tellHeard(fresh.trim());
+        if (!silent) push(fresh.trim());
+      }
     };
 
     rec.onerror = function (ev) {
@@ -382,7 +387,11 @@ var CAPS = (function () {
       IDENT.post('/v1/transcribe', { audio: String(fr.result) })
         .then(function (r) {
           if (!wantOn) return;
-          if (r && r.ok && r.text) { note('LISTENING'); push(r.text.trim(), r.language || ''); }
+          if (r && r.ok && r.text) {
+            note('LISTENING');
+            tellHeard(r.text.trim());
+            if (!silent) push(r.text.trim(), r.language || '');
+          }
           else note('NOTHING HEARD');
         })
         .catch(function (e) {
@@ -482,8 +491,29 @@ var CAPS = (function () {
 
   function running() { return wantOn; }
 
+  /* SHARED EARS.
+
+     The voice assistant listens for its wake word in the same lines the
+     captions produce. One recogniser, two readers - a second one would mean
+     a second microphone stream and, on the browsers that send audio away to
+     be recognised, sending it twice. */
+  var heardFns = [];
+  function onHeard(fn) { if (heardFns.indexOf(fn) === -1) heardFns.push(fn); }
+  function offHeard(fn) { heardFns = heardFns.filter(function (f) { return f !== fn; }); }
+  function tellHeard(text) { heardFns.forEach(function (f) { try { f(text); } catch (e) {} }); }
+
+  /* Start listening without showing captions - what the assistant needs. */
+  function listen() {
+    if (wantOn) return true;
+    silent = true;
+    return start();
+  }
+  var silent = false;
+  function isSilent() { return silent; }
+
   return { LANGS: LANGS, TARGETS: TARGETS, supported: supported, start: start,
            stop: stop, clear: clear, relang: relang, running: running,
            shortOf: shortOf, health: health, detectLang: detectLang,
-           canRecord: canRecord, recording: function () { return recording; } };
+           canRecord: canRecord, recording: function () { return recording; },
+           onHeard: onHeard, offHeard: offHeard, listen: listen, isSilent: isSilent };
 })();

@@ -56,6 +56,12 @@
     <button id="btnFlip" class="hbtn ic" aria-label="Switch camera">
       <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"/></svg>
     </button>
+    <button id="btnVoice" class="hbtn ic" aria-pressed="false" aria-label="Voice control">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
+    <button id="btnScan" class="hbtn ic" aria-label="Scan a code" hidden>
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M3 12h18"/></svg>
+    </button>
     <button id="btnCaptions" class="hbtn ic" aria-pressed="false" aria-label="Live captions">CC</button>
     <button id="btnSettings" class="hbtn ic" aria-label="Settings">
       <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.5a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -77,52 +83,58 @@
   <!-- The map page. North-up and still: a map that turns under your hand is
        a compass, not a map. -->
   <section id="mapPanel" hidden>
-    <header class="map-head">
-      <h2>MAP</h2>
-      <button id="mapClose" class="hbtn" aria-label="Close">CLOSE</button>
-    </header>
+    <div class="map-top">
+      <header class="map-head">
+        <h2>MAP</h2>
+        <button id="mapClose" class="hbtn" aria-label="Close">CLOSE</button>
+      </header>
 
-    <form id="mapForm" class="map-find" autocomplete="off">
-      <input id="mapSearch" type="search" placeholder="Search for a place" spellcheck="false">
-      <button type="submit" class="hbtn">FIND</button>
-      <button type="button" id="mapClear" class="hbtn" hidden>CLEAR</button>
-    </form>
-    <div id="mapNote" class="map-note"></div>
+      <form id="mapForm" class="map-find" autocomplete="off">
+        <input id="mapSearch" type="search" placeholder="Search for a place" spellcheck="false">
+        <button type="submit" class="hbtn">FIND</button>
+        <button type="button" id="mapClear" class="hbtn" hidden>CLEAR</button>
+      </form>
+    </div>
 
     <div class="map-stage">
       <canvas id="mapCanvas"></canvas>
+
+      <div class="map-layers" role="group" aria-label="Layers">
+        <button id="layer-streets" class="lbtn" aria-pressed="true">Streets</button>
+        <button id="layer-buildings" class="lbtn" aria-pressed="true">Buildings</button>
+        <button id="layer-places" class="lbtn" aria-pressed="true">Places</button>
+        <button id="layer-route" class="lbtn" aria-pressed="true">Route</button>
+      </div>
+
       <div class="map-ctl">
         <button id="mapZoomIn" class="mbtn-sq" aria-label="Zoom in">+</button>
         <button id="mapZoomOut" class="mbtn-sq" aria-label="Zoom out">&minus;</button>
         <button id="mapFollow" class="mbtn-sq" aria-pressed="true" aria-label="Centre on me">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>
         </button>
       </div>
+
       <div id="mapScale" class="map-scalechip"></div>
     </div>
 
-    <div class="map-layers" role="group" aria-label="Layers">
-      <button id="layer-streets" class="lbtn" aria-pressed="true">Streets</button>
-      <button id="layer-buildings" class="lbtn" aria-pressed="true">Buildings</button>
-      <button id="layer-places" class="lbtn" aria-pressed="true">Places</button>
-      <button id="layer-route" class="lbtn" aria-pressed="true">Route</button>
-      <button id="layer-labels" class="lbtn" aria-pressed="true">Labels</button>
-    </div>
+    <div class="map-body">
+      <div id="mapNote" class="map-note"></div>
 
-    <!-- Measured by this device's own GPS, and nothing else. -->
-    <div class="trip">
-      <div class="trip-big"><b id="tripSpeed">0.0</b><i>km/h</i></div>
-      <div class="trip-rows">
-        <div><i>Distance</i><b id="tripDist">0 m</b></div>
-        <div><i>Moving</i><b id="tripMoving">0m 0s</b></div>
-        <div><i>Pace</i><b id="tripPace">--</b></div>
+      <!-- Measured by this device's own GPS, and nothing else. -->
+      <div class="trip">
+        <div class="trip-big"><b id="tripSpeed">0.0</b><i>km/h</i></div>
+        <div class="trip-rows">
+          <div><i>Distance</i><b id="tripDist">0 m</b></div>
+          <div><i>Moving</i><b id="tripMoving">0m 0s</b></div>
+          <div><i>Pace</i><b id="tripPace">--</b></div>
+        </div>
+        <button id="tripReset" class="hbtn">RESET</button>
       </div>
-      <button id="tripReset" class="hbtn">RESET</button>
-    </div>
 
-    <p class="map-note">Drawn from OpenStreetMap geometry and this device's position. No tile service, no key. Tap anywhere to set a destination.</p>
-    <div id="mapListK" class="glass-k">Nearby &middot; tap to set a destination</div>
-    <div id="mapList" class="map-list"></div>
+      <div id="mapListK" class="glass-k">Nearby &middot; tap to set a destination</div>
+      <div id="mapList" class="map-list"></div>
+      <p class="map-note">Drawn from OpenStreetMap geometry and this device's position. No tile service, no key. Tap the map anywhere to set a destination.</p>
+    </div>
   </section>
 
   <!-- A scanned code, beside whatever else is on screen. -->
@@ -222,6 +234,26 @@
         <div id="modelStatus" class="status"></div>
         <button id="btnReload" class="obtn">RELOAD MODELS</button>
         <button id="btnReset" class="obtn">CLEAR CACHE &amp; RESTART</button>
+      </div>
+
+      <div class="sgroup">
+        <label class="slabel" for="geminiKey">GEMINI KEY</label>
+        <input id="geminiKey" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false">
+        <p class="shelp">Optional, and yours. From <span class="mono">ai.google.dev</span>. It stays in this
+        browser and is sent to Google and nowhere else - not to this app's own endpoint. With a key the
+        voice assistant answers in about a second; without one it goes through the Worker, which is slower
+        but needs no key at all.</p>
+        <p class="shelp">It asks <b>3.5 Flash Lite</b> first and falls back to <b>3.1 Flash Lite</b> when that
+        one is at its limit, then remembers for fifteen minutes rather than walking into the same wall on
+        every question.</p>
+        <button id="btnGemTest" class="obtn">TEST THE KEY</button>
+        <div id="gemStatus" class="status"></div>
+
+        <div class="srow">
+          <div><div class="stitle">VOICE CONTROL</div><div class="shelp" id="voiceState">Say &ldquo;hey
+          vision&rdquo;, then ask. It can answer aloud and box what it is talking about.</div></div>
+          <label class="switch"><input type="checkbox" id="optVoice"><span></span></label>
+        </div>
       </div>
 
       <div class="sgroup">
@@ -331,7 +363,9 @@
 <script src="js/local.js" defer></script>
 <script src="js/species.js" defer></script>
 <script src="js/identify.js" defer></script>
+<script src="js/gemini.js" defer></script>
 <script src="js/captions.js" defer></script>
+<script src="js/voice.js" defer></script>
 <script src="js/ar.js" defer></script>
 <script src="js/ui.js" defer></script>
 <script src="js/app.js" defer></script>

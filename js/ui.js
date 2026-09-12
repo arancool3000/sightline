@@ -24,7 +24,12 @@ var UI = (function () {
     settings = U.$('#settings');
     AR.init();
     MAP.init();
-    SCAN.on(showCode);
+    VOICE.on(voiceEvent);
+    if (SET.get('voice')) startVoice();
+    SCAN.on(function (hit) {
+      showCode(hit);
+      status('', '');
+    });
     var cx = U.$('#codeClose');
     if (cx) cx.addEventListener('click', hideCode);
     GEO.on(ambient);
@@ -75,6 +80,9 @@ var UI = (function () {
     insect: '#ffb347', vehicle: '#ff9f6b', object: '#4fe3ff'
   };
 
+  /* draw() always draws. Deciding HOW OFTEN to paint is the loop's job, not
+     this function's - a cap in here also swallowed the draws that follow a
+     real change, which is the one case that must never be skipped. */
   function draw(all) {
     if (!ctx) return;
     /* Duplicates are suppressed by the tracker, not here: a backpack scored
@@ -102,6 +110,15 @@ var UI = (function () {
          something you did not already know. */
       var named = AR.worthSaying(t);
 
+      /* The voice asked for one thing to be pointed at. Everything else
+         either dims or, if it said "only", goes. */
+      if (voiceLive()) {
+        var hit = voiceMatches(t);
+        if (!hit && voiceFocus.only) return;
+        if (hit && voiceFocus.colour && VOICE_COLOURS[voiceFocus.colour]) col = VOICE_COLOURS[voiceFocus.colour];
+        ctx.globalAlpha = hit ? 1 : 0.28;
+      }
+
       var x = s[0], y = s[1], bw = s[2], bh = s[3];
       /* Was 24px, which threw away most objects in a cluttered scene. A small
          target still gets its marker; only the plate needs room. */
@@ -117,16 +134,26 @@ var UI = (function () {
          a moment so the screen does not fill with rejections. */
       if (t.scan === 'dismissed' && t.settled && (now - t.settled) > 2600) return;
 
-      /* Bracketed target. Corner ticks only - a full box hides the subject,
-         which is the thing the user is actually trying to look at. */
-      var c = Math.min(18, bw * 0.26, bh * 0.26);
+      /* A BOX IS NOT A LABEL, AND IT COMES FIRST.
+
+         "make it prioritise drawing boxes around found objects instead of
+          just naming them in the bottom."
+
+         Right: finding something and naming something are different
+         claims, and the first one is worth showing on its own. Every
+         detected object is drawn around, whether or not anything has
+         earned the right to name it - so the screen shows what the camera
+         has picked out even while the naming is still being decided. */
+      var c = Math.min(22, bw * 0.3, bh * 0.3);
       var dismissed = t.scan === 'dismissed' && !named;
       var scanning = (t.scan === 'scanning' || t.state === 'queued') && !named;
 
       ctx.save();
       ctx.strokeStyle = dismissed ? 'rgba(230,236,241,.5)' : col;
-      ctx.lineWidth = named ? 1.6 : 1.1;
-      ctx.globalAlpha = named ? 0.95 : dismissed ? 0.3 : scanning ? 0.75 : 0.5;
+      /* Unnamed does not mean faint. The bracket is the app saying "there
+         is a thing there", which is true and useful by itself. */
+      ctx.lineWidth = named ? 2 : 1.6;
+      ctx.globalAlpha = named ? 0.95 : dismissed ? 0.4 : 0.8;
       if (dismissed) ctx.setLineDash([3, 4]);
       [[x, y, 1, 1], [x + bw, y, -1, 1], [x, y + bh, 1, -1], [x + bw, y + bh, -1, -1]]
         .forEach(function (p) {
@@ -703,6 +730,24 @@ var UI = (function () {
     chip.hidden = false;
   }
 
+  /* WHEN THE GENERAL CLASSIFIER IS ALLOWED TO SPEAK.
+
+     "it thinks big outdoor trees are mouses and pots, and that toolboxes
+      are speedboats, and 3d printers are sewing machines."
+
+     Every one of those is the same thing: ImageNet has no class for a
+     toolbox, a 3D printer or a mature oak, so asked about one it must
+     return something else - and it will return the SAME something else
+     every time, so repeating itself proves nothing here.
+
+     The fix is not a higher threshold, it is knowing when this model is
+     out of its depth. It is asked about the middle of an unbounded scene,
+     where most of what a camera sees is not in its vocabulary at all. So
+     it only gets to put a name on the screen when it is emphatic - and
+     when it is not, the readout offers to ASK something that can answer,
+     which is worth more than a wrong noun. */
+  var SCENE_MEAN = 0.62, SCENE_MARGIN = 0.34;
+
   function sceneLabel(r) {
     var chip = U.$('#sceneChip');
     if (!chip) return;
@@ -718,6 +763,17 @@ var UI = (function () {
       sceneCur = null;
       return;
     }
+
+    var strong = r.score >= SCENE_MEAN && (r.margin === undefined || r.margin >= SCENE_MARGIN);
+    if (!strong) {
+      /* Not a name. An offer. */
+      sceneCur = { name: '', kind: r.kind, ask: true, box: r.box };
+      tele('#sceneName', 'Tap to identify');
+      tele('#sceneKind', 'not sure');
+      if (chip.hidden) chip.hidden = false;
+      return;
+    }
+
     sceneCur = r;
     tele('#sceneName', r.name);
     tele('#sceneKind', r.kind || 'target');
@@ -732,6 +788,13 @@ var UI = (function () {
      with nothing configured at all. */
   function openScene() {
     if (!sceneCur) return;
+    /* The classifier had nothing worth saying, so send the middle of the
+       frame to something that might. */
+    if (sceneCur.ask) {
+      var cv2 = U.$('#overlay');
+      IDENT.atPoint(cv2.clientWidth / 2, cv2.clientHeight / 2);
+      return;
+    }
     /* A species answer already has its binomial; go straight to the taxon
        record rather than asking the general classifier's word about it. */
     if (sceneCur.species) {
@@ -828,6 +891,8 @@ var UI = (function () {
   }
 
   function buildSettings() {
+    var vs = U.$('#optVoice');
+    if (vs) vs.checked = !!SET.get('voice');
     var from = U.$('#optCapFrom'), to = U.$('#optCapTo');
     from.appendChild(U.el('option', { value: 'auto', text: 'Auto (device language)' }));
     CAPS.LANGS.forEach(function (l) { from.appendChild(U.el('option', { value: l[0], text: l[1] })); });
@@ -913,6 +978,50 @@ var UI = (function () {
       keyEl.addEventListener('change', function () { SET.set('apiKey', this.value.trim()); });
     }
 
+    /* A nudge, not a switch: the decoder is always watching, and this puts
+       its pace back to brisk and says so, for someone holding a label up
+       after a quiet minute. Shown where the browser has no scanner of its
+       own, which is where that pause is longest. */
+    var sb = U.$('#btnScan');
+    if (sb) {
+      sb.addEventListener('click', function () {
+        SCAN.burst();
+        sb.setAttribute('aria-pressed', 'true');
+        status('LOOKING FOR A CODE\u2026', 'busy');
+        setTimeout(function () {
+          sb.setAttribute('aria-pressed', 'false');
+          if (!SCAN.bursting()) status('', '');
+        }, 9000);
+      });
+    }
+
+    var gk = U.$('#geminiKey');
+    if (gk) {
+      gk.value = SET.get('geminiKey') || '';
+      gk.addEventListener('change', function () { SET.set('geminiKey', this.value.trim()); GEM._reset(); });
+    }
+    var gt = U.$('#btnGemTest');
+    if (gt) gt.addEventListener('click', function () {
+      setText('#gemStatus', 'Asking\u2026');
+      GEM.test().then(function (r) {
+        setText('#gemStatus', r.ok ? ('Working. ' + r.model + ' answered.') : ('No: ' + r.error));
+      });
+    });
+
+    var vb = U.$('#optVoice');
+    if (vb) {
+      vb.checked = !!SET.get('voice');
+      vb.addEventListener('change', function () {
+        SET.set('voice', this.checked);
+        if (this.checked) startVoice(); else VOICE.stop();
+      });
+    }
+    var vbtn = U.$('#btnVoice');
+    if (vbtn) vbtn.addEventListener('click', function () {
+      if (!VOICE.state().on) { SET.set('voice', true); if (vb) vb.checked = true; startVoice(); }
+      VOICE.wake();
+    });
+
     var fm = U.$('#optFaceMem');
     if (fm) {
       fm.checked = FACES.isOn();
@@ -967,7 +1076,7 @@ var UI = (function () {
 
     U.$('#btnCaptions').addEventListener('click', function () {
       if (CAPS.running()) { CAPS.stop(); document.body.classList.remove('caps-on'); }
-      else if (CAPS.start()) { document.body.classList.add('caps-on'); }
+      else if (CAPS.start('captions')) { document.body.classList.add('caps-on'); }
     });
 
     U.$('#btnFlip').addEventListener('click', function () {
@@ -986,6 +1095,110 @@ var UI = (function () {
       var t = TRACK.hit(x, y);
       if (t) openTrack(t); else IDENT.atPoint(x, y);
     });
+  }
+
+  /* ---------- the voice assistant ---------- */
+
+  /* What it has asked to be shown. A word or two naming a thing, and
+     optionally a colour - never anything that could change how the app
+     works, only what is drawn. */
+  var voiceFocus = null;     // { what, colour, only, at }
+  var VOICE_MS = 25000;      // how long its instruction stands
+
+  function startVoice() {
+    if (!VOICE.start()) {
+      toastFace('This browser cannot listen. Chrome and Edge can; Safari often cannot.');
+      return false;
+    }
+    voiceNote();
+    return true;
+  }
+
+  function voiceNote() {
+    var st = VOICE.state();
+    var el = U.$('#voiceState');
+    var btn = U.$('#btnVoice');
+    if (btn) btn.setAttribute('aria-pressed', st.awake || st.thinking ? 'true' : 'false');
+    if (!el) return;
+    el.textContent = !st.on ? 'Off.'
+      : st.thinking ? 'Thinking\u2026'
+      : st.awake ? 'Listening for your question\u2026'
+      : 'Waiting for "hey vision". Engine: ' + st.engine + '.';
+  }
+
+  function voiceEvent(ev) {
+    if (ev.kind === 'awake') { status('LISTENING \u2014 ASK YOUR QUESTION', 'busy'); }
+    else if (ev.kind === 'thinking') { status('\u201c' + ev.question + '\u201d', 'busy'); }
+    else if (ev.kind === 'answer') {
+      status(ev.answer.say || '', ev.answer.error ? 'bad' : '');
+      setTimeout(function () { status('', ''); }, 7000);
+    } else if (ev.kind === 'box' || ev.kind === 'only') {
+      voiceFocus = { what: ev.what, colour: ev.colour || '', only: ev.kind === 'only',
+                     at: performance.now() };
+      dirty();
+    } else if (ev.kind === 'clear') {
+      voiceFocus = null;
+      dirty();
+    }
+    voiceNote();
+  }
+
+  /* Does this target match what the voice was asked to point at? Loose on
+     purpose - somebody says "the bike", the detector says "bicycle". */
+  /* THE WORDS PEOPLE SAY, AGAINST THE WORDS THE DETECTOR KNOWS.
+
+     Nobody says "bicycle" out loud, or "cell phone", or "potted plant".
+     This is the small gap between how a person names a thing and how the
+     model does - not a thesaurus, just the everyday words for the eighty
+     classes the detector actually has. */
+  var SAID_AS = {
+    bike: 'bicycle', bicycle: 'bicycle', cycle: 'bicycle',
+    phone: 'cell phone', mobile: 'cell phone',
+    telly: 'tv', television: 'tv', screen: 'tv', monitor: 'tv',
+    sofa: 'couch', settee: 'couch',
+    bin: 'trash can', rubbish: 'trash can', trash: 'trash can',
+    plant: 'potted plant', pot: 'potted plant',
+    laptop: 'laptop', computer: 'laptop',
+    table: 'dining table', desk: 'dining table',
+    bag: 'backpack', rucksack: 'backpack', handbag: 'handbag',
+    car: 'car', van: 'truck', lorry: 'truck',
+    mug: 'cup', glass: 'wine glass',
+    ball: 'sports ball', person: 'person', people: 'person',
+    dog: 'dog', cat: 'cat', bird: 'bird'
+  };
+
+  function voiceMatches(t) {
+    if (!voiceFocus || !voiceFocus.what) return false;
+    var want = voiceFocus.what.toLowerCase()
+      .replace(/^(the|a|an|that|those|these|my|your)\s+/, '').trim();
+    if (!want) return false;
+    var hay = ((t.label || '') + ' ' + (t.cls || '') + ' ' +
+               ((t.species && t.species.scientific) || '')).toLowerCase();
+
+    var tries = [want];
+    var stem = want.replace(/(ies|es|s)$/, '');
+    if (stem.length > 2 && stem !== want) tries.push(stem);
+    [want, stem].forEach(function (w) {
+      if (SAID_AS[w] && tries.indexOf(SAID_AS[w]) === -1) tries.push(SAID_AS[w]);
+    });
+    /* The last word of a phrase is usually the noun: "the red bike". */
+    var lastWord = want.split(/\s+/).pop();
+    if (lastWord && lastWord !== want) {
+      tries.push(lastWord);
+      if (SAID_AS[lastWord]) tries.push(SAID_AS[lastWord]);
+    }
+
+    for (var i = 0; i < tries.length; i++) {
+      if (tries[i] && tries[i].length > 1 && hay.indexOf(tries[i]) !== -1) return true;
+    }
+    return false;
+  }
+
+  var VOICE_COLOURS = { green: '#6ee7a0', blue: '#8ab4ff', amber: '#ffc46b',
+                        pink: '#ff9ad4', red: '#ff8080' };
+
+  function voiceLive() {
+    return !!(voiceFocus && (performance.now() - voiceFocus.at) < VOICE_MS);
   }
 
   /* ---------- faces this device has been told about ---------- */
@@ -1311,6 +1524,8 @@ var UI = (function () {
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
            refreshOpen: refreshOpen, sceneLabel: sceneLabel, sceneSpecies: sceneSpecies,
            faces: faces, faceAt: faceAt, nameFace: nameFace, buildFaceList: buildFaceList,
+           voiceFocus: function () { return voiceLive() ? voiceFocus : null; },
+           voiceMatches: voiceMatches, startVoice: startVoice,
            openScene: openScene,
            captionDraw: captionDraw, captionState: captionState, captionNote: captionNote,
            get needsDraw() { return needsDraw; } };

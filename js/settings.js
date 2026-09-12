@@ -22,6 +22,10 @@ var SET = (function () {
     mode: 'all',
     facing: 'environment',
     apiCleared: false,
+    /* The owner's own Gemini key, kept on this device and sent only to
+       Google. Empty means the Worker answers instead, which needs no key. */
+    geminiKey: '',
+    voice: false,
     /* Only for an endpoint you run yourself - a Pi behind a tunnel needs a
        lock on the door. The Cloudflare Worker does not use one. */
     apiKey: ''

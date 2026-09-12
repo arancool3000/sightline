@@ -11,6 +11,8 @@
   var DETECT_MS = 90;              // ~11 detector passes a second; boxes are smoothed between
   var frameTimes = [];
   var loopHandle = null;
+  var paused = false;
+  var PAINT_MS = 45, lastPaint = 0;
 
   var MODE_KINDS = {
     all: null,                                   // null means everything
@@ -140,9 +142,17 @@
         GEO.start();
         /* The decoder is fetched now rather than at boot, and only if the
            browser has no scanner of its own. */
+        /* Where the browser has its own scanner it is started now and
+           watches continuously for nothing. Where it has not, the decoder
+           is only fetched when somebody actually asks for a scan. */
+        /* Both paths watch. The browser's own scanner where there is one,
+           and the vendored decoder where there is not - it reads a barcode
+           in a few milliseconds, so there is no reason to make anyone ask. */
         SCAN.start().then(function (ok) {
           if (!ok) UI.status('CODE SCANNER UNAVAILABLE - ' + (SCAN.error() || 'unknown'), 'bad');
         });
+        var sb = U.$('#btnScan');
+        if (sb && !window.BarcodeDetector) sb.hidden = false;
         UI.resize();
         running = true;
         UI.tele('#tEng', SET.hasApi() ? 'CLOUD' : 'LOCAL');
@@ -161,11 +171,45 @@
       });
   }
 
+  /* NOTHING RUNS BEHIND A PANEL.
+
+     An M2 iPad froze on the settings page, and this is why: opening a
+     full-screen panel changed nothing at all. The detector, the classifier,
+     the species model, the barcode decoder and the face pass all carried on
+     over a camera nobody could see, and the overlay was redrawn every
+     animation frame on top of that.
+
+     On a browser with no built-in barcode scanner - Safari - the decoder
+     alone is WebAssembly over a 720-pixel image across eleven formats,
+     twice a second, for ever. Invisibly. Add a scrolling panel on top and
+     the main thread has nothing left.
+
+     A panel that covers the camera means the answer cannot be seen, so
+     there is no answer worth computing. The loop stays alive so it picks
+     straight back up. */
+  function covered() {
+    if (document.hidden) return true;
+    var ids = ['settings', 'mapPanel', 'sheet'];
+    for (var i = 0; i < ids.length; i++) {
+      var el = document.getElementById(ids[i]);
+      if (el && !el.hidden) return true;
+    }
+    return false;
+  }
+
   function loop() {
     if (!running) return;
     loopHandle = requestAnimationFrame(loop);
 
     if (!CAM.live()) return;
+    if (covered()) { paused = true; return; }
+    if (paused) {
+      /* Coming back: forget what was half-measured while the screen was
+         somewhere else, so a stale box does not jump on the first frame. */
+      paused = false;
+      TRACK.reset();
+      lastDetect = 0; lastGrid = 0; lastScene = 0;
+    }
     var now = performance.now();
 
     /* PRIORITY: the scene label is the realtime promise, so it runs first and
@@ -216,7 +260,15 @@
       gridToTracks(now);
     }
 
-    UI.draw(TRACK.all());
+    /* The overlay was repainted on every animation frame - sixty times a
+       second, with a shadow blur under every named box - while what it
+       draws only changes when a model answers, a few times a second at
+       best. The rest was work nobody could see, on the same thread as the
+       models. A change forces a paint; otherwise it paints at 22fps. */
+    if (UI.needsDraw || (now - lastPaint) >= PAINT_MS) {
+      lastPaint = now;
+      UI.draw(TRACK.all());
+    }
   }
 
   /* Ring of recent time-to-label measurements. Its declaration was lost in an
@@ -336,6 +388,7 @@
     });
   }
   window.SL_FACES = function () { return { seen: faceHits, state: FACES.state() }; };
+  window.SL_PAUSED = function () { return { paused: paused, covered: covered() }; };
 
   /* Which species model to try on the centre crop. The general classifier
      is a poor judge of WHICH species, but a decent judge of what KIND of

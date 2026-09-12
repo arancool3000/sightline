@@ -20,7 +20,11 @@ var MAPVIEW = (function () {
   var mpp = 1.2;                // metres per pixel
   var MIN_MPP = 0.12, MAX_MPP = 600;
   var follow = true;            // recentre on the reader as they move
-  var layers = { streets: 1, buildings: 1, places: 1, route: 1, labels: 1 };
+  /* Four, not five. A fifth chip did not fit a 390px screen: the row
+     scrolled and the last one was off the edge, which is a control you
+     cannot reach. Labels belong to places anyway - a named dot with its
+     name hidden is a worse dot, not a different layer. */
+  var layers = { streets: 1, buildings: 1, places: 1, route: 1 };
   var hits = [];                // what is on screen and tappable
   var fetched = {};             // tiles asked for this session, to stay polite
 
@@ -304,7 +308,7 @@ var MAPVIEW = (function () {
         var on = MAP.dest() && MAP.dest().title === p.title;
         ctx.fillStyle = on ? '#ffb347' : '#7fd8ff';
         ctx.beginPath(); ctx.arc(s4[0], s4[1], on ? 6 : 4, 0, Math.PI * 2); ctx.fill();
-        if (layers.labels && mpp < 9) {
+        if (mpp < 9) {
           ctx.fillStyle = 'rgba(230,236,241,.9)';
           ctx.font = '500 11px -apple-system,system-ui,sans-serif';
           ctx.textAlign = 'left'; ctx.textBaseline = 'middle';

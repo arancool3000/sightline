@@ -28,6 +28,7 @@ const DEFAULTS = {
   CF_VISION_FALLBACK: '@cf/llava-hf/llava-1.5-7b-hf',
   CF_TRANSLATE_MODEL: '@cf/meta/m2m100-1.2b',
   CF_STT_MODEL: '@cf/openai/whisper',
+  CF_TEXT_MODEL: '@cf/meta/llama-3.1-8b-instruct',
   ALLOW_ORIGIN: '*',
   RL_BURST: '40',        // requests per IP per window
   RL_WINDOW: '60',       // seconds
@@ -753,6 +754,31 @@ export default {
                       siteName: meta(head, 'og:site_name') }, 200, env);
       } catch (e) {
         return err('the page could not be reached: ' + String(e && e.message || e).slice(0, 100), 502, env);
+      }
+    }
+
+    /* ---- a spoken question about the frame ----
+       The voice assistant uses the owner's own Gemini key where there is
+       one, and this where there is not. */
+    if (path === '/v1/ask') {
+      const prompt = String(body.prompt || '').slice(0, 4000);
+      if (!prompt) return err('a prompt is required', 400, env);
+      const image = String(body.image || '');
+      try {
+        if (image) {
+          const r = await workersAI(env, image, 'object');
+          const said = r && r.ok ? [r.name, r.note].filter(Boolean).join('. ') : '';
+          if (said) return json({ ok: true, text: JSON.stringify({ say: said, actions: [] }) }, 200, env);
+        }
+        if (!env.AI) return err('no AI binding on this endpoint', 501, env);
+        const out = await env.AI.run(cfg(env, 'CF_TEXT_MODEL'), {
+          messages: [{ role: 'user', content: prompt }], max_tokens: 300, temperature: 0.2
+        });
+        const text = (out && (out.response || out.text)) || '';
+        return text ? json({ ok: true, text }, 200, env)
+                    : err('no answer', 502, env);
+      } catch (e) {
+        return err('ask failed: ' + String(e && e.message || e).slice(0, 120), 502, env);
       }
     }
 
