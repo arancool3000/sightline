@@ -434,16 +434,45 @@ var LOCAL = (function () {
          gap collapses. So the gap is carried with the label, a narrow one
          marks it unsettled, and the runners-up are kept - for a crossbreed
          the list of breeds it resembles is the honest answer. */
+      /* EVERY LOOK IS A VOTE, NOT A VERDICT.
+
+         One frame is an opinion. EVIDENCE decides when a run of opinions has
+         become something worth putting on the screen, and until it does the
+         target keeps the plain noun the detector gave it. That is what stops
+         a Maltipoo being announced as a cocker spaniel on the strength of a
+         single frame. */
       var second = preds[1] ? preds[1].probability : 0;
+      var margin = top.probability - second;
+      var nowMs = performance.now();
+      EVIDENCE.record(t, name, top.probability, margin, nowMs);
+      var v = EVIDENCE.verdict(t, nowMs);
+
       t.local = {
         name: name,
         score: top.probability,
-        margin: top.probability - second,
+        margin: margin,
         ms: ms,
         alt: preds.slice(1).map(function (p) { return tidy(p.className); })
       };
-      /* Only the cloud tier may overwrite a label it has already sharpened. */
-      if (t.tier !== 'cloud') { t.label = name; t.tier = 'local'; t.unsure = t.local.margin < MARGIN_SURE; }
+
+      if (!v || !v.ready) {
+        /* Not yet, or never. Say what is being weighed rather than
+           inventing certainty - and for the torn case, that IS the answer. */
+        t.unsure = true;
+        t.torn = !!(v && v.torn);
+        t.among = (v && v.among) || [];
+        t.why = v ? v.why : '';
+        t.scan = 'scanning';
+        t.settled = 0;
+        return t.local;
+      }
+
+      if (EVIDENCE.accept(t, 'local', v.name)) {
+        t.label = v.name;
+        t.tier = 'local';
+        t.unsure = false;
+        t.torn = false;
+      }
       t.scan = 'relevant';
       t.why = '';
       t.settled = performance.now();
@@ -495,6 +524,9 @@ var LOCAL = (function () {
      This is what you want when you are walking around pointing at one plant
      at a time; the detector is for scenes with several things in them. */
   var scenePrev = null, sceneHold = 0;
+  /* The centre of the frame is judged like any other target, so it gets a
+     stand-in track to hold its votes. */
+  var sceneTrack = { cls: '' };
 
   function scene(video, cb) {
     if (!net || sceneBusy) return;
@@ -529,9 +561,24 @@ var LOCAL = (function () {
         return;
       }
       fails = 0; lastOk = performance.now();
-      scenePrev = { name: name, score: top.probability, ms: Math.round(ms),
-                    margin: top.probability - (preds[1] ? preds[1].probability : 0),
-                    kind: kindOfLabel(name),
+
+      /* The centre readout is judged the same way. It used to flick between
+         three unrelated nouns as the camera moved, which is the single
+         loudest way this app looked like it was guessing - because it was. */
+      var m2 = top.probability - (preds[1] ? preds[1].probability : 0);
+      var nowS = performance.now();
+      EVIDENCE.record(sceneTrack, name, top.probability, m2, nowS);
+      var vs = EVIDENCE.verdict(sceneTrack, nowS);
+      if (!vs || !vs.ready) {
+        if (scenePrev && (nowS - sceneHold) < 1600) return;   // hold the last good one briefly
+        scenePrev = null;
+        cb(null);
+        return;
+      }
+
+      scenePrev = { name: vs.name, score: vs.score, ms: Math.round(ms),
+                    margin: vs.margin, votes: vs.n,
+                    kind: kindOfLabel(vs.name),
                     alt: preds.slice(1).map(function (p) { return tidy(p.className); }) };
       sceneHold = performance.now();
       cb(scenePrev);

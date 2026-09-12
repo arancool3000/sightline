@@ -160,25 +160,21 @@ var AR = (function () {
        - nothing else. A crop of the scene classified as "Tennis Ball" is
          the thing this rule exists to stop.                               */
   function worthSaying(t) {
+    /* TORN IS AN ANSWER.
+
+       When the model cannot separate its top few, that is not a failure to
+       report - it is the most truthful thing available, and for a
+       crossbreed or a cultivar it is the ONLY true thing: "a cross of
+       these". So it earns a card, in its own quieter style. */
+    if (t.torn && t.among && t.among.length > 1 && EVIDENCE.adds(t.among[0], t.cls)) return true;
     if (!t.label) return false;
-    var lab = String(t.label).toLowerCase().trim();
-    var cls = String(t.cls || '').toLowerCase().replace(/[^a-z ]/g, '').trim();
-    if (!lab) return false;
-    /* Even the detail tier is held to it: if all it came back with was the
-       word already on the box, it has told us nothing. */
-    if (cls && lab === cls) return false;
-    if (t.tier === 'cloud') return true;
-    /* A species name is the whole point of this app - "Helianthus annuus"
-       for a flower is exactly the thing the person holding the camera does
-       not already know. */
-    if (t.tier === 'species') return true;
+    /* An answer still being weighed is not an answer. */
+    if (t.unsure) return false;
+    if (!EVIDENCE.adds(t.label, t.cls)) return false;
     /* A guess about a square of the scene is never specific enough to
        deserve words on screen. */
     if (t.tier === 'guess') return false;
-    if (!cls) return false;
-    /* "dog" -> "Golden Retriever" is worth saying; "dog" -> "dogs" is not. */
-    if (lab.indexOf(cls) !== -1 && lab.split(/\s+/).length <= cls.split(/\s+/).length) return false;
-    return true;
+    return EVIDENCE.rank(t.tier) >= EVIDENCE.rank('local');
   }
 
   function place(t, screen, kind, frameW) {
@@ -201,18 +197,34 @@ var AR = (function () {
     /* An on-device answer the model was torn over is shown as unsettled -
        dashed, with the mark - rather than in the same type as a confident
        one. It is still the best guess; it is just not presented as a fact. */
-    var provisional = (t.tier !== 'cloud' && t.tier !== 'species') || !!t.unsure;
+    var provisional = EVIDENCE.rank(t.tier) < EVIDENCE.rank('species') || !!t.unsure;
     var guess = t.tier === 'guess';
     /* A target that has not been named yet shows the plain noun the
        detector gave, not a state machine. "SCANNING" and a percentage told
        the reader about our process; the noun tells them about the world. */
-    var title = sentence(t.label);
+    var torn = !!(t.torn && t.among && t.among.length > 1);
+    var title = torn ? ('A cross of ' + sentence(t.among[0]) + '?') : sentence(t.label);
     /* What the second line says is a claim about how much to trust the
        first one. A confirmed identification gets its detail; a guess from a
        crop of the scene says so, with the number. */
     /* The second line answers the question the owner actually asks of an
        object: what is it and what does it cost. A price beats the maker,
        the maker beats the category. A living thing gets its binomial. */
+    if (torn) {
+      /* Name the others. A shortlist is information; a wrong winner is not. */
+      var sub2 = 'or ' + t.among.slice(1, 3).map(sentence).join(', ');
+      var tEl0 = el.querySelector('.ar-title');
+      if (tEl0.textContent !== title) tEl0.textContent = title;
+      var sEl0 = el.querySelector('.ar-sub');
+      if (sEl0.textContent !== sub2) sEl0.textContent = sub2;
+      var dEl0 = el.querySelector('.ar-dist');
+      var dist0 = distance(t.cls, screen[2], screen[3], frameW);
+      if (dEl0.textContent !== dist0) dEl0.textContent = dist0;
+      var cls0 = 'ar-card k-' + kind + ' named torn';
+      if (el.className !== cls0) el.className = cls0;
+      return position(el, screen, layer);
+    }
+
     var sub = (t.species && t.species.scientific) ||
               (t.data && t.data.scientific) || specLine(t.data) ||
               (named ? sentence(kind) : '');
@@ -232,8 +244,11 @@ var AR = (function () {
       (t.scan === 'dismissed' && !named ? ' dim' : '');
     if (el.className !== cls) el.className = cls;
 
-    /* Anchor above the object, kept inside the viewport and clear of
-       anything already on screen. */
+    return position(el, screen, layer);
+  }
+
+  /* Where the card sits, which is the same question whatever it says. */
+  function position(el, screen, layer) {
     var w = layer.clientWidth, h = layer.clientHeight;
     var cw = el.offsetWidth || 150, ch = el.offsetHeight || 44;
     var x = screen[0] + screen[2] / 2 - cw / 2;

@@ -26,7 +26,12 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
 
   // Every id the markup ever hides, plus the panels shown by class.
   const ids=await page.evaluate(()=>Array.prototype.map.call(document.querySelectorAll('[id]'),e=>e.id));
-  const hideable=['statusStrip','sceneChip','captionBar','sheet','settings','toast','wxCard','nearCard','mapPanel'];
+  /* Every panel the markup can hide. codeCard is on this list because a
+     splice while rewriting the map page deleted it outright and nothing
+     noticed until a suite tripped over the missing element - a panel that
+     has vanished should fail here, loudly, on its first line. */
+  const hideable=['statusStrip','sceneChip','captionBar','sheet','settings','toast',
+                  'wxCard','nearCard','mapPanel','codeCard','radarPod'];
   ok('SETUP: every panel under test exists in the page',hideable.every(i=>ids.indexOf(i)!==-1),
      hideable.filter(i=>ids.indexOf(i)===-1));
 

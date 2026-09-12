@@ -124,6 +124,36 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); } else { 
   ok('the detail tier echoing the box word back gets no card', r.echoed === 0, r.echoed);
   ok('CONTROL: "dog" becoming "Golden Retriever" DOES get a card', r.better === 1, r.better);
 
+  /* The Maltipoo. The model cannot name it, and saying so IS the answer. */
+  r = await page.evaluate(() => {
+    TRACK.reset();
+    TRACK.update([{ cls: 'dog', box: [60, 300, 160, 200], score: 0.9 }], performance.now());
+    const t = TRACK.all()[0];
+    t.torn = true; t.unsure = true; t.label = 'Cocker Spaniel'; t.tier = 'local';
+    t.among = ['Cocker Spaniel', 'Toy Poodle', 'Maltese'];
+    UI.draw(TRACK.all());
+    const card = document.querySelector('#arLayer .ar-card');
+    return { n: document.querySelectorAll('#arLayer .ar-card').length,
+             title: card && card.querySelector('.ar-title').textContent,
+             sub: card && card.querySelector('.ar-sub').textContent,
+             cls: card && card.className };
+  });
+  ok('a crossbreed still gets a card', r.n === 1, r.n);
+  ok('but it is not claimed as one breed', !!r.title && /cross of/i.test(r.title), r.title);
+  ok('and the others are named', !!r.sub && /poodle/i.test(r.sub) && /maltese/i.test(r.sub), r.sub);
+  ok('drawn in the unsettled style', !!r.cls && /\btorn\b/.test(r.cls), r.cls);
+
+  /* CONTROL: torn about nothing is still nothing. */
+  r = await page.evaluate(() => {
+    TRACK.reset();
+    TRACK.update([{ cls: 'backpack', box: [60, 300, 140, 180], score: 0.8 }], performance.now());
+    const t = TRACK.all()[0];
+    t.torn = true; t.unsure = true; t.among = ['Backpack', 'Backpacks'];
+    UI.draw(TRACK.all());
+    return document.querySelectorAll('#arLayer .ar-card').length;
+  });
+  ok('CONTROL: torn between the obvious and its plural says nothing', r === 0, r);
+
   /* And the other half of what the owner asked for: two backpacks, two signs. */
   r = await page.evaluate(() => {
     const n = window.__plot([

@@ -526,3 +526,10 @@ body.caps-on #sceneChip{display:none}
    got, and the owner asked for them gone. */
 .ar-card.guess{opacity:.85}
 .ar-card.guess .ar-title{font-weight:500}
+
+/* The model could not separate its top few. That is not a failure to
+   report - for a crossbreed it is the only true thing that can be said -
+   so it gets a card, in a quieter hand than a settled answer. */
+.ar-card.torn{border-style:dashed;opacity:.92}
+.ar-card.torn .ar-title{font-weight:500}
+.ar-card.torn .ar-sub{color:var(--warn);opacity:.9}

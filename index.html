@@ -125,6 +125,22 @@
     <div id="mapList" class="map-list"></div>
   </section>
 
+  <!-- A scanned code, beside whatever else is on screen. -->
+  <section id="codeCard" class="glass" hidden>
+    <button id="codeClose" class="code-x" aria-label="Dismiss">&times;</button>
+    <div class="code-head">
+      <img id="codeImg" alt="" hidden>
+      <div class="code-id">
+        <div id="codeKicker" class="glass-k"></div>
+        <div id="codeName" class="code-name"></div>
+        <div id="codeSub" class="code-sub"></div>
+      </div>
+      <div id="codeScore" class="code-score" hidden><b></b><i>/100</i></div>
+    </div>
+    <div id="codeBody" class="code-body"></div>
+    <a id="codeGo" class="code-go" target="_blank" rel="noopener noreferrer nofollow" hidden>OPEN</a>
+  </section>
+
   <!-- What the camera is centred on, when nothing has been boxed. A name
        and a way in - no percentage, because a number next to a guess reads
        as precision it does not have. -->
@@ -293,6 +309,7 @@
 <script src="js/mapview.js" defer></script>
 <script src="js/scan.js" defer></script>
 <script src="js/codes.js" defer></script>
+<script src="js/evidence.js" defer></script>
 <script src="js/track.js" defer></script>
 <script src="js/local.js" defer></script>
 <script src="js/species.js" defer></script>
