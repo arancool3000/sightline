@@ -197,16 +197,27 @@ var MAPVIEW = (function () {
     if (acrossM > 2600) return;                  // too wide to fetch politely
     var stepLat = 0.0064, stepLon = 0.0064 / Math.max(0.2, Math.cos(centre.lat * Math.PI / 180));
     var rows = acrossM > 1200 ? 1 : 0;
+    /* The same condition that decides whether a footprint is DRAWN decides
+       whether it is fetched. Downloading boxes for a layer that is off, or
+       for a zoom that will not show them, is the slowest part of the map
+       spent on nothing. Derived from the draw gate, not written twice. */
+    var wantB = wantBuildings();
     for (var dy = -rows; dy <= rows; dy++) {
       for (var dx = -rows; dx <= rows; dx++) {
         var la = centre.lat + dy * stepLat, lo = centre.lon + dx * stepLon;
         var k = Math.floor(la / stepLat) + ',' + Math.floor(lo / stepLon);
-        if (fetched[k]) continue;
-        fetched[k] = 1;
-        ROADS.ensure(la, lo);
+        /* Remember WHAT was asked, not merely that something was: turning
+           the buildings layer on afterwards has to be able to ask again. */
+        var level = wantB ? 2 : 1;
+        if (fetched[k] >= level) continue;
+        fetched[k] = level;
+        ROADS.ensure(la, lo, wantB);
       }
     }
   }
+
+  /* The one place that decides whether footprints are wanted. */
+  function wantBuildings() { return !!layers.buildings && mpp < 6; }
 
   /* ---- drawing ---- */
 
@@ -237,7 +248,7 @@ var MAPVIEW = (function () {
     function visible(x, y) { return x > -pad && x < w + pad && y > -pad && y < h + pad; }
 
     /* Buildings under the streets, as footprints. */
-    if (layers.buildings && mpp < 6) {
+    if (wantBuildings()) {
       var blds = ROADS.buildings();
       ctx.fillStyle = 'rgba(70,120,170,.26)';
       ctx.strokeStyle = 'rgba(150,200,245,.22)';
@@ -360,8 +371,30 @@ var MAPVIEW = (function () {
     ctx.restore();
 
     scaleBar(ctx, w, h);
+    waiting(ctx, w, h);
     var note = document.getElementById('mapScale');
     if (note && note.textContent !== scaleLabel()) note.textContent = scaleLabel();
+  }
+
+  /* An empty square and a square that is still filling look the same, and
+     one of them is broken. Say which this is, and say what is missing -
+     streets arriving before boxes is the design, not a fault. */
+  function waiting(ctx2, w, h) {
+    var p = ROADS.pending ? ROADS.pending() : null;
+    if (!p) return;
+    var n = p.roads + p.buildings + p.queued;
+    if (!n) return;
+    var what = p.roads ? 'Loading streets' : 'Loading buildings';
+    if (p.queued) what += ' (' + (n) + ')';
+    ctx2.save();
+    ctx2.font = '600 11px ui-monospace,Menlo,monospace';
+    var tw = ctx2.measureText(what).width;
+    ctx2.fillStyle = 'rgba(6,12,18,.72)';
+    ctx2.fillRect(12, h - 30, tw + 18, 20);
+    ctx2.fillStyle = 'rgba(190,225,255,.85)';
+    ctx2.textAlign = 'left';
+    ctx2.fillText(what, 21, h - 16);
+    ctx2.restore();
   }
 
   function msg(ctx2, w, h, t) {
