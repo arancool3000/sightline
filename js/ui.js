@@ -252,9 +252,12 @@ var UI = (function () {
       : /quota|429/.test(why) ? 'The optional cloud tier is rate limited right now. On-device labelling is unaffected and keeps working.'
       : /Failed to fetch|NetworkError/i.test(why) ? 'Could not reach the analysis endpoint. On-device labelling still works.'
       : 'Nothing could be identified there. Try getting closer, or steadier light.';
+    /* No second CLOSE here. The one that used to sit in the body carried an
+       inline onclick, which this site's own CSP blocks (script-src has no
+       'unsafe-inline'), so it rendered brighter than the real control in the
+       corner and did nothing at all. The corner CLOSE is the only one. */
     showSheet('<div class="d-kicker">NO RESULT</div><h3 class="d-title">Not identified</h3>' +
-      '<p class="d-body">' + U.esc(human) + '</p>' +
-      '<div class="d-actions"><button class="obtn" onclick="UI.close()">CLOSE</button></div>');
+      '<p class="d-body">' + U.esc(human) + '</p>');
   }
 
   function needEndpoint() { openError('no-endpoint'); }

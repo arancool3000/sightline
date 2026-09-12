@@ -73,7 +73,25 @@ var LOCAL = (function () {
   function load() {
     if (net) return Promise.resolve(net);
     if (loading) return loading;
-    if (!window.mobilenet) return Promise.resolve(null);
+
+    /* This used to bail here unless window.mobilenet existed - a leftover
+       from when the packaged loader was the primary path. It has not been
+       for a while: loadLocal() goes straight to tf.loadLayersModel and never
+       touches that global. So if the packaged library failed to attach for
+       any reason, the recogniser died before trying the vendored weights
+       that were sitting right there, and left no error behind, reporting
+       only "not started". That is the whole bug.
+
+       tf itself IS required, and its absence is now reported rather than
+       silently swallowed. */
+    if (!window.tf) {
+      lastErr = 'tensorflow library did not load (vendor/tf.min.js)';
+      return Promise.resolve(null);
+    }
+    if (!window.KH_IMAGENET) {
+      lastErr = 'class names did not load (vendor/imagenet-classes.js)';
+      return Promise.resolve(null);
+    }
 
     loading = pickBackend()
       .then(function () {
@@ -90,8 +108,11 @@ var LOCAL = (function () {
             lastErr = 'local weights failed (' + String(e && e.message || e).slice(0, 50) + ')';
             return loadMirror();
           })
-          .catch(function () {
-            if (!window.mobilenet) throw new Error('no classifier available');
+          .catch(function (e) {
+            if (!window.mobilenet) {
+              throw new Error('all classifier sources failed: ' +
+                String(lastErr || (e && e.message) || e).slice(0, 80));
+            }
             variant = 'tfhub';
             return mobilenet.load({ version: 1, alpha: alpha });
           });
@@ -461,7 +482,7 @@ var LOCAL = (function () {
       return { code: bad ? 'erroring' : 'ready', detail: bad ? lastErr : '' };
     }
     if (loading) return { code: 'loading', detail: '' };
-    return { code: 'failed', detail: lastErr || 'not started' };
+    return { code: 'failed', detail: lastErr || 'load() was never called' };
   }
 
   function timing() {

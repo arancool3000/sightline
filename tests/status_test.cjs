@@ -48,6 +48,36 @@ const server=http.createServer((q,res)=>{
     await ctx.close();
   }
 
+  /* ---- CASE 1b: THE REPORTED BUG.
+     window.mobilenet absent must NOT stop the recogniser. load() used to bail
+     on that global - a leftover from when the packaged loader was primary -
+     and returned before trying the vendored weights, leaving no error and
+     reporting only "not started", which is exactly what the owner saw. ---- */
+  {
+    const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
+    const page=await ctx.newPage();
+    await page.addInitScript(() => {
+      /* Simulate the packaged library failing to attach. */
+      Object.defineProperty(window, 'mobilenet', { configurable:true, get(){ return undefined; } });
+    });
+    await page.goto('http://localhost:8751/',{waitUntil:'domcontentloaded'});
+    await page.click('#btnStart');
+    const ok = await page.waitForFunction(()=>window.LOCAL&&LOCAL.ready(),null,{timeout:120000})
+      .then(()=>true).catch(()=>false);
+    const st = await page.evaluate(()=>({
+      ready: LOCAL.ready(),
+      model: LOCAL.timing().model,
+      detail: LOCAL.state().detail,
+      code: LOCAL.state().code,
+      strip: document.querySelector('#statusStrip').hidden
+    }));
+    t('WITHOUT window.mobilenet the recogniser STILL loads', ok && st.ready === true, st.code + ' / ' + st.detail);
+    t('it used the vendored weights to do it', /local/.test(st.model || ''), st.model);
+    t('and it never reports "not started"', !/not started/.test(st.detail || ''), st.detail || '(none)');
+    t('no warning strip is shown, because nothing is wrong', st.strip === true, 'hidden=' + st.strip);
+    await ctx.close();
+  }
+
   /* ---- CASE 2 (CONTROL): a working recogniser must NOT nag ---- */
   {
     const ctx=await browser.newContext({permissions:['camera'],viewport:{width:414,height:896}});
