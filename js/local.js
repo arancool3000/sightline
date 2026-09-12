@@ -232,7 +232,7 @@ var LOCAL = (function () {
   /* Our own copy. No third party involved at any point. */
   function loadLocal() {
     if (!window.tf || !window.KH_IMAGENET) return Promise.reject(new Error('tf or classes missing'));
-    return wrapLayers('vendor/models/mobilenet-v1-050/model.json', 'local');
+    return wrapLayers('vendor/models/mobilenet-v1-050-q/model.json', 'local');
   }
 
   function loadMirror() {
@@ -501,6 +501,8 @@ var LOCAL = (function () {
   var gridHits = [];       // { box, name, score, at }
   var gridBusy = false;
   var GRID_TTL = 6000;
+  var gridLast = {};       // region index -> the answer its previous pass gave
+  var GRID_AGREE_MS = 9000;  // how long a previous answer stays comparable
 
   function buildGrid() {
     if (GRID.length) return;
@@ -551,6 +553,18 @@ var LOCAL = (function () {
       var name = tidy(top.className);
       if (top.probability < MIN_SCORE || JUNK.test(name)) return;
 
+      /* AGREEMENT. A grid region is an arbitrary square of the scene, so a
+         single pass over it is a guess about a crop, not about an object.
+         A tree outside a window came back "rapeseed", then "pot", then
+         "valley" - three passes, three unrelated answers, all shown.
+
+         So a region has to give the SAME answer twice in a row before it
+         counts. A guess that cannot repeat itself is exactly the guess that
+         should not be on screen. */
+      var prev = gridLast[idx];
+      gridLast[idx] = { name: name, at: now };
+      if (!prev || prev.name !== name || (now - prev.at) > GRID_AGREE_MS) return;
+
       gridHits.push({ idx: idx, box: box, name: name, score: top.probability,
                       kind: kindOfLabel(name), at: now });
     }).catch(function (e) {
@@ -561,10 +575,33 @@ var LOCAL = (function () {
     });
   }
 
+  /* The nine regions overlap on purpose, so one large subject is inside
+     several of them. Returning all of those as separate targets is how one
+     tree became three cards. Strongest first, and anything overlapping a
+     region already returned is dropped. */
   function gridTargets() {
     var now = performance.now();
     gridHits = gridHits.filter(function (h) { return (now - h.at) < GRID_TTL; });
-    return gridHits;
+    return suppress(gridHits);
+  }
+
+  function suppress(list) {
+    var sorted = list.slice().sort(function (a, b) { return b.score - a.score; });
+    var keep = [];
+    sorted.forEach(function (h) {
+      for (var i = 0; i < keep.length; i++) {
+        var k = keep[i];
+        var ax = Math.max(h.box[0], k.box[0]), ay = Math.max(h.box[1], k.box[1]);
+        var bx = Math.min(h.box[0] + h.box[2], k.box[0] + k.box[2]);
+        var by = Math.min(h.box[1] + h.box[3], k.box[1] + k.box[3]);
+        var inter = Math.max(0, bx - ax) * Math.max(0, by - ay);
+        if (!inter) continue;
+        var small = Math.min(h.box[2] * h.box[3], k.box[2] * k.box[3]);
+        if (inter / small > 0.35) return;        // same part of the scene
+      }
+      keep.push(h);
+    });
+    return keep;
   }
 
   /* One place the UI can ask "what is actually going on", so a failure is
@@ -642,5 +679,6 @@ var LOCAL = (function () {
            trace: function () { return trace.slice(); }, label: label, sweep: sweep, age: age,
            scene: scene, sceneLast: sceneLast, kindOfLabel: kindOfLabel,
            gridStep: gridStep, gridTargets: gridTargets,
-           timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget };
+           timing: timing, tidy: tidy, backendName: backendName, setBudget: setBudget,
+           _testGridSuppress: suppress };
 })();

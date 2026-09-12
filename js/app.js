@@ -77,7 +77,7 @@
          there were no object boxes at all - only grid regions. Local first,
          remote only if the local copy is somehow missing. */
       jobs.push(
-        cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: 'vendor/models/coco-ssd-lite/model.json' })
+        cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: 'vendor/models/coco-ssd-lite-q/model.json' })
           .catch(function (e) {
             detectorErr = 'local detector failed (' + String(e && e.message || e).slice(0, 50) + ')';
             return cocoSsd.load({ base: 'lite_mobilenet_v2' });

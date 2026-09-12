@@ -22,6 +22,7 @@ var UI = (function () {
     sheet = U.$('#sheet');
     sheetBody = U.$('#sheetBody');
     settings = U.$('#settings');
+    AR.init();
     resize();
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
@@ -67,8 +68,12 @@ var UI = (function () {
     insect: '#ffb347', vehicle: '#ff9f6b', object: '#4fe3ff'
   };
 
-  function draw(tracks) {
+  function draw(all) {
     if (!ctx) return;
+    /* Duplicates are suppressed by the tracker, not here: a backpack scored
+       twice used to get two cards saying "Backpack", and one tree spanning
+       three grid regions got three different names at once. */
+    var tracks = (TRACK.visible ? TRACK.visible() : all);
     var w = cv.clientWidth, h = cv.clientHeight;
     var now = performance.now();
     ctx.clearRect(0, 0, w, h);
@@ -129,10 +134,19 @@ var UI = (function () {
       var mx = x + bw / 2, my = y + bh / 2;
 
       if (named) {
+        /* Highlight the thing itself: a soft wash plus a glowing outline, so
+           it is obvious WHICH object in a busy frame the card belongs to. */
         ctx.globalAlpha = 0.1;
         ctx.fillStyle = col;
         ctx.fillRect(x, y, bw, bh);
-        ctx.globalAlpha = named ? 0.95 : 0.5;
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.4;
+        ctx.shadowColor = col;
+        ctx.shadowBlur = 10;
+        ctx.strokeRect(x + 0.5, y + 0.5, bw - 1, bh - 1);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.95;
       }
 
       ctx.globalAlpha = dismissed ? 0.35 : 1;
@@ -178,43 +192,25 @@ var UI = (function () {
       if (t.state === 'skipped' && kind === 'person' && !named) text = 'PERSON';
       text = String(text).toUpperCase();
 
-      /* Leader line out of the top-right corner to a plate. This is what
-         makes it read as instrumentation rather than a floating chip. */
-      ctx.save();
-      ctx.font = '500 11px ui-monospace,SFMono-Regular,Menlo,monospace';
-      var tw = ctx.measureText(text).width;
-      var padX = 8, plateH = 22;
-      var leader = 14;
-
-      var px = x + bw + leader;
-      var py = y - plateH - 6;
-      var flip = px + tw + padX * 2 > w - 6;       // not enough room on the right
-      if (flip) px = x - leader - (tw + padX * 2);
-      if (px < 6) { px = U.clamp(x, 6, w - tw - padX * 2 - 6); }
-      if (py < 6) py = y + 6;
-
-      ctx.strokeStyle = col;
-      ctx.globalAlpha = named ? 0.8 : 0.4;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(mx, my);
-      ctx.lineTo(flip ? px + tw + padX * 2 : px, py + plateH / 2);
-      ctx.stroke();
-
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = 'rgba(5,6,7,.82)';
-      ctx.fillRect(px, py, tw + padX * 2, plateH);
-      ctx.fillStyle = col;
-      ctx.fillRect(px, py, 2, plateH);             // accent spine
-      ctx.strokeStyle = 'rgba(230,236,241,.18)';
-      ctx.strokeRect(px + 0.5, py + 0.5, tw + padX * 2 - 1, plateH - 1);
-
-      ctx.fillStyle = (named && !provisional) ? '#e6ecf1' : 'rgba(230,236,241,.66)';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, px + padX, py + plateH / 2 + 0.5);
-      ctx.restore();
+      /* THE CARD. Canvas is a poor way to draw an icon beside two weights of
+         type, so the card is a DOM element that AR moves with a transform;
+         the canvas keeps the geometry. place() answers where the card ended
+         up so the leader line can be drawn to it. */
+      var anchor = AR.place(t, s, kind, w);
+      if (anchor) {
+        ctx.save();
+        ctx.strokeStyle = col;
+        ctx.globalAlpha = named ? 0.7 : 0.34;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(mx, my);
+        ctx.lineTo(anchor[0], anchor[1]);
+        ctx.stroke();
+        ctx.restore();
+      }
     });
 
+    AR.sweep();
     needsDraw = false;
   }
 

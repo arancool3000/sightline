@@ -42,6 +42,9 @@ jobs:
         run: |
           mkdir -p dist
           cp -R index.html manifest.json sw.js icon.svg icon-maskable.svg _headers css js vendor dist/
+          # The float32 reference weights exist so the quantisation can be
+          # re-verified; shipping them would double the download for nothing.
+          rm -rf dist/vendor/models/_float32
           echo "--- publishing ---"
           find dist -type f | sort
 

@@ -288,3 +288,72 @@ body.caps-on #sceneChip{top:auto;bottom:calc(var(--safe-b) + 176px)}
 #statusStrip.bad #statusDot{background:var(--bad)}
 #statusStrip.busy #statusDot{background:var(--acc)}
 #statusText{flex:1;min-width:0;word-break:break-word}
+
+/* ---------- AR cards -------------------------------------------------- */
+/* One card per identified thing, sitting above it and moving with it. The
+   canvas underneath draws the dot on the object and the line up to the card,
+   so the answer is visibly attached to its subject rather than floating. */
+
+#arLayer{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden}
+
+.ar-card{
+  position:absolute;left:0;top:0;
+  display:flex;align-items:center;gap:8px;
+  max-width:min(62vw,260px);
+  padding:6px 10px 6px 7px;
+  background:rgba(6,9,12,.74);
+  border:1px solid var(--kc,var(--acc-dim));
+  border-left-width:2px;
+  border-radius:3px;
+  color:var(--ink);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  will-change:transform;
+  /* No transition on transform: the card must sit ON the object, and easing
+     it means it lags behind whatever the camera is pointed at. */
+  transition:opacity .18s linear,border-color .18s linear;
+}
+.ar-ic{display:flex;flex:0 0 auto;color:var(--kc,var(--acc));opacity:.9}
+.ar-txt{display:flex;flex-direction:column;min-width:0;gap:1px}
+.ar-title{
+  font-size:12.5px;font-weight:600;letter-spacing:.01em;line-height:1.15;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.ar-sub,.ar-dist{
+  font-family:var(--mono);font-size:9px;letter-spacing:.11em;text-transform:uppercase;
+  font-style:normal;color:var(--dim);line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.ar-sub:empty,.ar-dist:empty{display:none}
+.ar-dist{color:var(--kc,var(--acc));opacity:.8}
+
+/* Kind sets the accent, and the icon and border take it from one variable
+   so a new kind needs one line, not four. */
+.ar-card.k-person{--kc:#8ab4ff}
+.ar-card.k-animal{--kc:#ff8fd0}
+.ar-card.k-plant{--kc:#5ddc8c}
+.ar-card.k-insect{--kc:#ffb347}
+.ar-card.k-vehicle{--kc:#7aa2ff}
+.ar-card.k-object{--kc:#4fe3ff}
+
+/* Not yet named: quieter, and the type is monospace because it is a state,
+   not an answer. */
+.ar-card:not(.named){background:rgba(6,9,12,.56);border-color:var(--line)}
+.ar-card:not(.named) .ar-title{
+  font-family:var(--mono);font-size:10px;font-weight:500;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--dim)
+}
+.ar-card.scan{border-color:var(--kc,var(--acc-dim))}
+.ar-card.scan .ar-title{color:var(--ink)}
+.ar-card.dim{opacity:.42}
+.ar-card.dim .ar-ic{display:none}
+
+/* A device guess is provisional until the specific identity lands. Saying so
+   is the point: "Backpack" and "Mous Extreme Luggage, GBP 290" are not the
+   same claim and must not look the same. */
+.ar-card.prov .ar-title:after{content:"…";color:var(--dim);margin-left:3px}
+.ar-card.prov{border-style:dashed}
+
+@media (max-width:400px){
+  .ar-card{max-width:70vw;padding:5px 8px 5px 6px;gap:6px}
+  .ar-title{font-size:11.5px}
+}

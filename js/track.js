@@ -77,7 +77,70 @@ var TRACK = (function () {
     tracks.forEach(function (t) { if (!used[t.id]) t.misses++; });
     tracks = tracks.filter(function (t) { return t.misses <= MAX_MISSES; });
 
+    dedupe();
     return tracks;
+  }
+
+  /* One object, one answer.
+
+     Two things produced two labels on one thing. The detector can return
+     overlapping boxes for the same object under different classes - a
+     backpack that is also scored as a handbag - and each became its own
+     target. And the grid sweep samples nine overlapping regions, so a tree
+     filling the frame was in three of them and came back "rapeseed", "pot"
+     and "valley" at once, each as a separate card.
+
+     So after matching, overlapping targets are collapsed: the strongest one
+     survives and the rest are marked as duplicates of it. They are kept in
+     the tracker (dropping them would make them reappear next frame) but
+     they are not drawn and cannot be tapped.
+
+     Containment matters as much as overlap here: a small box wholly inside
+     a large one has a LOW IoU while plainly being the same object. */
+  var DUP_IOU = 0.5;
+  var DUP_INSIDE = 0.7;
+
+  function overlapping(a, b) {
+    if (U.iou(a.box, b.box) >= DUP_IOU) return true;
+    var ax = Math.max(a.box[0], b.box[0]), ay = Math.max(a.box[1], b.box[1]);
+    var bx = Math.min(a.box[0] + a.box[2], b.box[0] + b.box[2]);
+    var by = Math.min(a.box[1] + a.box[3], b.box[1] + b.box[3]);
+    var inter = Math.max(0, bx - ax) * Math.max(0, by - ay);
+    if (!inter) return false;
+    var areaA = a.box[2] * a.box[3], areaB = b.box[2] * b.box[3];
+    return inter / Math.min(areaA, areaB) >= DUP_INSIDE;
+  }
+
+  /* Which of two overlapping targets is the better answer. A named one beats
+     an unnamed one, a cloud answer beats a device guess, then confidence,
+     then the one we have had longest - so the surviving card does not
+     flicker between two near-equal candidates frame to frame. */
+  function rank(t) {
+    return (t.tier === 'cloud' ? 4000 : 0) +
+           (t.label ? 2000 : 0) +
+           (t.scan === 'dismissed' ? -1000 : 0) +
+           Math.round((t.score || 0) * 100);
+  }
+
+  function dedupe() {
+    tracks.forEach(function (t) { t.dup = 0; });
+    var order = tracks.slice().sort(function (a, b) {
+      var d = rank(b) - rank(a);
+      return d !== 0 ? d : a.id - b.id;          // stable, so it does not flip
+    });
+    for (var i = 0; i < order.length; i++) {
+      var win = order[i];
+      if (win.dup) continue;
+      for (var j = i + 1; j < order.length; j++) {
+        var other = order[j];
+        if (other.dup) continue;
+        if (overlapping(win, other)) other.dup = win.id;
+      }
+    }
+  }
+
+  function visible() {
+    return tracks.filter(function (t) { return !t.dup; });
   }
 
   function reset() { tracks = []; }
@@ -92,7 +155,7 @@ var TRACK = (function () {
      inside a person box selects the face. */
   function hit(x, y) {
     var best = null, bestArea = Infinity;
-    tracks.forEach(function (t) {
+    visible().forEach(function (t) {
       var s = CAM.toScreen(t.box);
       if (x >= s[0] && x <= s[0] + s[2] && y >= s[1] && y <= s[1] + s[3]) {
         var a = s[2] * s[3];
@@ -102,5 +165,6 @@ var TRACK = (function () {
     return best;
   }
 
-  return { all: all, byId: byId, update: update, reset: reset, stable: stable, hit: hit };
+  return { all: all, visible: visible, byId: byId, update: update, reset: reset,
+           stable: stable, hit: hit, overlapping: overlapping };
 })();

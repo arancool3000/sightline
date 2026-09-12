@@ -13,6 +13,9 @@
 <div id="stage">
   <video id="cam" playsinline autoplay muted></video>
   <canvas id="overlay"></canvas>
+  <!-- AR cards. Geometry is on the canvas; the cards are DOM so they can
+       carry an icon and two weights of type. -->
+  <div id="arLayer" aria-hidden="true"></div>
 
   <!-- Viewport frame: the four corner marks that make it read as a HUD -->
   <div class="frame" aria-hidden="true">
@@ -171,6 +174,7 @@
 <script src="js/local.js"></script>
 <script src="js/identify.js"></script>
 <script src="js/captions.js"></script>
+<script src="js/ar.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/app.js"></script>
 </body>
