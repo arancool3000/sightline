@@ -210,6 +210,7 @@ var UI = (function () {
       }
     });
 
+    drawFaces(ctx, w, h);
     navArrows(ctx, w, h);
     AR.sweep();
     needsDraw = false;
@@ -912,6 +913,27 @@ var UI = (function () {
       keyEl.addEventListener('change', function () { SET.set('apiKey', this.value.trim()); });
     }
 
+    var fm = U.$('#optFaceMem');
+    if (fm) {
+      fm.checked = FACES.isOn();
+      fm.addEventListener('change', function () {
+        FACES.setOn(this.checked);
+        buildFaceList();
+        if (this.checked) {
+          toastFace('Downloading the face models. Everything stays on this device.');
+          FACES.start().then(function () { buildFaceList(); });
+        }
+      });
+    }
+    var wipe = U.$('#btnFaceWipe');
+    if (wipe) wipe.addEventListener('click', function () {
+      if (!FACES.all().length) { toastFace('Nobody is remembered.'); return; }
+      if (window.confirm('Forget every face this device has learned? This cannot be undone.')) {
+        FACES.wipe(); buildFaceList(); toastFace('All forgotten.');
+      }
+    });
+    buildFaceList();
+
     var agree = U.$('#btnAgree');
     if (agree) agree.addEventListener('click', function () {
       if (!SET.hasApi()) { setText('#agreeStatus', 'Set an endpoint first.'); return; }
@@ -954,12 +976,121 @@ var UI = (function () {
 
     U.$('#stage').addEventListener('click', function (ev) {
       if (!CAM.live()) return;
-      if (ev.target.closest('#rail,#hudTL,#hudTR,#sheet,#settings,#gate,#captionBar,#sceneChip')) return;
+      if (ev.target.closest('#rail,#hudTL,#hudTR,#sheet,#settings,#gate,#captionBar,#sceneChip,#codeCard,#radarPod,#nearCard')) return;
       var r = cv.getBoundingClientRect();
       var x = ev.clientX - r.left, y = ev.clientY - r.top;
+      /* A face is checked first: tapping someone's face means "who is
+         this", not "what is this object". */
+      var f = faceAt(x, y);
+      if (f) { nameFace(f); return; }
       var t = TRACK.hit(x, y);
       if (t) openTrack(t); else IDENT.atPoint(x, y);
     });
+  }
+
+  /* ---------- faces this device has been told about ---------- */
+
+  var faceSeen = [];
+  function faces(list) { faceSeen = list || []; dirty(); }
+
+  /* Drawn straight onto the overlay: a name belongs ON the person, and a
+     face moves too quickly for a card that has to be laid out. */
+  function drawFaces(ctx, w, h) {
+    if (!faceSeen.length) return;
+    ctx.save();
+    faceSeen.forEach(function (f) {
+      var s = CAM.toScreen(f.box);
+      var x = s[0], y = s[1], bw = s[2], bh = s[3];
+      if (bw < 18) return;
+
+      var known = !!f.name;
+      var col = known ? '#8ab4ff' : 'rgba(230,236,241,.55)';
+      ctx.strokeStyle = col;
+      ctx.lineWidth = known ? 2 : 1;
+      if (!known) ctx.setLineDash([4, 5]);
+      roundRect(ctx, x, y, bw, bh, Math.min(14, bw * 0.14));
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      var label = known ? f.name : 'Tap to name';
+      ctx.font = known ? '600 14px -apple-system,system-ui,sans-serif'
+                       : '500 11px -apple-system,system-ui,sans-serif';
+      var tw = ctx.measureText(label).width;
+      var px = x + bw / 2 - tw / 2 - 10, py = y - 34;
+      if (py < 4) py = y + bh + 8;
+      ctx.fillStyle = known ? 'rgba(10,20,38,.86)' : 'rgba(6,9,12,.7)';
+      roundRect(ctx, px, py, tw + 20, 26, 13);
+      ctx.fill();
+      ctx.strokeStyle = known ? 'rgba(138,180,255,.5)' : 'rgba(230,236,241,.2)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = known ? '#e6ecf1' : 'rgba(230,236,241,.72)';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, px + 10, py + 13);
+      /* A borderline match is said less firmly than a certain one. */
+      if (known && !f.sure) {
+        ctx.fillStyle = 'rgba(230,236,241,.45)';
+        ctx.font = '500 9.5px -apple-system,system-ui,sans-serif';
+        ctx.fillText('possibly', px + 10, py + 34);
+      }
+    });
+    ctx.restore();
+  }
+
+  /* A tap on a face names it, or corrects a name that is wrong. */
+  function faceAt(x, y) {
+    for (var i = 0; i < faceSeen.length; i++) {
+      var s = CAM.toScreen(faceSeen[i].box);
+      if (x >= s[0] - 10 && x <= s[0] + s[2] + 10 && y >= s[1] - 36 && y <= s[1] + s[3] + 10) {
+        return faceSeen[i];
+      }
+    }
+    return null;
+  }
+
+  function nameFace(f) {
+    var was = f.name || '';
+    var asked = window.prompt(was ? ('Name for this face (now "' + was + '")') : 'Who is this?', was);
+    if (asked === null) return;
+    var name = String(asked).trim();
+    if (!name) { if (f.id) FACES.forget(f.id); toastFace('Forgotten.'); return; }
+    var p = FACES.remember(f.descriptor, name);
+    toastFace(p ? ('Saved as ' + p.name + '. Only on this device.') : 'Could not save that face.');
+    buildFaceList();
+  }
+  function toastFace(m) { if (window.U && U.toast) U.toast(m, 3200); }
+
+  /* The address book in settings: names, when you met them, and a way to
+     forget. No pictures, because none are kept. */
+  function buildFaceList() {
+    var box = U.$('#faceList');
+    if (!box) return;
+    box.textContent = '';
+    FACES.all().forEach(function (p) {
+      var row = document.createElement('div');
+      row.className = 'face-row';
+      var b = document.createElement('b'); b.textContent = p.name;
+      var i = document.createElement('i');
+      i.textContent = 'met ' + new Date(p.met).toLocaleDateString();
+      var ren = document.createElement('button'); ren.textContent = 'RENAME';
+      ren.addEventListener('click', function () {
+        var n = window.prompt('Name', p.name);
+        if (n !== null && String(n).trim()) { FACES.rename(p.id, n); buildFaceList(); }
+      });
+      var del = document.createElement('button'); del.textContent = 'FORGET';
+      del.addEventListener('click', function () { FACES.forget(p.id); buildFaceList(); });
+      row.appendChild(b); row.appendChild(i); row.appendChild(ren); row.appendChild(del);
+      box.appendChild(row);
+    });
+    var st = U.$('#faceState');
+    var s2 = FACES.state();
+    if (st) {
+      st.textContent = !s2.on ? 'Off'
+        : s2.ready ? (s2.known + (s2.known === 1 ? ' person remembered' : ' people remembered'))
+        : s2.error ? ('Could not start: ' + s2.error)
+        : 'Loading the models\u2026';
+    }
   }
 
   /* ---------- a scanned code ---------- */
@@ -1179,6 +1310,7 @@ var UI = (function () {
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
            refreshOpen: refreshOpen, sceneLabel: sceneLabel, sceneSpecies: sceneSpecies,
+           faces: faces, faceAt: faceAt, nameFace: nameFace, buildFaceList: buildFaceList,
            openScene: openScene,
            captionDraw: captionDraw, captionState: captionState, captionNote: captionNote,
            get needsDraw() { return needsDraw; } };

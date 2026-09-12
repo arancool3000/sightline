@@ -225,6 +225,22 @@
       </div>
 
       <div class="sgroup">
+        <div class="stitle">FACES YOU HAVE MET</div>
+        <p class="shelp">A memory aid for names you cannot place. Point at someone, tap their face and
+        give it a name; the next time they are in front of you it says who they are.</p>
+        <p class="shelp">All of it stays on this device. What is stored is 128 numbers describing a face,
+        which cannot be turned back into a picture of anyone, and none of it is ever sent anywhere - not
+        even to this app's own endpoint. It is off until you switch it on, and switching it on downloads
+        about eight megabytes of models.</p>
+        <div class="srow">
+          <div><div class="stitle">REMEMBER FACES</div><div class="shelp" id="faceState">Off</div></div>
+          <label class="switch"><input type="checkbox" id="optFaceMem"><span></span></label>
+        </div>
+        <div id="faceList" class="face-list"></div>
+        <button id="btnFaceWipe" class="obtn">FORGET EVERYONE</button>
+      </div>
+
+      <div class="sgroup">
         <div class="srow">
           <div><div class="stitle">NAME PUBLIC FIGURES</div><div class="shelp">Only living, notable people with a Wikipedia page. Private individuals are never identified.</div></div>
           <label class="switch"><input type="checkbox" id="optFaces" checked><span></span></label>
@@ -310,6 +326,7 @@
 <script src="js/scan.js" defer></script>
 <script src="js/codes.js" defer></script>
 <script src="js/evidence.js" defer></script>
+<script src="js/faces.js" defer></script>
 <script src="js/track.js" defer></script>
 <script src="js/local.js" defer></script>
 <script src="js/species.js" defer></script>

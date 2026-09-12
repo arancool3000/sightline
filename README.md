@@ -71,6 +71,27 @@ fast use, not practically unlimited.* Here is every source it touches,
 sorted honestly, because the difference matters when one of them stops
 answering.
 
+### Faces you have met
+
+A memory aid for names you cannot place: point at someone, tap their face,
+give it a name, and the next time they are in front of you it says who they
+are.
+
+- **Off until you switch it on.** Nothing is detected and the models are not
+  even fetched until you ask.
+- **None of it leaves the device.** Not the face, not the descriptor, and not
+  to this app's own endpoint. What is stored is 128 numbers describing a
+  face, which cannot be turned back into a picture of anybody.
+- **One tap forgets a person, one tap forgets everyone.**
+- The bar for a match is stricter than the library's own default, because the
+  two mistakes do not cost the same: failing to recognise a friend is a
+  shrug, and putting your friend's name on a stranger is the app being wrong
+  about a person to their face.
+
+This is deliberately **not** the public-figure lookup. That one names people
+who are already famous and refuses everyone else. This one names only people
+*you* have met and told it about, and it tells nobody else.
+
 ### Genuinely uncapped
 
 Nothing meters these, and the app is designed so that these alone are

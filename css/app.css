@@ -533,3 +533,14 @@ body.caps-on #sceneChip{display:none}
 .ar-card.torn{border-style:dashed;opacity:.92}
 .ar-card.torn .ar-title{font-weight:500}
 .ar-card.torn .ar-sub{color:var(--warn);opacity:.9}
+
+/* The people this device remembers. Names only - no pictures are kept,
+   because none are stored. */
+.face-list{margin:8px 0 4px;font-size:12.5px}
+.face-row{display:flex;align-items:center;gap:10px;padding:9px 2px;min-height:44px;
+  border-bottom:1px solid rgba(230,236,241,.08)}
+.face-row b{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.face-row i{font-style:normal;font-size:10.5px;color:var(--dim);flex:0 0 auto}
+.face-row button{flex:0 0 auto;min-height:34px;padding:0 10px;border-radius:9px;font-size:11px;
+  color:var(--dim);border:1px solid var(--line)}
+.face-list:empty:after{content:"Nobody yet.";color:var(--dim);font-size:12px}

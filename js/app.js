@@ -199,6 +199,7 @@
     /* Codes are read from the same frame as everything else. The scanner
        paces itself, so calling it every frame costs nothing. */
     SCAN.step(U.$('#cam'));
+    facePass(U.$('#cam'), now);
 
     if (model && now - lastDetect >= detectEvery()) {
       lastDetect = now;
@@ -317,6 +318,24 @@
       UI.dirty();
     });
   }
+
+  /* THE FACES IN FRONT OF YOU.
+
+     Off unless the owner switched it on. What comes back is matched against
+     the people this device has been told about, and each face becomes a
+     target like anything else - so a name sits on the person it belongs to,
+     and an unnamed face can be tapped to give it one. */
+  var faceHits = [];
+  function facePass(video, now) {
+    if (!window.FACES || !FACES.isOn()) { if (faceHits.length) faceHits = []; return; }
+    if (!allowedKind('person')) return;
+    FACES.step(video).then(function (found) {
+      if (!found) return;
+      faceHits = found;
+      UI.faces(found);
+    });
+  }
+  window.SL_FACES = function () { return { seen: faceHits, state: FACES.state() }; };
 
   /* Which species model to try on the centre crop. The general classifier
      is a poor judge of WHICH species, but a decent judge of what KIND of
