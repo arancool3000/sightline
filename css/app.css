@@ -302,6 +302,29 @@ body.caps-on #sceneChip{display:none}
   color:var(--dim);padding:0 4px;height:44px;border-radius:999px;white-space:nowrap
 }
 .mbtn[aria-pressed="true"]{color:#061018;background:var(--acc)}
+/* The games door, in the same tray as the filters and in the same
+   clothes as them: its own pill so the five filter words keep their
+   equal shares, and never a sixth share squeezing PEOPLE off again. */
+.rail-extra{
+  flex:0 0 auto;display:flex;padding:4px;border-radius:999px;
+  background:linear-gradient(180deg,rgba(12,20,32,.74),rgba(8,13,22,.8));
+  border:1px solid rgba(120,190,255,.22);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)
+}
+.mbtn.wide{flex:0 0 auto;padding:0 16px}
+
+/* The list of games. Rows a thumb can hit, and each says what it wants
+   you to do before you are standing in a dark box wondering. */
+.vg-row{
+  display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+  min-height:56px;padding:10px 12px;margin:8px 0;border-radius:14px;
+  background:rgba(12,20,32,.6);border:1px solid rgba(120,190,255,.2);color:var(--ink)
+}
+.vg-row:disabled{opacity:.55}
+.vg-name{font-size:13px;font-weight:600;letter-spacing:.02em}
+.vg-how{font-size:11px;color:var(--dim);line-height:1.35;margin-top:2px}
+.vg-go{margin-left:auto;flex:0 0 auto;font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--acc)}
+
 .rbtn{
   flex:0 0 44px;height:44px;display:grid;place-items:center;border-radius:14px;
   font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--ink);

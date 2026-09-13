@@ -18,6 +18,9 @@ const server=http.createServer((q,res)=>{let p=decodeURIComponent(q.url.split('?
   const f=path.join(ROOT,p); if(!f.startsWith(ROOT)||!fs.existsSync(f)||fs.statSync(f).isDirectory()){res.writeHead(404);return res.end('no');}
   res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});res.end(fs.readFileSync(f));});
 let pass=0,fail=0;
+/* The two games must reward DIFFERENT things, or the second is the
+   first wearing a hat: still beats waving here, waving beats still there. */
+const VR_OPPOSITE=(g)=>g.still.score>0 && g.wave.score===0;
 const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.log('  FAIL '+n+(x===undefined?'':'  '+JSON.stringify(x)));}};
 
 (async()=>{
@@ -164,6 +167,84 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
     ok('starting it puts the game on screen', life.started===true && life.root===true, life);
     ok('CONTROL: a game that does not exist does not start', life.bogus===false, life);
     ok('and leaving takes it off again', life.gone===true, life);
+  }
+
+  console.log('\nA DOOR THAT IS NOT A VOICE COMMAND');
+  {
+    const d=await page.evaluate(async()=>{
+      const realLive=CAM.live; CAM.live=()=>true;
+      /* Open the tray, then the games button in it. */
+      document.getElementById('dockMore').click();
+      const btn=document.getElementById('railGames');
+      const before=!!document.getElementById('vrRoot');
+      btn.click();
+      const sheet=document.getElementById('sheet');
+      const rows=Array.prototype.slice.call(document.querySelectorAll('#sheetBody .vg-row'));
+      /* Every row must name a game the module really has, or the list is
+         decoration. */
+      const ids=rows.map(r=>r.getAttribute('data-game'));
+      const known=VR.list().map(g=>g.id);
+      const named=rows.map(r=>(r.textContent||'').trim().length>0);
+      const tall=rows.map(r=>r.getBoundingClientRect().height);
+      /* Tapping a row starts THAT game, not a fixed one. */
+      const want=ids[ids.length-1];
+      rows[rows.length-1].click();
+      const started=VR.current();
+      const up=!!document.getElementById('vrRoot');
+      VR.stop(); CAM.live=realLive;
+      document.getElementById('rail').hidden=true;
+      return { before, open:!sheet.hidden||up, rows:rows.length, ids, known,
+               named, tall, want, started, up };
+    });
+    ok('SETUP: nothing was running before the button was pressed', d.before===false, d);
+    ok('the button lists every game there is', d.rows===d.known.length && d.rows>=2, d);
+    ok('and each row names one of them', d.ids.every(i=>d.known.indexOf(i)>=0), d);
+    ok('CONTROL: no row is blank', d.named.every(Boolean), d.named);
+    ok('every row is thumb-sized', d.tall.every(h=>h>=44), d.tall);
+    ok('tapping a row starts THAT game', d.started===d.want && d.up===true, d);
+
+    const off=await page.evaluate(()=>{
+      const realLive=CAM.live; CAM.live=()=>false;
+      document.getElementById('railGames').click();
+      const rows=Array.prototype.slice.call(document.querySelectorAll('#sheetBody .vg-row'));
+      const dead=rows.every(r=>r.disabled);
+      const says=/camera/i.test(document.getElementById('sheetBody').textContent||'');
+      document.getElementById('sheetClose').click();
+      CAM.live=realLive;
+      return { dead, says, rows:rows.length };
+    });
+    ok('CONTROL: with the camera off the rows are dead and say why', off.dead===true && off.says===true, off);
+  }
+
+  console.log('\nHOLDING IS NOT SWINGING');
+  {
+    const g=await page.evaluate(()=>{
+      const runFor=(mover)=>{
+        const game=VR.GAMES.orbs.make();
+        let sw=0;
+        for (let i=0;i<600;i++){ sw+=0.02; mover(sw); game.step(0.02); }
+        const s=game.score();
+        VR._setHand('left',{seen:false}); VR._setHand('right',{seen:false,vx:0,vy:0});
+        return s;
+      };
+      /* A hand held still where the orbs drift in charges them. */
+      const still=runFor(()=>{ VR._setHand('right',{seen:true,x:0.5,y:0.5,vx:0,vy:0});
+                               VR._setHand('left',{seen:false}); });
+      /* The same hand, waving - which is what wins the OTHER game. */
+      const wave=runFor((t)=>{ VR._setHand('right',{seen:true,x:0.5+Math.sin(t*9)*0.2,y:0.5,
+                                                    vx:Math.cos(t*9)*0.06,vy:0.02});
+                               VR._setHand('left',{seen:false}); });
+      /* Nobody there at all. */
+      const none=runFor(()=>{ VR._setHand('right',{seen:false,vx:0,vy:0});
+                              VR._setHand('left',{seen:false}); });
+      return { still, wave, none };
+    });
+    ok('SETUP: orbs really arrived', g.still.score>0 || g.still.missed>0 || g.none.missed>0, g);
+    ok('a steady hand pops orbs', g.still.score>0, g.still);
+    ok('waving at them does not', g.wave.score===0, g.wave);
+    ok('CONTROL: an empty room pops nothing and misses them', g.none.score===0 && g.none.missed>0, g.none);
+    ok('CONTROL: this is the opposite of Cube Slice, not a copy of it',
+       VR_OPPOSITE(g), g);
   }
 
   ok('no page errors throughout', errs.length===0, errs);

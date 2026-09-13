@@ -708,6 +708,38 @@ var UI = (function () {
   /* ---------- dossier ---------- */
 
   function showSheet(html) { sheetBody.innerHTML = html; pruneHero(sheetBody); sheet.hidden = false; }
+
+  /* ---------- games ---------- */
+
+  function openGames() {
+    if (!window.VR) return;
+    var games = VR.list();
+    var live = !!(window.CAM && CAM.live && CAM.live());
+    var h = '<h2>GAMES</h2>' +
+            '<p class="muted">Hands-free, watched through the camera. Put the phone in a ' +
+            'cardboard viewer for the full thing, or just hold it up and use your hands.</p>';
+    games.forEach(function (g) {
+      h += '<button class="vg-row" data-game="' + U.esc(g.id) + '"' + (live ? '' : ' disabled') + '>' +
+             '<span><span class="vg-name">' + U.esc(g.title) + '</span>' +
+             '<span class="vg-how">' + U.esc(g.how) + '</span></span>' +
+             '<span class="vg-go">PLAY</span></button>';
+    });
+    if (!live) h += '<p class="muted">The camera has to be on: press START first.</p>';
+    else h += '<p class="muted">Or say "play ' + U.esc(games[0].title.toLowerCase()) +
+              '". Say "stop game" to leave.</p>';
+    showSheet(h);
+    /* Bound after the markup exists, on the rows themselves, so a game
+       whose id arrives later needs nothing wiring. */
+    U.$$('#sheetBody .vg-row').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var which = b.getAttribute('data-game');
+        closeSheet();
+        var rail = U.$('#rail');
+        if (rail) { rail.hidden = true; U.$('#dockMore').setAttribute('aria-expanded', 'false'); }
+        if (!VR.start(which)) U.toast('That game could not start. Is the camera on?');
+      });
+    });
+  }
   function closeSheet() { sheet.hidden = true; openTrackId = null; }
 
   var SPEC_ORDER = [/manufacturer|maker|brand/i, /^model/i, /released|launched|year/i,
@@ -1416,6 +1448,15 @@ var UI = (function () {
     dock('dockMap', function () { if (window.MAP) MAP.setOpen(true); });
     dock('dockShot', function () { openScene(); });
     dock('dockSet', function () { U.$('#btnSettings').click(); });
+    /* ---- the games door ----
+
+       The voice command was the only way in, which is no way in at all
+       for somebody who has not been told the words. The list is built
+       from VR.list(), so a game added to the table appears here by
+       existing and there is no second place to remember to update. */
+    var railGames = U.$('#railGames');
+    if (railGames) railGames.addEventListener('click', openGames);
+
     dock('dockMore', function () {
       var rail = U.$('#rail'), b = U.$('#dockMore');
       rail.hidden = !rail.hidden;

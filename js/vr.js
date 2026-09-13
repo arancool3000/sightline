@@ -113,6 +113,14 @@ var VR = (function () {
       title: 'Cube Slice',
       how: 'Cubes come at you. Swing a hand through one to cut it. Two hands, two swords.',
       make: function () { return sliceGame(); }
+    },
+    /* The opposite skill on the same hands, deliberately: one game rewards
+       swinging and the other punishes it, so the tracker is proven to read
+       movement rather than just presence. */
+    orbs: {
+      title: 'Orb Hold',
+      how: 'Orbs drift in. Hold a hand still on one to charge it until it pops. Swinging scatters them.',
+      make: function () { return orbGame(); }
     }
   };
   function list() { return Object.keys(GAMES).map(function (k) {
@@ -219,6 +227,96 @@ var VR = (function () {
           ctx.strokeStyle = pair[0] === 'left' ? 'rgba(79,227,255,.55)' : 'rgba(255,122,212,.55)';
           ctx.lineWidth = Math.max(7, 20 / tip.z);
           ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b3.x, b3.y); ctx.stroke();
+        });
+      }
+    };
+  }
+
+  /* ---- ORB HOLD ----
+
+     A steadiness game. An orb charges only while a hand is ON it and
+     STILL; moving fast scatters the charge instead of adding to it. */
+  function orbGame() {
+    var orbs = [], t = 0, next = 0, score = 0, combo = 0, best = 0, missed = 0;
+    var SPEED = 1.15, EVERY = 1.5, REACH = 0.42, STILL = 0.009, FULL = 0.9;
+
+    function spawn() {
+      orbs.push({
+        x: (Math.random() - 0.5) * SPAN * 0.7,
+        y: (Math.random() * 0.5 - 0.15) * SPAN * 0.4,
+        z: 8 + Math.random() * 2,
+        size: 0.2, charge: 0, spin: 0, cut: false
+      });
+    }
+
+    return {
+      score: function () { return { score: score, combo: combo, best: best, missed: missed,
+                                    live: orbs.length }; },
+      step: function (dt) {
+        t += dt;
+        if (t > next) { next = t + EVERY * (0.7 + Math.random() * 0.6); spawn(); }
+        var hs = handState();
+        for (var i = orbs.length - 1; i >= 0; i--) {
+          var o = orbs[i];
+          o.z -= SPEED * dt;
+          var held = false, wild = false;
+          ['left', 'right'].forEach(function (k) {
+            var h = hs[k];
+            if (!h.seen) return;
+            var p = handPoint(h, 1, 1);
+            if (Math.abs(p.x - o.x) > o.size + REACH) return;
+            if (Math.abs(p.y - o.y) > o.size + REACH) return;
+            if (Math.sqrt(h.vx * h.vx + h.vy * h.vy) > STILL) wild = true;
+            else held = true;
+          });
+          /* A wild hand undoes the work, so waving at everything is worse
+             than doing nothing. */
+          if (wild) o.charge = Math.max(0, o.charge - dt * 1.4);
+          else if (held) o.charge += dt;
+          if (o.charge >= FULL) {
+            score += 15 + combo * 3; combo++;
+            if (combo > best) best = combo;
+            orbs.splice(i, 1);
+            continue;
+          }
+          if (o.z < 0.2) { orbs.splice(i, 1); missed++; combo = 0; }
+        }
+      },
+      draw: function (ctx, eye, vw, vh) {
+        ctx.strokeStyle = 'rgba(79,227,255,.14)';
+        ctx.lineWidth = 1;
+        for (var g = 1; g <= 9; g++) {
+          var a = project({ x: -SPAN, y: -0.62, z: g }, eye, vw, vh);
+          var b = project({ x: SPAN, y: -0.62, z: g }, eye, vw, vh);
+          if (a && b) { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+        }
+        orbs.slice().sort(function (p, q) { return q.z - p.z; }).forEach(function (o) {
+          var f = project({ x: o.x, y: o.y, z: o.z }, eye, vw, vh);
+          if (!f) return;
+          var r = o.size * f.s;
+          ctx.save();
+          ctx.strokeStyle = '#4fe3ff'; ctx.lineWidth = Math.max(1.5, 3 / o.z);
+          ctx.globalAlpha = 0.35;
+          ctx.beginPath(); ctx.arc(f.x, f.y, r, 0, Math.PI * 2); ctx.stroke();
+          /* The charge is an arc round the orb, so how far along it is can
+             be read without a number. */
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = '#b8ff6a'; ctx.lineWidth = Math.max(2.5, 5 / o.z);
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (o.charge / FULL));
+          ctx.stroke();
+          ctx.restore();
+        });
+        /* One dot a hand: this game is about where a hand IS, not what it
+           is swinging. */
+        var hs = handState();
+        ['left', 'right'].forEach(function (k) {
+          var h = hs[k];
+          if (!h.seen) return;
+          var p = project(handPoint(h, vh, vw), eye, vw, vh);
+          if (!p) return;
+          ctx.fillStyle = k === 'left' ? 'rgba(79,227,255,.85)' : 'rgba(255,122,212,.85)';
+          ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.fill();
         });
       }
     };

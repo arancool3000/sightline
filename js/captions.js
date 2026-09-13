@@ -313,15 +313,77 @@ var CAPS = (function () {
       }
     };
 
-    rec.onerror = function (ev) {
+    rec.onerror = recError;
+
+
+    /* Engines stop on their own after silence. Respin unless we were asked
+       to stop, with a small gap so a permission failure cannot hot-loop. */
+    rec.onend = function () {
+      on = false;
+      sign();
+      if (!wantOn) { UI.captionState('off'); return; }
+      if (held) { UI.captionState('paused'); return; }   // the app is talking; resume() respins
+      UI.captionState('paused');
+      clearTimeout(restartTimer);
+      /* Back off when the service keeps refusing, so a broken network does
+         not become a restart loop that flattens the battery. */
+      var gap = netFails > 3 ? Math.min(6000, 600 * netFails) : 350;
+      restartTimer = setTimeout(spin, gap);
+    };
+
+    try { rec.start(); }
+    catch (e) { on = false; clearTimeout(restartTimer); restartTimer = setTimeout(spin, 600); }
+  }
+
+  /* Lifted out of spin() so it can be driven directly: the recogniser is
+     read from a binding captured when this file loaded, so a test cannot
+     stand a fake one up from outside, and a rule this fiddly with nothing
+     driving it is how the wrong sentence shipped in the first place. */
+  function recError(ev) {
       var e = ev.error;
       sign();
       if (e === 'not-allowed' || e === 'service-not-allowed') {
-        wantOn = false; on = false;
-        clearInterval(watchdog); watchdog = null;
-        note('MICROPHONE BLOCKED');
-        UI.captionState('denied');
-        U.toast('Microphone permission is needed for captions');
+        /* ⚠ NEITHER OF THESE PROVES ANYBODY REFUSED ANYTHING.
+
+           "it says mic blocked when it is not."
+
+           Right, and this branch is why. service-not-allowed is the SPEECH
+           SERVICE refusing, which has nothing to do with permission at
+           all; and not-allowed comes back just the same when another
+           consumer already holds the one microphone this phone has -
+           which, since the Live session and the transcriber both take it,
+           is a thing this app does to itself. Latching on either turned a
+           recoverable moment into captions switched off with a message
+           accusing the reader of blocking us.
+
+           So the question is now ASKED rather than assumed, and nothing is
+           switched off until the answer comes back. */
+        on = false;
+        note('CHECKING THE MICROPHONE');
+        micReally(function (blocked, why) {
+          if (!blocked) {
+            /* Not us and not them: the service. Carry on with the ears
+               that do not need it. */
+            note(why || 'SPEECH SERVICE REFUSED');
+            UI.captionState('paused');
+            if (!wantOn) return;
+            if (scribeStart()) return;
+            /* Recording needs the very microphone we have just been told
+               is not free, so trying it would only produce a second
+               failure and a worse message. Wait and try the recogniser
+               again instead - whoever has it will give it back. */
+            var free = !/BUSY|NO MICROPHONE/.test(why || '');
+            if (free && canRecord() && !recording) { note('SWITCHING TO RECORDED CAPTIONS'); return startRecording(); }
+            clearTimeout(restartTimer);
+            restartTimer = setTimeout(spin, 1200);
+            return;
+          }
+          wantOn = false;
+          clearInterval(watchdog); watchdog = null;
+          note('MICROPHONE BLOCKED');
+          UI.captionState('denied');
+          U.toast('Microphone permission is needed for captions');
+        });
         return;
       }
       if (e === 'no-speech') { note('NO SPEECH HEARD'); return; }
@@ -343,25 +405,6 @@ var CAPS = (function () {
       }
       note(String(e || 'error').toUpperCase().replace(/-/g, ' '));
       UI.captionState('error');
-    };
-
-    /* Engines stop on their own after silence. Respin unless we were asked
-       to stop, with a small gap so a permission failure cannot hot-loop. */
-    rec.onend = function () {
-      on = false;
-      sign();
-      if (!wantOn) { UI.captionState('off'); return; }
-      if (held) { UI.captionState('paused'); return; }   // the app is talking; resume() respins
-      UI.captionState('paused');
-      clearTimeout(restartTimer);
-      /* Back off when the service keeps refusing, so a broken network does
-         not become a restart loop that flattens the battery. */
-      var gap = netFails > 3 ? Math.min(6000, 600 * netFails) : 350;
-      restartTimer = setTimeout(spin, gap);
-    };
-
-    try { rec.start(); }
-    catch (e) { on = false; clearTimeout(restartTimer); restartTimer = setTimeout(spin, 600); }
   }
 
   /* ---- recorded captions -----------------------------------------------
@@ -393,10 +436,20 @@ var CAPS = (function () {
       cycle();
     }).catch(function (e) {
       recording = false;
+      /* Same rule as the recogniser's: only a refusal is a refusal. A
+         microphone that is missing, busy, or held by the live session is
+         not the reader blocking us, and switching captions off with that
+         message is the bug this pair of branches exists to avoid. */
+      var n = e && e.name;
+      if (n !== 'NotAllowedError' && n !== 'SecurityError') {
+        note(n === 'NotFoundError' ? 'NO MICROPHONE FOUND' : 'THE MICROPHONE IS BUSY');
+        UI.captionState('paused');
+        return;
+      }
       wantOn = false;
       note('MICROPHONE BLOCKED');
       UI.captionState('denied');
-      U.toast('Captions need the microphone. Allow it and press CC again.', 5000);
+      U.toast('Captions could not open the microphone. Check it is allowed, then press CC again.', 5000);
     });
     return true;
   }
@@ -548,6 +601,60 @@ var CAPS = (function () {
     });
   }
 
+  /* IS THE MICROPHONE REALLY BLOCKED?
+
+     Two ways to find out, cheapest first. The permission store answers
+     without touching the device at all, and 'granted' there is proof the
+     reader has not refused us. Where it cannot answer - Safari has no
+     microphone descriptor - the microphone itself is opened for a moment
+     and closed again: it opening IS the permission.
+
+     Answers blocked=false when it cannot tell. A caption bar that carries
+     on working is a smaller mistake than one that switches itself off and
+     blames the reader, and the recogniser will simply fail again if it
+     really was refused. */
+  function micReally(done) {
+    var said = false;
+    var answer = function (blocked, why) { if (said) return; said = true; done(blocked, why); };
+
+    /* Anything we hold ourselves is the likeliest cause, and it is not a
+       refusal. */
+    var oursToo = (window.SCRIBE && SCRIBE.hearing && SCRIBE.hearing()) ||
+                  (window.LIVE && LIVE.running && LIVE.running());
+    if (oursToo) return answer(false, 'THE MICROPHONE IS IN USE HERE');
+
+    var asked = false;
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        asked = true;
+        navigator.permissions.query({ name: 'microphone' }).then(function (st) {
+          if (st && st.state === 'granted') return answer(false, 'SPEECH SERVICE REFUSED');
+          if (st && st.state === 'denied') return answer(true);
+          openIt(answer);
+        }, function () { openIt(answer); });
+      }
+    } catch (e) { asked = false; }
+    if (!asked) openIt(answer);
+    /* Whatever happens, an answer arrives: a query that never settles must
+       not leave the caption bar reading CHECKING for the rest of the
+       session. */
+    setTimeout(function () { answer(false, 'SPEECH SERVICE REFUSED'); }, 3000);
+  }
+
+  function openIt(answer) {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return answer(false);
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
+      st.getTracks().forEach(function (t) { t.stop(); });
+      answer(false, 'SPEECH SERVICE REFUSED');
+    }, function (err) {
+      var n = err && err.name;
+      /* Refused is refused. A microphone that is missing, or busy, or
+         broken is a different sentence and not the reader's doing. */
+      answer(n === 'NotAllowedError' || n === 'SecurityError',
+             n === 'NotFoundError' ? 'NO MICROPHONE FOUND' : 'THE MICROPHONE IS BUSY');
+    });
+  }
+
   /* Re-listen in the new language when the source is changed mid-session. */
   function relang() {
     if (!wantOn) return;
@@ -623,5 +730,6 @@ var CAPS = (function () {
            canRecord: canRecord, recording: function () { return recording; },
            onHeard: onHeard, offHeard: offHeard, listen: listen, isSilent: isSilent,
            hold: hold, isHeld: isHeld,
-           onPartial: onPartial, offPartial: offPartial, _tellPartial: tellPartial };
+           onPartial: onPartial, offPartial: offPartial, _tellPartial: tellPartial,
+           _recError: recError, _micReally: micReally };
 })();
