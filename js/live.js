@@ -43,7 +43,8 @@ var LIVE = (function () {
 
   var ws = null, model = '', mi = 0, tried = [];
   var lastClose = '', heardBack = 0, proveTimer = 0;
-  var ac = null, mic = null, node = null, stream = null;
+  var ac = null, mic = null, node = null, stream = null, sink = null, out = null;
+  var played = 0, playedMs = 0;
   var open = false, connecting = false, lastAt = 0, idleTimer = 0;
   var playAt = 0, sources = [];
   var listeners = [], err = '';
@@ -66,13 +67,15 @@ var LIVE = (function () {
   function state() { return { open: open, connecting: connecting, model: model, error: err,
                               you: youSaid, it: itSaid, tried: tried.slice(),
                               close: lastClose, answered: heardBack,
-                              audio: ac ? ac.state : 'none' }; }
+                              audio: ac ? ac.state : 'none', played: played, playedMs: playedMs }; }
   /* What to put in front of a person when it will not talk. Every branch
      names something they can act on rather than "it failed". */
   function why() {
     if (!window.GEM || !GEM.has || !GEM.has()) return 'No Gemini key, so the live voice is off.';
     if (open && !heardBack) return 'Connected to ' + short(model) + ' but it has not answered yet.';
-    if (open) return 'Live on ' + short(model) + '.';
+    if (open && heardBack && !played) return 'Live on ' + short(model) + ', answering but sending no audio.';
+    if (open) return 'Live on ' + short(model) + ' \u00b7 ' + played + ' clips, ' +
+                     Math.round(playedMs / 100) / 10 + 's of speech \u00b7 audio ' + (ac ? ac.state : '?') + '.';
     if (tried.length && !model) return 'No live model would connect. Tried: ' + tried.map(short).join(', ') +
                                        (lastClose ? ' (' + lastClose + ')' : '') + '.';
     if (err) return err;
@@ -103,7 +106,20 @@ var LIVE = (function () {
   function audio() {
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
-    if (!ac) { try { ac = new AC(); } catch (e) { return null; } }
+    if (!ac) {
+      try { ac = new AC(); } catch (e) { return null; }
+      /* Everything audible goes through one gain, so there is a single
+         place that decides whether this app is making a sound. */
+      try { out = ac.createGain(); out.gain.value = 1; out.connect(ac.destination); } catch (e) { out = null; }
+      /* iOS keeps a context silent until something has actually been
+         played from a gesture. One empty buffer is enough to open it. */
+      try {
+        var s0 = ac.createBufferSource();
+        s0.buffer = ac.createBuffer(1, 1, 22050);
+        s0.connect(out || ac.destination);
+        s0.start(0);
+      } catch (e) {}
+    }
     if (ac.state === 'suspended') { try { ac.resume(); } catch (e) {} }
     return ac;
   }
@@ -200,6 +216,7 @@ var LIVE = (function () {
 
   /* ---- what comes back ---- */
 
+  var turnStart = 0, turnPlayed = 0;
   function handle(msg) {
     touch();
     heardBack++;
@@ -226,8 +243,17 @@ var LIVE = (function () {
     if (sc.turnComplete) {
       var said = itSaid;
       act(said);
-      fire({ kind: 'turn', you: youSaid, it: stripDo(said) });
-      youSaid = ''; itSaid = '';
+      var words = stripDo(said);
+      /* IT ANSWERED, AND NOTHING CAME OUT.
+
+         Whatever the reason - a device that will not play what we were
+         sent, a turn that came back as text only - an answer nobody can
+         hear is not an answer. If no audio was played during this turn,
+         the device reads it instead. */
+      if (words && played === turnPlayed) fire({ kind: 'mute', text: words });
+      turnPlayed = played;
+      fire({ kind: 'turn', you: youSaid, it: words, spoke: played > turnStart });
+      youSaid = ''; itSaid = ''; turnStart = played;
     }
   }
 
@@ -249,13 +275,15 @@ var LIVE = (function () {
       ch[i] = v / 32768;
     }
     var src = ac.createBufferSource();
-    src.buffer = buf; src.connect(ac.destination);
+    src.buffer = buf;
+    src.connect(out || ac.destination);
     /* Queued end to end, so a sentence arriving in six pieces is one
        sentence rather than six overlapping ones. */
     var now = ac.currentTime;
     if (playAt < now) playAt = now + 0.04;
     src.start(playAt);
     playAt += buf.duration;
+    played++; playedMs += Math.round(buf.duration * 1000);
     sources.push(src);
     src.onended = function () { sources = sources.filter(function (s) { return s !== src; }); };
   }
@@ -292,7 +320,14 @@ var LIVE = (function () {
           ] } }));
         };
         mic.connect(node);
-        node.connect(ac.destination);   // Safari will not run a node with no sink
+        /* ⚠ NOT ac.destination. A ScriptProcessor needs a sink or Safari
+           will not run it, but sending the MICROPHONE to the speaker put
+           the room into a feedback loop with the browser's own echo
+           canceller - which then does its job and clamps everything,
+           including the model's voice. That is what "no volume" was. A
+           silent sink keeps the node running and makes no sound. */
+        sink = ac.createGain(); sink.gain.value = 0;
+        node.connect(sink); sink.connect(ac.destination);
         /* The live session owns the microphone while it is up: two
            getUserMedia consumers on one phone is how one of them goes
            silent. The on-device recogniser is released when it closes. */
@@ -378,7 +413,9 @@ var LIVE = (function () {
     if (proveTimer) { clearTimeout(proveTimer); proveTimer = 0; }
     silence();
     try { if (node) { node.disconnect(); node.onaudioprocess = null; } } catch (e) {}
+    try { if (sink) sink.disconnect(); } catch (e) {}
     try { if (mic) mic.disconnect(); } catch (e) {}
+    sink = null;
     try { if (stream) stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
     node = null; mic = null; stream = null;
     try { if (window.CAPS && CAPS.hold) CAPS.hold(false); } catch (e) {}

@@ -152,6 +152,38 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
     ok('CONTROL: with a key and nothing connected it says that instead', /idle|would connect/i.test(said), said);
   }
 
+  console.log('\nTHE SOUND ACTUALLY COMES OUT');
+  {
+    /* "it works now but no volume." The ScriptProcessor that carries the
+       microphone was sinking into ac.destination - the MICROPHONE into
+       the SPEAKER - so the browser's own echo canceller had a feedback
+       loop and did its job on everything, the model's voice included. */
+    const src=await page.evaluate(()=>fetch('js/live.js').then(r=>r.text()));
+    ok('the microphone is NOT wired to the speaker',
+       !/node\.connect\(ac\.destination\)/.test(src));
+    ok('it sinks into a silent gain instead, so the node still runs',
+       /sink\.gain\.value = 0/.test(src) && /node\.connect\(sink\)/.test(src));
+    ok('every audible thing goes through one output gain',
+       /out = ac\.createGain\(\)/.test(src) && /out\.gain\.value = 1/.test(src));
+    ok('and iOS is unlocked with an empty buffer from the gesture',
+       /createBuffer\(1, 1, 22050\)/.test(src));
+
+    /* A turn with words and no sound must not simply be silent. */
+    const mute=await page.evaluate(()=>{
+      const seen=[];
+      LIVE.on(e=>{ if(e.kind==='mute'||e.kind==='turn') seen.push(e.kind+':'+(e.text||e.it||'')); });
+      LIVE._handle({serverContent:{outputTranscription:{text:'The bus is due in four minutes.'}}});
+      LIVE._handle({serverContent:{turnComplete:true}});
+      return seen;
+    });
+    /* The caption block above left its turn open on purpose, so the
+       transcript here carries both sentences - which is right for a
+       stream. What matters is that the words reached the device. */
+    ok('an answer that made no sound is handed to the device to read',
+       mute.some(s=>s.indexOf('mute:')===0 && /bus is due in four minutes/.test(s)), mute);
+    ok('SETUP: and the turn still completes normally', mute.some(s=>/^turn:/.test(s)), mute);
+  }
+
   ok('no page errors throughout', errs.length===0, errs);
   console.log('\n'+pass+'/'+(pass+fail)+' passed');
   await b.close(); server.close(); process.exit(fail?1:0);

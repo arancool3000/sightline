@@ -1295,6 +1295,11 @@ var UI = (function () {
     }
     else if (ev.kind === 'open') { status('LISTENING \u2014 SAY WHAT YOU WANT', 'busy', 4000); }
     else if (ev.kind === 'closed') { liveYou = ''; liveIt = ''; liveCaption(); voiceNote(); }
+    else if (ev.kind === 'mute') {
+      /* It answered and nothing came out. Read it aloud with the device's
+         own voice rather than leaving the words sitting there silently. */
+      if (window.VOICE && VOICE.speakDevice) VOICE.speakDevice(ev.text);
+    }
     else if (ev.kind === 'error') { status(String(ev.error || 'the live voice failed'), 'bad', 6000); voiceNote(); }
   }
 

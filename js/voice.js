@@ -545,7 +545,7 @@ var VOICE = (function () {
   var TTS_WAIT_MS = 1500;
 
   return { start: start, stop: stop, state: state, on: onEvent, ask: askNow, awakeMs: awakeMs,
-           wake: wake, speak: speak, _heard: heard, _apply: apply, _settle: settle,
+           wake: wake, speak: speak, speakDevice: deviceSpeak, _heard: heard, _apply: apply, _settle: settle,
            _pending: function () { return pendingQ; },
            _partial: onPartial, _endMs: function () { return END_MS; }, _setEndMs: function (v) { END_MS = v; }, _timeoutMs: ASK_TIMEOUT_MS, _setTimeoutMs: function (v) { ASK_TIMEOUT_MS = v; },
            _setFollowupMs: function (v) { FOLLOWUP_MS = v; }, _followupMs: function () { return FOLLOWUP_MS; },
