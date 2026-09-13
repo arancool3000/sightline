@@ -94,18 +94,18 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
     ok('CONTROL: an instruction it invented does nothing', act.unchanged===true, act);
     ok('and the instruction is never read out loud', act.spoken==='That is a bicycle.', act.spoken);
 
-    /* THE ONE THAT WOULD HAVE CAUGHT IT. Every instruction the brief tells
-       the model to use must be one the command table actually answers to;
-       the first cut invented a terse syntax and every instruction was
-       silently dropped. Derived from the brief, so the two cannot drift. */
-    const vocab=await page.evaluate(()=>{
-      const brief=LIVE._brief();
-      const words=(brief.match(/\[\[do:([^\]]+)\]\]/g)||[]).map(s=>s.slice(5,-2));
-      return words.map(w=>({ w, known: !!CMD.match(w.replace(/THE PLACE/,'the station').replace(/the THING/,'the bicycle')) }));
-    });
-    ok('SETUP: the brief really lists some instructions', vocab.length>=8, vocab.length);
-    ok('every instruction the brief offers is one the table understands',
-       vocab.every(v=>v.known), vocab.filter(v=>!v.known).map(v=>v.w));
+    /* THE ONE THAT WOULD HAVE CAUGHT IT. Every tool must map to words the
+       command table actually answers to - the first cut invented a terse
+       [[do:map open]] syntax nothing understood, so every instruction was
+       silently dropped. Derived from the tool table, so they cannot drift.
+       identify is exempt: it is answered here, not by the table. */
+    const vocab=await page.evaluate(()=>LIVE.TOOLS.filter(t=>t.say.charAt(0)!=='\u0000').map(t=>{
+      const phrase = t.arg ? (t.say + (t.arg==='place' ? 'the station' : 'bicycle')) : t.say;
+      return { name:t.name, phrase, known: !!CMD.match(phrase) };
+    }));
+    ok('SETUP: there are tools to check', vocab.length>=8, vocab.length);
+    ok('every tool maps to words the command table understands',
+       vocab.every(v=>v.known), vocab.filter(v=>!v.known));
   }
 
   console.log('\nIT IS OFF UNTIL THERE IS A KEY');
@@ -152,7 +152,11 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
       GEM.has=()=>true; GEM.key=()=>'AIzaTESTTESTTESTTESTTEST';
       /* A socket that never opens, so start() lays out its order and waits. */
       window.WebSocket=function(){ this.close=function(){}; };
+      /* start() asks the API which models exist before it lays out its
+         order, so it is a promise now - reading _order() synchronously
+         after it read an empty list. */
       LIVE.start();
+      await new Promise(r=>setTimeout(r,400));
       const order=LIVE._order();
       window.WebSocket=realWS; GEM.has=realHas; GEM.key=realKey; LIVE.stop();
       try { localStorage.removeItem('sightline.live.model.v2'); } catch(e){}
@@ -211,6 +215,130 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
     ok('an answer that made no sound is handed to the device to read',
        mute.some(s=>s.indexOf('mute:')===0 && /bus is due in four minutes/.test(s)), mute);
     ok('SETUP: and the turn still completes normally', mute.some(s=>/^turn:/.test(s)), mute);
+  }
+
+  console.log('\nIT ASKS WHICH MODELS EXIST INSTEAD OF GUESSING');
+  {
+    /* The screenshot: "Connected to gemini-2.5-flash-native-audio-preview
+       -09-2025 but it has not answered yet" - it had fallen through to the
+       THIRD guess, so the first two names were wrong. ListModels says
+       which are real, and the live ones are exactly those carrying
+       bidiGenerateContent. */
+    const d=await page.evaluate(async()=>{
+      const realHas=GEM.has, realKey=GEM.key, realFetch=window.U.fetchT;
+      GEM.has=()=>true; GEM.key=()=>'AIzaTESTTESTTESTTESTTEST';
+      let asked='';
+      window.U.fetchT=(u)=>{ asked=u; return Promise.resolve({ ok:true, json:()=>Promise.resolve({ models:[
+        { name:'models/gemini-2.0-flash-live-001', supportedGenerationMethods:['bidiGenerateContent'] },
+        { name:'models/gemini-3-flash-live-preview', supportedGenerationMethods:['bidiGenerateContent'] },
+        { name:'models/gemini-3.5-transcribe-live', supportedGenerationMethods:['bidiGenerateContent'] },
+        { name:'models/gemini-2.5-flash-native-audio-preview-09-2025', supportedGenerationMethods:['bidiGenerateContent'] },
+        { name:'models/gemini-3.5-flash', supportedGenerationMethods:['generateContent'] }
+      ] }) }); };
+      const live=await LIVE._discover();
+      GEM.has=realHas; GEM.key=realKey; window.U.fetchT=realFetch;
+      return { live, asked, ranks:{ dialog:LIVE._rank('models/gemini-3-flash-live-preview'),
+                                    old:LIVE._rank('models/gemini-2.0-flash-live-001'),
+                                    trans:LIVE._rank('models/gemini-3.5-transcribe-live') } };
+    });
+    ok('it asks the API for the model list', /\/v1beta\/models\?/.test(d.asked), d.asked.slice(0,60));
+    ok('only models that can hold a live session come back',
+       d.live.every(n=>/live|native-audio/.test(n)) && d.live.indexOf('models/gemini-3.5-flash')<0, d.live);
+    ok('a text-only model is not offered', !d.live.some(n=>n==='models/gemini-3.5-flash'), d.live);
+    ok('CONTROL: transcribe-only is ranked out, whatever bidi says it can do',
+       d.ranks.trans < 0 && d.live.indexOf('models/gemini-3.5-transcribe-live')<0, d);
+    ok('and the newest dialog model comes first', /gemini-3-flash-live/.test(d.live[0]||''), d.live);
+    ok('SETUP: the ranking really does separate them', d.ranks.dialog > d.ranks.old, d.ranks);
+  }
+
+  console.log('\nCONNECTED, SET UP, AND SILENT');
+  {
+    /* From here, "the server ignores the field I sent" and "nobody is
+       speaking" look identical. So a whole session with no reply at all
+       flips to the other shape for next time. */
+    const f=await page.evaluate(()=>{
+      const before=LIVE._legacy();
+      LIVE._flip();
+      const after=LIVE._legacy();
+      LIVE._flip();
+      return { before, after, back:LIVE._legacy() };
+    });
+    ok('the audio field has two shapes and it can swap between them',
+       f.before !== f.after && f.back === f.before, f);
+    const src=await page.evaluate(()=>fetch('js/live.js').then(r=>r.text()));
+    ok('the modern shape is the default', /realtimeInput: \{ audio: chunk \}/.test(src));
+    ok('and a silent session flips it rather than giving up', /flipAudioShape\(\);\n\s*err = 'the live voice connected but never answered/.test(src));
+    ok('it says hello on connecting, so the whole path proves itself',
+       /say\('Say only: ready\.'\)/.test(src));
+  }
+
+  console.log('\nIT WATCHES RATHER THAN GLANCES');
+  {
+    const w=await page.evaluate(()=>({ ms: LIVE.FRAME_MS,
+      src: null }));
+    const src=await page.evaluate(()=>fetch('js/live.js').then(r=>r.text()));
+    ok('a frame goes up about once a second', w.ms >= 500 && w.ms <= 2000, w.ms);
+    /* 258 tokens a frame at 1fps is ~15,500 a minute against 65,000. */
+    ok('which is a quarter of the token budget, not all of it',
+       (60000 / w.ms) * 258 < 65000 * 0.35, Math.round((60000 / w.ms) * 258));
+    ok('it stops looking when the session closes', /clearInterval\(frameTimer\); frameTimer = 0;/.test(src));
+    ok('and does not send frames while the page is hidden', /document\.hidden\) return;/.test(src));
+  }
+
+  console.log('\nIT HAS TOOLS, AND DOES NOT READ THEM OUT LOUD');
+  {
+    /* "it doesn't know its tool calls. it literally just did [[do:box the
+        rubiks cube]] when i told it to draw a box around the rubiks
+        cube." A native-audio model SPEAKS everything it produces, so a
+        text marker gets read aloud. Declared tools come back as toolCall
+        frames, which are not part of what it says. */
+    const d=await page.evaluate(()=>({ decls: LIVE._declarations(), brief: LIVE._brief(),
+                                       phrase: LIVE._phraseFor('box',{thing:'rubiks cube'}) }));
+    ok('the tools are declared to the model', d.decls.length>=8, d.decls.length);
+    ok('every one has a name and a description a model can act on',
+       d.decls.every(x=>x.name && x.description && x.description.length>25), d.decls.slice(0,2));
+    ok('the ones that take a thing declare the argument',
+       (d.decls.find(x=>x.name==='box')||{}).parameters !== undefined, d.decls.find(x=>x.name==='box'));
+    ok('the brief tells it never to say an instruction out loud',
+       /Never say a tool name or an instruction out loud/.test(d.brief), d.brief.slice(0,50));
+    ok('and the bracket syntax is gone from the brief', !/\[\[do:/.test(d.brief), d.brief.slice(0,80));
+    ok('a tool call becomes words the command table understands',
+       d.phrase==='box the rubiks cube', d.phrase);
+
+    /* End to end: a toolCall frame must actually box something. */
+    const boxed=await page.evaluate(async()=>{
+      const seen=[]; CMD.on(e=>seen.push(e.kind+':'+(e.what||'')));
+      LIVE._toolCall({ toolCall:{ functionCalls:[{ id:'c1', name:'box', args:{ thing:'rubiks cube' } }] } });
+      await new Promise(r=>setTimeout(r,100));
+      return seen;
+    });
+    ok('a toolCall for box really fires a box', boxed.some(s=>/^box:rubiks cube/.test(s)), boxed);
+  }
+
+  console.log('\nAND IT ASKS THE BETTER MODEL WHEN IT IS NOT SURE');
+  {
+    /* "i ask it what 3d printer it is looking at, and it tells me my v3
+        plus is from prusa... but when i tap it identification was
+        actually correct." */
+    const esc=await page.evaluate(async()=>{
+      const realTap=IDENT.tapAsk;
+      let asked=false;
+      IDENT.tapAsk=()=>{ asked=true; return Promise.resolve({ name:'Creality Ender-3 V3 Plus',
+        specs:[{k:'Manufacturer',v:'Creality'}] }); };
+      TRACK.reset();
+      TRACK.update([{cls:'tv', box:[10,10,200,200], score:0.9}], performance.now());
+      let sent=null; const answers=[];
+      LIVE.on(e=>{ if(e.kind==='tool') answers.push(e); });
+      LIVE._toolCall({ toolCall:{ functionCalls:[{ id:'i1', name:'identify', args:{} }] } });
+      await new Promise(r=>setTimeout(r,300));
+      IDENT.tapAsk=realTap;
+      return { asked, answers };
+    });
+    ok('identify goes to the model that gets it right', esc.asked===true, esc.asked);
+    ok('and the exact name comes back for it to say',
+       /Ender-3 V3 Plus/.test((esc.answers[0]||{}).answer||''), esc.answers);
+    ok('CONTROL: it is reported as a tool, not spoken as text',
+       (esc.answers[0]||{}).name==='identify', esc.answers);
   }
 
   ok('no page errors throughout', errs.length===0, errs);

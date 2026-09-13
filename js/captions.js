@@ -458,27 +458,33 @@ var CAPS = (function () {
     var hit = tcache.get(key);
     if (hit) { line.out = hit; UI.captionDraw(lines, interim, null); return; }
 
-    if (!SET.hasApi()) {
-      line.out = text;
-      line.note = 'no endpoint - showing the original';
-      UI.captionDraw(lines, interim, null);
-      return;
-    }
+    /* EVERY LINE GETS TRANSLATED, and the reader's own key goes first.
 
+       This used to give up entirely when no Worker endpoint was set - the
+       caption just appeared in whatever language it was spoken in, which
+       is the one thing captions are for. Gemini first, the Worker's
+       service behind it, and only when neither can be reached does the
+       original stand, saying so. */
     line.pending = true;
-    IDENT.post('/v1/translate', { text: text, from: from, to: to })
-      .then(function (r) {
-        line.pending = false;
-        if (r && r.ok && r.text) { line.out = r.text; tcache.set(key, r.text); }
-        else { line.out = text; line.note = 'not translated'; }
-        if (wantOn) UI.captionDraw(lines, interim, null);
-      })
-      .catch(function () {
-        line.pending = false;
-        line.out = text;
-        line.note = 'translation unavailable';
-        if (wantOn) UI.captionDraw(lines, interim, null);
-      });
+    var done = function (out, note) {
+      line.pending = false;
+      if (out) { line.out = out; tcache.set(key, out); }
+      else { line.out = text; line.note = note || 'not translated'; }
+      if (wantOn) UI.captionDraw(lines, interim, null);
+    };
+
+    var viaGemini = (window.GEM && GEM.has && GEM.has())
+      ? GEM.translate(text, from, to).then(function (r) { return (r && r.ok) ? r.text : ''; },
+                      function () { return ''; })
+      : Promise.resolve('');
+
+    viaGemini.then(function (out) {
+      if (out) return done(out);
+      if (!SET.hasApi()) return done('', 'no key and no endpoint - showing the original');
+      return IDENT.post('/v1/translate', { text: text, from: from, to: to })
+        .then(function (r) { done((r && r.ok && r.text) ? r.text : ''); },
+              function () { done('', 'translation unavailable'); });
+    });
   }
 
   /* Re-listen in the new language when the source is changed mid-session. */

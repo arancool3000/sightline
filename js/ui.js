@@ -668,6 +668,24 @@ var UI = (function () {
       '<p class="d-note">Private individuals are never identified. Only notable people who already have a public encyclopedia entry can ever be matched.</p>';
   }
 
+  /* Is the article the picture came from about the SAME thing, or about
+     the family it belongs to? Every word of the article's title has to
+     appear in the name - "Ender 3" against "Creality Ender-3 V3 Plus"
+     passes that, so the name must not carry extra MODEL words the title
+     lacks: a number or a mark the article never mentions means this is a
+     variant and its photograph is somebody else's. */
+  function sameThing(name, title) {
+    var n = String(name || '').toLowerCase(), t = String(title || '').toLowerCase();
+    if (!n || !t) return true;                       // nothing to disagree with
+    var norm = function (s) { return s.replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean); };
+    var nw = norm(n), tw = norm(t);
+    var extra = nw.filter(function (w) { return tw.indexOf(w) === -1; });
+    /* A word that looks like a model designation - a number, or a short
+       mark like "v3", "mk4", "xl" - is what separates one machine from
+       its family. Plain extra words (a maker's name) are fine. */
+    return !extra.some(function (w) { return /\d/.test(w) || /^(xl|xs|se|pro|plus|max|mini|lite)$/.test(w); });
+  }
+
   function record(rec) {
     if (!rec) return '<p class="d-body">Nothing came back.</p>';
     if (rec.kind === 'person' && (!rec.name || rec.gated)) return gatedPerson(rec);
@@ -689,7 +707,17 @@ var UI = (function () {
     if (rec.scientific) html += '<p class="d-sci">' + U.esc(rec.scientific) + '</p>';
     /* No confidence bar. A number beside an answer that might be wrong does
        not make it less wrong, and the owner asked for them gone. */
-    if (w.thumb) html += '<div class="d-hero" data-hero><img src="' + U.esc(w.thumb) + '" alt="" loading="lazy"></div>';
+    /* THE PICTURE HAS TO BE OF THE THING.
+
+       "the image it gave was of the ender 3 and not the v3 plus but the
+        name was correct." The thumbnail comes from whatever Wikipedia
+        article the name resolved to, and "Ender-3 V3 Plus" resolves to
+        the Ender 3 article - so a confident photograph of the wrong
+        machine. Shown only when the article really is about this thing;
+        a family resemblance is not a picture of yours. */
+    if (w.thumb && sameThing(rec.name, w.name)) {
+      html += '<div class="d-hero" data-hero><img src="' + U.esc(w.thumb) + '" alt="" loading="lazy"></div>';
+    }
 
     /* Model-supplied specs come first for objects - that is the whole point
        of pointing a camera at a 3D printer or a robot. */
@@ -1157,6 +1185,12 @@ var UI = (function () {
     var ask = U.$('#askChip');
     if (ask && vbtn) ask.addEventListener('click', function () { vbtn.click(); });
     if (window.LIVE) LIVE.on(liveEvent);
+    /* ⚠ CMD.on HAD NO CALLERS. Every box, only and clear the command table
+       fired went into an empty listener list - so "box the bicycle" was
+       handled, answered "Marking the bicycle", and drew nothing, from the
+       day it shipped. The table and the overlay speak through the same
+       events VOICE uses, so one line wires the lot. */
+    if (window.CMD) CMD.on(voiceEvent);
 
     var fm = U.$('#optFaceMem');
     if (fm) {

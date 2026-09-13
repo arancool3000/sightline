@@ -56,8 +56,65 @@ var LIVE = (function () {
      decided once, on whichever day the newest happened to be down. The key
      is bumped so those devices start again. */
   var REMEMBER = 'sightline.live.model.v2';
+
+  /* ---- WHICH MODELS ACTUALLY EXIST ----
+
+     The list above is guesswork, and it showed: on the owner's key the
+     first two names did not connect at all and the session fell through
+     to the third. Guessing ids from a quota page's display names is not
+     something to keep doing - the API will say. ListModels returns every
+     model with the methods it supports, and the live ones are exactly
+     those carrying bidiGenerateContent. Names found that way are real by
+     construction; the hand list stays only for when the lookup itself
+     cannot be reached. */
+  var LIST = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=';
+  var found = null, listing = null;
+
+  /* Newest and most capable first, by what the name says about it. A
+     dialog model outranks a transcriber, and a bigger number outranks a
+     smaller one. */
+  function rank(id) {
+    var n = String(id || '');
+    if (/translate|transcribe|tts|image|embedding/i.test(n)) return -1;   // not conversation
+    var v = 0, m = /gemini-(\d+(?:\.\d+)?)/.exec(n);
+    if (m) v = parseFloat(m[1]) * 10;
+    if (/native-audio/.test(n)) v += 3;      // the real dialog models
+    if (/live/.test(n)) v += 2;
+    if (/preview|exp/.test(n)) v -= 1;       // a stable name beats a preview
+    return v;
+  }
+
+  function discover() {
+    if (found) return Promise.resolve(found);
+    if (listing) return listing;
+    if (!window.GEM || !GEM.has || !GEM.has()) return Promise.resolve(null);
+    listing = U.fetchT(LIST + encodeURIComponent(GEM.key()), { headers: { 'Accept': 'application/json' } }, 9000)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        listing = null;
+        var all = (j && j.models) || [];
+        var live = all.filter(function (m) {
+          return (m.supportedGenerationMethods || []).indexOf('bidiGenerateContent') >= 0;
+        }).map(function (m) { return m.name; })
+          .filter(function (n) { return rank(n) >= 0; })
+          .sort(function (a, b) { return rank(b) - rank(a); });
+        found = live.length ? live : null;
+        return found;
+      })
+      .catch(function () { listing = null; return null; });
+    return listing;
+  }
   var UP_RATE = 16000, DOWN_RATE = 24000;
   var IDLE_MS = 45000;          // a quiet conversation closes itself
+  /* WATCHING, NOT GLANCING.
+
+     One frame was sent when the session woke, so "what about the one next
+     to it?" was answered from a photograph taken before the question. A
+     frame a second costs about 258 tokens each - 15,500 a minute against
+     the 65,000 this model allows, under a quarter - so the session can
+     simply keep looking. It stops the moment the session does. */
+  var FRAME_MS = 1000;
+  var frameTimer = 0;
 
   var ws = null, model = '', mi = 0, tried = [], order = [];
   var lastClose = '', heardBack = 0, proveTimer = 0;
@@ -118,12 +175,14 @@ var LIVE = (function () {
        failed without ever pinning itself away from the newest one. */
     var last = '';
     try { last = localStorage.getItem(REMEMBER) || ''; } catch (e) {}
-    order = MODELS.slice();
-    if (last && order.indexOf(last) > 1) {
-      order = [order[0], last].concat(order.slice(1).filter(function (m) { return m !== last; }));
-    }
-    mi = 0;
-    return connect();
+    return discover().then(function (real) {
+      order = (real && real.length) ? real.slice() : MODELS.slice();
+      if (last && order.indexOf(last) > 1) {
+        order = [order[0], last].concat(order.slice(1).filter(function (m) { return m !== last; }));
+      }
+      mi = 0;
+      return connect();
+    });
   }
 
   function audio() {
@@ -168,6 +227,7 @@ var LIVE = (function () {
         sock.send(JSON.stringify({ setup: {
           model: model,
           generationConfig: { responseModalities: ['AUDIO'] },
+          tools: [{ functionDeclarations: declarations() }],
           /* Both sides as text, which is what puts the conversation on
              screen: "it should show captions as me and ai talk". */
           inputAudioTranscription: {},
@@ -178,7 +238,8 @@ var LIVE = (function () {
 
       sock.onmessage = function (m) {
         readFrame(m.data, function (msg) {
-          if (msg.setupComplete) {
+          if (msg.toolCall) { toolCall(msg); return; }
+    if (msg.setupComplete) {
             if (settled) return;
             settled = true; clearTimeout(giveUp);
             ws = sock; open = true; connecting = false;
@@ -186,6 +247,11 @@ var LIVE = (function () {
             touch();
             fire({ kind: 'open', model: model });
             micOn();
+            /* A word on connecting, so the whole path - socket, model,
+               audio out, speaker - is proven before anybody has said
+               anything, instead of the first failure being discovered
+               halfway through a question. */
+            say('Say only: ready.');
             prove();
             res(true);
             return;
@@ -219,6 +285,117 @@ var LIVE = (function () {
     }
   }
 
+  /* ---- TOOLS, DECLARED PROPERLY ----
+
+     "it doesn't know its tool calls. it literally just did [[do:box the
+      rubiks cube]] when i told it to draw a box around the rubiks cube."
+
+     Right, and that is my design being wrong rather than the model being
+     stupid. A native-audio model SPEAKS everything it produces, so a text
+     marker in its answer is read out loud - it did exactly what it was
+     told and the instruction came out of the speaker.
+
+     The Live API has function calling for this. A declared tool comes back
+     as a toolCall frame, which is not part of what it says, so nothing is
+     spoken. Each one runs through CMD - the same table a finger and a
+     spoken command go through - and the phrase is generated FROM this
+     table, so the tool and the words it maps to cannot drift apart. */
+  var TOOLS = [
+    { name: 'show_map',        say: 'show the map',        what: 'Open the full map page so the person can see where they are.' },
+    { name: 'close_map',       say: 'close the map',       what: 'Close the map page and go back to the camera view.' },
+    { name: 'zoom_in',         say: 'zoom in',             what: 'Zoom the map in to show more detail.' },
+    { name: 'zoom_out',        say: 'zoom out',            what: 'Zoom the map out to show more ground.' },
+    { name: 'follow_me',       say: 'follow me',           what: 'Recentre the map on where the person is standing.' },
+    { name: 'scan_code',       say: 'scan this code',      what: 'Look for a QR code or a barcode in view right now.' },
+    { name: 'identify',        say: '\u0000identify',       what: 'Identify the main thing in view exactly - the make, the model, the species, the breed. Call this whenever you are asked what something IS, or told you got it wrong. It asks a model that is better at this than you are and gives you the answer back.' },
+    { name: 'stop_directions', say: 'stop directions',     what: 'Stop navigating and put the route away.' },
+    { name: 'clear_boxes',     say: 'clear',               what: 'Remove every highlight and box from the view.' },
+    { name: 'directions_to',   say: 'directions to ',      what: 'Start walking directions to a place.',
+      arg: 'place', argWhat: 'Where to go, for example "the post office".' },
+    { name: 'box',             say: 'box the ',            what: 'Draw a box around something in view so the person can see which one you mean.',
+      arg: 'thing', argWhat: 'What to box, in a word or two, as a person would say it.' },
+    { name: 'only',            say: 'only the ',           what: 'Show only this thing and hide the other boxes.',
+      arg: 'thing', argWhat: 'What to keep.' }
+  ];
+
+  function declarations() {
+    return TOOLS.map(function (t) {
+      var d = { name: t.name, description: t.what };
+      if (t.arg) {
+        d.parameters = { type: 'OBJECT', properties: {}, required: [t.arg] };
+        d.parameters.properties[t.arg] = { type: 'STRING', description: t.argWhat };
+      }
+      return d;
+    });
+  }
+
+  /* A tool call becomes the words the table already understands. */
+  function phraseFor(name, args) {
+    for (var i = 0; i < TOOLS.length; i++) {
+      if (TOOLS[i].name !== name) continue;
+      var t = TOOLS[i];
+      if (t.say.charAt(0) === '\u0000') return t.say;   // handled here, not by the table
+      if (!t.arg) return t.say;
+      var v = String((args && args[t.arg]) || '').trim();
+      return v ? (t.say + v) : '';
+    }
+    return '';
+  }
+
+  function toolCall(msg) {
+    var calls = (msg.toolCall && msg.toolCall.functionCalls) || [];
+    if (!calls.length) return;
+    var jobs = calls.map(function (c) {
+      var phrase = phraseFor(c.name, c.args);
+      /* IDENTIFY IS NOT A DISPLAY CHANGE, IT IS A SECOND OPINION.
+
+         "i ask it what 3d printer it is looking at, and it tells me my v3
+          plus is from prusa... but when i tap it identification was
+          actually correct."
+
+         Same key, different job. The tap path crops to the object and
+         asks a reasoning model for an exact make and model; the dialog
+         model is looking at a whole room and optimised for answering
+         quickly. So the conversation hands identification over rather
+         than guessing out loud, and gets the real answer back to say. */
+      if (c.name === 'identify') {
+        return askTheOtherOne().then(function (name) {
+          fire({ kind: 'tool', name: c.name, phrase: 'identify', ok: !!name, answer: name });
+          return { id: c.id, name: c.name,
+                   response: { result: name || 'could not identify it from here' } };
+        });
+      }
+      var did = phrase && window.CMD ? CMD.run(phrase) : null;
+      fire({ kind: 'tool', name: c.name, phrase: phrase, ok: !!did });
+      return Promise.resolve({ id: c.id, name: c.name,
+                               response: { result: did ? 'done' : 'not available' } });
+    });
+    /* It waits for these before it carries on talking. */
+    Promise.all(jobs).then(function (replies) {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ toolResponse: { functionResponses: replies } }));
+      }
+    });
+  }
+
+  /* The biggest thing on screen, through the same door a tap uses. */
+  function askTheOtherOne() {
+    if (!window.IDENT || !IDENT.tapAsk || !window.TRACK) return Promise.resolve('');
+    var best = null, area = 0;
+    TRACK.all().forEach(function (t) {
+      var b = t.box || [], a = (b[2] || 0) * (b[3] || 0);
+      if (a > area) { area = a; best = t; }
+    });
+    if (!best) return Promise.resolve('');
+    return IDENT.tapAsk(best).then(function (rec) {
+      if (!rec || !rec.name) return '';
+      var bits = [rec.name];
+      if (rec.scientific) bits.push('(' + rec.scientific + ')');
+      (rec.specs || []).slice(0, 3).forEach(function (s) { if (s && s.k && s.v) bits.push(s.k + ': ' + s.v); });
+      return bits.join(' \u00b7 ');
+    }, function () { return ''; });
+  }
+
   function brief() {
     return 'You are Sightline, a camera the person is wearing. Answer in ONE or TWO short spoken ' +
            'sentences - you are being listened to, not read. Never read a list aloud.\n' +
@@ -230,12 +407,13 @@ var LIVE = (function () {
               table understands English, so every instruction it gave was
               silently dropped. These are the phrasings a person says, which
               is the only vocabulary there is. */
-           'You can act on the display by putting an instruction at the very end of your answer in double ' +
-           'square brackets, and nothing else on that line. Use these words exactly:\n' +
-           '[[do:show the map]] [[do:close the map]] [[do:zoom in]] [[do:zoom out]] [[do:follow me]] ' +
-           '[[do:scan this code]] [[do:identify the subject]] [[do:directions to THE PLACE]] ' +
-           '[[do:stop directions]] [[do:box the THING]] [[do:only the THING]] [[do:clear]]\n' +
-           'Use one only when it helps; most answers need none.';
+           'You have tools for changing what is on the display - boxing something, opening the map, ' +
+           'starting directions. CALL them. Never say a tool name or an instruction out loud: everything ' +
+           'you say is spoken aloud to the person, so an instruction in your words is heard as gibberish ' +
+           'instead of done. Call the tool and then say the ordinary sentence that goes with it.\n' +
+           'When you are asked to identify something and you are not certain, call identify - it sends the ' +
+           'picture to a model that is better at exact makes and models than you are, and being right ' +
+           'matters more than answering first.';
   }
 
   /* ---- what comes back ---- */
@@ -339,9 +517,7 @@ var LIVE = (function () {
             var v = input[Math.floor(i * ratio)];
             out[i] = Math.max(-1, Math.min(1, v)) * 32767;
           }
-          ws.send(JSON.stringify({ realtimeInput: { mediaChunks: [
-            { mimeType: 'audio/pcm;rate=' + UP_RATE, data: b64(out.buffer) }
-          ] } }));
+          sendAudio(b64(out.buffer));
         };
         mic.connect(node);
         /* ⚠ NOT ac.destination. A ScriptProcessor needs a sink or Safari
@@ -356,8 +532,33 @@ var LIVE = (function () {
            getUserMedia consumers on one phone is how one of them goes
            silent. The on-device recogniser is released when it closes. */
         try { if (window.CAPS && CAPS.hold) CAPS.hold(true); } catch (e) {}
+        watch();
         fire({ kind: 'mic' });
       }, function () { err = 'the microphone was refused'; fire({ kind: 'error', error: err }); });
+  }
+
+  /* THE FIELD THE AUDIO GOES IN HAS TWO NAMES.
+
+     realtimeInput.mediaChunks is the original; realtimeInput.audio is
+     what replaced it. A server that does not know the one you sent
+     ignores it and says nothing back - which is exactly "connected but it
+     has not answered yet", because from here silence and deafness look
+     identical. So the modern shape is used, and if a whole session goes
+     by without a single reply the other one is tried on the next
+     connection rather than the reader being told it does not work. */
+  var LEGACY = 'sightline.live.legacyaudio';
+  var legacy = false;
+  try { legacy = localStorage.getItem(LEGACY) === '1'; } catch (e) {}
+
+  function sendAudio(data) {
+    var chunk = { mimeType: 'audio/pcm;rate=' + UP_RATE, data: data };
+    ws.send(JSON.stringify(legacy
+      ? { realtimeInput: { mediaChunks: [chunk] } }
+      : { realtimeInput: { audio: chunk } }));
+  }
+  function flipAudioShape() {
+    legacy = !legacy;
+    try { localStorage.setItem(LEGACY, legacy ? '1' : '0'); } catch (e) {}
   }
 
   function b64(ab) {
@@ -387,6 +588,9 @@ var LIVE = (function () {
 
   /* ---- doing what it says ---- */
 
+  /* Kept for a model that will not use the tools: the words are still
+     stripped before anything is shown. It cannot un-speak them - that is
+     precisely why the tools above exist. */
   var DO = /\[\[do:([^\]]{1,80})\]\]/gi;
   function stripDo(t) { return String(t || '').replace(DO, '').replace(/\s+/g, ' ').trim(); }
   function act(said) {
@@ -417,10 +621,24 @@ var LIVE = (function () {
     proveTimer = setTimeout(function () {
       proveTimer = 0;
       if (!open || heardBack) return;
-      err = 'the live voice connected but never answered';
+      /* Connected, set up, and silent. The likeliest reason is that the
+         audio went in a field this server does not read, so the next
+         session sends the other shape. */
+      flipAudioShape();
+      err = 'the live voice connected but never answered - trying the other audio format next time';
       fire({ kind: 'error', error: why() });
       stop();
     }, PROVE_MS);
+  }
+
+  function watch() {
+    if (frameTimer) clearInterval(frameTimer);
+    frameTimer = setInterval(function () {
+      if (!open) { clearInterval(frameTimer); frameTimer = 0; return; }
+      if (document.hidden) return;                  // nothing to see
+      if (!window.CAM || !CAM.frame) return;
+      look(CAM.frame(512));
+    }, FRAME_MS);
   }
 
   function touch() {
@@ -435,6 +653,7 @@ var LIVE = (function () {
   function stop(fromClose) {
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = 0; }
     if (proveTimer) { clearTimeout(proveTimer); proveTimer = 0; }
+    if (frameTimer) { clearInterval(frameTimer); frameTimer = 0; }
     silence();
     try { if (node) { node.disconnect(); node.onaudioprocess = null; } } catch (e) {}
     try { if (sink) sink.disconnect(); } catch (e) {}
@@ -454,5 +673,8 @@ var LIVE = (function () {
   return { start: start, stop: stop, say: say, look: look, on: on, why: why,
            available: available, running: running, healthy: healthy, state: state,
            MODELS: MODELS, _order: function () { return order.slice(); },
+           TOOLS: TOOLS, _declarations: declarations, _phraseFor: phraseFor, _toolCall: toolCall,
+           _rank: rank, _discover: discover, _legacy: function () { return legacy; },
+           _flip: flipAudioShape, FRAME_MS: FRAME_MS,
            _handle: handle, _act: act, _stripDo: stripDo, _brief: brief };
 })();

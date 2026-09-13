@@ -208,6 +208,36 @@ var GEM = (function () {
     return Promise.resolve(attempt(0));
   }
 
+  /* ---- TRANSLATION ----
+
+     "it should use gemini to translate(3.5). all captions must be
+      translated."
+
+     It used to go to MyMemory through the Worker, which means a third
+     party, a daily cap, and - the part that actually bit - nothing at all
+     when no Worker endpoint is set: the caption simply appeared in the
+     language it was spoken in. The reader's own key does it now.
+
+     Temperature zero and a prompt with no room in it, because a
+     translator that improvises is worse than one that is late. */
+  function translate(text, from, to) {
+    text = String(text || '').trim();
+    if (!text) return Promise.resolve({ ok: false, error: 'nothing to translate' });
+    if (!has()) return Promise.resolve({ ok: false, error: 'no key set' });
+    var prompt =
+      'Translate the text after the marker into ' + (to || 'en') + '.' +
+      (from && from !== 'auto' ? ' It is in ' + from + '.' : '') + '\n' +
+      'Reply with the translation and NOTHING else - no quotes, no notes, no original, ' +
+      'no explanation. If it is already in the target language, reply with it unchanged.\n' +
+      '---\n' + text;
+    return ask(prompt, null, { maxTokens: 300, temperature: 0 }).then(function (r) {
+      if (!r.ok) return { ok: false, error: r.error };
+      var out = String(r.text || '').trim().replace(/^["\u201c]|["\u201d]$/g, '').trim();
+      if (!out) return { ok: false, error: 'empty translation' };
+      return { ok: true, text: out, via: r.model };
+    });
+  }
+
   /* A quick check that a pasted key works, without spending a picture. */
   function test() {
     if (!has()) return Promise.resolve({ ok: false, error: 'that does not look like a key' });
@@ -218,7 +248,7 @@ var GEM = (function () {
       });
   }
 
-  return { ask: ask, test: test, tts: tts, state: state, has: has, looksLikeKey: looksLikeKey, key: key,
+  return { ask: ask, test: test, tts: tts, translate: translate, state: state, has: has, looksLikeKey: looksLikeKey, key: key,
            TTS_MODELS: TTS_MODELS,
            PRIMARY: PRIMARY, FALLBACK: FALLBACK,
            _turnedAway: turnedAway, _reset: function () { blockedUntil = 0; lastError = ''; } };

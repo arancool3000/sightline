@@ -120,6 +120,55 @@ const server=http.createServer((q,res)=>{
   t('CONTROL - captions still work when switched back on',
     s.hidden === false && /back again/.test(s.text), s.text);
 
+  /* ---- EVERY LINE GETS TRANSLATED, BY GEMINI ----
+
+     "it should use gemini to translate(3.5). all captions must be
+      translated." It used to go to MyMemory through the Worker, and -
+     the part that actually bit - it gave up entirely when no Worker
+     endpoint was set, showing the caption in the language it was spoken
+     in, which is the one thing captions are for. */
+  const tr = await page.evaluate(async () => {
+    /* ⚠ Stub the NETWORK, not GEM.ask: translate() calls the module's own
+       `ask`, not the exported property, so replacing GEM.ask intercepts
+       nothing and the first cut of this test measured the fallback. */
+    /* ⚠ Set a real key rather than stubbing GEM.has: translate() calls the
+       module's own has(), not the exported property, so the first two cuts
+       of this test both measured the fallback instead. */
+    const realFetch = U.fetchT, realPost = IDENT.post, realKey = SET.get('geminiKey');
+    let asked = null, workerCalls = 0;
+    IDENT.post = () => { workerCalls++; return Promise.resolve({ ok: true, text: 'FROM THE WORKER' }); };
+    SET.set('geminiKey', 'AIzaTESTTESTTESTTESTTESTTEST');
+    U.fetchT = (u, o) => {
+      try { asked = JSON.parse(o.body).contents[0].parts[0].text; } catch (e) {}
+      return Promise.resolve({ status: 200, ok: true, text: () => Promise.resolve(JSON.stringify(
+        { candidates: [{ content: { parts: [{ text: 'the bus is late' }] } }] })) });
+    };
+
+    SET.set('capTo', 'en'); SET.set('capFrom', 'fr');
+    window.__rec.say('le bus est en retard', true);
+    await new Promise(r => setTimeout(r, 700));
+    const withKey = (document.getElementById('capMain') || {}).textContent || '';
+
+    /* Counted HERE: the no-key line below calls the Worker on purpose, so
+       reading the total at the end says nothing about the key path. */
+    const workerAfterKey = workerCalls;
+
+    /* No key at all: the Worker is the fallback, not silence. */
+    SET.set('geminiKey', '');
+    window.__rec.say('il pleut beaucoup', true);
+    await new Promise(r => setTimeout(r, 700));
+    const noKey = (document.getElementById('capMain') || {}).textContent || '';
+
+    SET.set('geminiKey', realKey || ''); U.fetchT = realFetch; IDENT.post = realPost;
+    return { withKey, noKey, asked: asked || '', workerCalls, workerAfterKey };
+  });
+  t('a caption is translated by Gemini', /the bus is late/.test(tr.withKey), tr.withKey);
+  t('and the Worker is not asked when the key answered', tr.workerAfterKey === 0, tr.workerAfterKey);
+  t('the prompt says the target language and forbids commentary',
+    /into en/.test(tr.asked) && /NOTHING else/.test(tr.asked), tr.asked.slice(0, 70));
+  t('CONTROL - with no key it falls back rather than showing the original',
+    /FROM THE WORKER/.test(tr.noKey), tr.noKey);
+
   await browser.close(); server.close();
   const bad=R.filter(x=>!x.p);
   R.forEach(x=>console.log((x.p?'PASS  ':'FAIL  ')+x.n+(x.x?'   ['+x.x+']':'')));
