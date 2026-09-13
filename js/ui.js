@@ -1256,10 +1256,12 @@ var UI = (function () {
     var btn = U.$('#btnVoice');
     if (btn) btn.setAttribute('aria-pressed', st.awake || st.thinking ? 'true' : 'false');
     if (!el) return;
-    el.textContent = !st.on ? 'Off.'
+    var live = (window.LIVE && LIVE.why) ? LIVE.why() : '';
+    el.textContent = (!st.on ? 'Off.'
       : st.thinking ? 'Thinking\u2026'
       : st.awake ? 'Listening for your question\u2026'
-      : 'Waiting for "hey vision". Engine: ' + st.engine + '.';
+      : 'Waiting for "hey vision". Engine: ' + st.engine + '.') +
+      (live ? '  ' + live : '');
   }
 
   /* ---- BOTH SIDES OF THE CONVERSATION, ON SCREEN ----
@@ -1292,8 +1294,8 @@ var UI = (function () {
       setTimeout(function () { if (liveIt === ev.it) { liveYou = ''; liveIt = ''; liveCaption(); } }, 6000);
     }
     else if (ev.kind === 'open') { status('LISTENING \u2014 SAY WHAT YOU WANT', 'busy', 4000); }
-    else if (ev.kind === 'closed') { liveYou = ''; liveIt = ''; liveCaption(); }
-    else if (ev.kind === 'error') { status(String(ev.error || 'the live voice failed'), 'bad', 5000); }
+    else if (ev.kind === 'closed') { liveYou = ''; liveIt = ''; liveCaption(); voiceNote(); }
+    else if (ev.kind === 'error') { status(String(ev.error || 'the live voice failed'), 'bad', 6000); voiceNote(); }
   }
 
   function voiceEvent(ev) {

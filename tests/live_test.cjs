@@ -125,6 +125,33 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
     ok('SETUP: the probe really was watching the network', outbound.length>0, outbound.length);
   }
 
+  console.log('\nCONNECTED IS NOT WORKING');
+  {
+    /* "no sound coming, it isn't responding to live messages." A socket
+       that opens and then says nothing leaves the assistant deaf AND
+       mute, because the live session has taken the microphone. */
+    const s=await page.evaluate(()=>({ why: LIVE.why(), st: LIVE.state(), models: LIVE.MODELS }));
+    ok('with no key it says so rather than looking broken', /no gemini key/i.test(s.why), s.why);
+    ok('SETUP: several model names are tried, because the ids move', s.models.length>=3, s.models.length);
+
+    const src=await page.evaluate(()=>fetch('js/live.js').then(r=>r.text()));
+    /* An AudioContext starts SUSPENDED and a suspended one plays nothing
+       while reporting no error - which is exactly "no sound coming". */
+    ok('the audio context is resumed, not just created', /state === 'suspended'[\s\S]{0,40}resume\(\)/.test(src));
+    ok('and it is created inside the tap, where a browser will allow it',
+       /function start\(\)[\s\S]{0,900}audio\(\);/.test(src));
+    ok('a session that never answers is closed rather than left holding the microphone',
+       /PROVE_MS/.test(src) && /never answered/.test(src));
+    ok('the model that worked is remembered for next time', /localStorage\.setItem\(REMEMBER/.test(src));
+
+    const said=await page.evaluate(()=>{
+      const real=GEM.has; GEM.has=()=>true;
+      const a=LIVE.why();
+      GEM.has=real; return a;
+    });
+    ok('CONTROL: with a key and nothing connected it says that instead', /idle|would connect/i.test(said), said);
+  }
+
   ok('no page errors throughout', errs.length===0, errs);
   console.log('\n'+pass+'/'+(pass+fail)+' passed');
   await b.close(); server.close(); process.exit(fail?1:0);

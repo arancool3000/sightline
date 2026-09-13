@@ -26,11 +26,23 @@ var LIVE = (function () {
   /* Tried in order: the newest dialog model, then the one the owner's page
      lists today. A name that is gone closes the socket at once, so the
      next is tried rather than the reader being told it does not work. */
-  var MODELS = ['models/gemini-3-flash-live', 'models/gemini-2.5-flash-native-audio-dialog'];
+  /* The live model ids move, and a name that is gone closes the socket at
+     once rather than answering with an error a person could read. So
+     several are tried in order and whichever connects wins - and the one
+     that DID connect is remembered, so the next session starts there
+     instead of walking the list again. */
+  var MODELS = [
+    'models/gemini-3-flash-live',
+    'models/gemini-live-2.5-flash-preview',
+    'models/gemini-2.5-flash-native-audio-preview-09-2025',
+    'models/gemini-2.0-flash-live-001'
+  ];
+  var REMEMBER = 'sightline.live.model';
   var UP_RATE = 16000, DOWN_RATE = 24000;
   var IDLE_MS = 45000;          // a quiet conversation closes itself
 
-  var ws = null, model = '', mi = 0;
+  var ws = null, model = '', mi = 0, tried = [];
+  var lastClose = '', heardBack = 0, proveTimer = 0;
   var ac = null, mic = null, node = null, stream = null;
   var open = false, connecting = false, lastAt = 0, idleTimer = 0;
   var playAt = 0, sources = [];
@@ -52,21 +64,54 @@ var LIVE = (function () {
      all. */
   function healthy() { return !!(open && node && stream); }
   function state() { return { open: open, connecting: connecting, model: model, error: err,
-                              you: youSaid, it: itSaid }; }
+                              you: youSaid, it: itSaid, tried: tried.slice(),
+                              close: lastClose, answered: heardBack,
+                              audio: ac ? ac.state : 'none' }; }
+  /* What to put in front of a person when it will not talk. Every branch
+     names something they can act on rather than "it failed". */
+  function why() {
+    if (!window.GEM || !GEM.has || !GEM.has()) return 'No Gemini key, so the live voice is off.';
+    if (open && !heardBack) return 'Connected to ' + short(model) + ' but it has not answered yet.';
+    if (open) return 'Live on ' + short(model) + '.';
+    if (tried.length && !model) return 'No live model would connect. Tried: ' + tried.map(short).join(', ') +
+                                       (lastClose ? ' (' + lastClose + ')' : '') + '.';
+    if (err) return err;
+    return 'Live voice is idle.';
+  }
+  function short(m) { return String(m || '').replace(/^models\//, ''); }
 
   /* ---- the socket ---- */
 
   function start() {
     if (open || connecting) return Promise.resolve(true);
     if (!available()) return Promise.resolve(false);
-    connecting = true; err = '';
+    connecting = true; err = ''; lastClose = ''; heardBack = 0; tried = [];
+    /* AN AUDIO CONTEXT STARTS SUSPENDED, and a suspended one plays
+       nothing at all while reporting no error - which is exactly "no
+       sound coming". It is created and resumed HERE, inside the tap that
+       started this, because a browser only grants that from a gesture and
+       the gesture is gone by the time the socket answers. */
+    audio();
+    /* Whichever model worked last time is tried first. */
+    var last = '';
+    try { last = localStorage.getItem(REMEMBER) || ''; } catch (e) {}
+    if (last && MODELS.indexOf(last) > 0) MODELS = [last].concat(MODELS.filter(function (m) { return m !== last; }));
     mi = 0;
     return connect();
+  }
+
+  function audio() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!ac) { try { ac = new AC(); } catch (e) { return null; } }
+    if (ac.state === 'suspended') { try { ac.resume(); } catch (e) {} }
+    return ac;
   }
 
   function connect() {
     if (mi >= MODELS.length) { connecting = false; err = err || 'no live model answered'; fire({ kind: 'error', error: err }); return Promise.resolve(false); }
     model = MODELS[mi];
+    tried.push(model);
     return new Promise(function (res) {
       var sock;
       try { sock = new WebSocket(HOST + '?key=' + encodeURIComponent(GEM.key())); }
@@ -97,9 +142,11 @@ var LIVE = (function () {
             if (settled) return;
             settled = true; clearTimeout(giveUp);
             ws = sock; open = true; connecting = false;
+            try { localStorage.setItem(REMEMBER, model); } catch (e) {}
             touch();
             fire({ kind: 'open', model: model });
             micOn();
+            prove();
             res(true);
             return;
           }
@@ -109,6 +156,7 @@ var LIVE = (function () {
 
       sock.onerror = function () { err = 'the live connection failed'; };
       sock.onclose = function (e) {
+        lastClose = (e && e.code ? e.code : '?') + (e && e.reason ? ' ' + String(e.reason).slice(0, 70) : '');
         if (!settled) {
           settled = true; clearTimeout(giveUp);
           /* 1007/1008 and friends: this model name is not available on this
@@ -154,6 +202,8 @@ var LIVE = (function () {
 
   function handle(msg) {
     touch();
+    heardBack++;
+    if (proveTimer) { clearTimeout(proveTimer); proveTimer = 0; }
     var sc = msg.serverContent;
     if (!sc) return;
 
@@ -189,7 +239,7 @@ var LIVE = (function () {
   /* ---- speaking ---- */
 
   function play(b64, rate) {
-    if (!ac) return;
+    if (!audio()) return;
     var bin = atob(b64), n = bin.length >> 1;
     if (!n) return;
     var buf = ac.createBuffer(1, n, rate);
@@ -218,9 +268,7 @@ var LIVE = (function () {
   /* ---- listening ---- */
 
   function micOn() {
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    ac = ac || new AC();
+    if (!audio()) return;
     navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
       .then(function (s) {
         if (!open) { s.getTracks().forEach(function (t) { t.stop(); }); return; }
@@ -296,6 +344,26 @@ var LIVE = (function () {
 
   /* ---- staying awake, and not ---- */
 
+  /* CONNECTED IS NOT WORKING, AND SILENCE IS THE WORST WAY TO FAIL.
+
+     "no sound coming, it isn't responding to live messages." A socket
+     that opens and then says nothing leaves the assistant deaf AND mute,
+     because the live session has taken the microphone. So it has a
+     window to prove itself: say something, anything, or it is closed and
+     the on-device assistant gets the microphone back - with a line on
+     screen saying which model would not answer. */
+  var PROVE_MS = 9000;
+  function prove() {
+    if (proveTimer) clearTimeout(proveTimer);
+    proveTimer = setTimeout(function () {
+      proveTimer = 0;
+      if (!open || heardBack) return;
+      err = 'the live voice connected but never answered';
+      fire({ kind: 'error', error: why() });
+      stop();
+    }, PROVE_MS);
+  }
+
   function touch() {
     lastAt = Date.now();
     if (idleTimer) clearTimeout(idleTimer);
@@ -307,6 +375,7 @@ var LIVE = (function () {
 
   function stop(fromClose) {
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = 0; }
+    if (proveTimer) { clearTimeout(proveTimer); proveTimer = 0; }
     silence();
     try { if (node) { node.disconnect(); node.onaudioprocess = null; } } catch (e) {}
     try { if (mic) mic.disconnect(); } catch (e) {}
@@ -321,7 +390,7 @@ var LIVE = (function () {
     if (was) fire({ kind: 'closed' });
   }
 
-  return { start: start, stop: stop, say: say, look: look, on: on,
+  return { start: start, stop: stop, say: say, look: look, on: on, why: why,
            available: available, running: running, healthy: healthy, state: state,
            MODELS: MODELS, _handle: handle, _act: act, _stripDo: stripDo, _brief: brief };
 })();
