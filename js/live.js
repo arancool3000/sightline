@@ -26,22 +26,40 @@ var LIVE = (function () {
   /* Tried in order: the newest dialog model, then the one the owner's page
      lists today. A name that is gone closes the socket at once, so the
      next is tried rather than the reader being told it does not work. */
-  /* The live model ids move, and a name that is gone closes the socket at
-     once rather than answering with an error a person could read. So
-     several are tried in order and whichever connects wins - and the one
-     that DID connect is remembered, so the next session starts there
-     instead of walking the list again. */
+  /* IN ORDER OF PREFERENCE, NEWEST FIRST.
+
+     Gemini 3 Flash Live is the newest full-dialog model that is unlimited
+     on the free tier - unlimited requests a minute and a day, 65K tokens a
+     minute, which is ample when a conversation is about 2K a minute each
+     way and one camera frame goes up per wake. 2.5 Native Audio Dialog is
+     the same deal with a far bigger token budget (1M) and is the one to
+     fall back to if the newer ever throttles.
+
+     NOT on this list, deliberately: 3.5 Live Translate and 3.5 Transcribe
+     Live. They are unlimited too, and they each do exactly one job -
+     translate, or transcribe. Neither holds a conversation or calls a
+     command, so putting them here would look like a working assistant
+     that ignores everything it is asked to do.
+
+     The ids move and a name that is gone closes the socket rather than
+     answering with an error anybody can read, so the list is walked until
+     one connects. */
   var MODELS = [
     'models/gemini-3-flash-live',
     'models/gemini-live-2.5-flash-preview',
     'models/gemini-2.5-flash-native-audio-preview-09-2025',
     'models/gemini-2.0-flash-live-001'
   ];
-  var REMEMBER = 'sightline.live.model';
+  /* ⚠ v2: the first cut promoted the remembered model to the FRONT, so a
+     device that once connected on 2.5 would have stayed on it for ever and
+     never tried 3 Flash again - the preference order would have been
+     decided once, on whichever day the newest happened to be down. The key
+     is bumped so those devices start again. */
+  var REMEMBER = 'sightline.live.model.v2';
   var UP_RATE = 16000, DOWN_RATE = 24000;
   var IDLE_MS = 45000;          // a quiet conversation closes itself
 
-  var ws = null, model = '', mi = 0, tried = [];
+  var ws = null, model = '', mi = 0, tried = [], order = [];
   var lastClose = '', heardBack = 0, proveTimer = 0;
   var ac = null, mic = null, node = null, stream = null, sink = null, out = null;
   var played = 0, playedMs = 0;
@@ -95,10 +113,15 @@ var LIVE = (function () {
        started this, because a browser only grants that from a gesture and
        the gesture is gone by the time the socket answers. */
     audio();
-    /* Whichever model worked last time is tried first. */
+    /* THE PREFERRED MODEL IS ALWAYS TRIED FIRST. What worked last time is
+       promoted to SECOND, so a session skips straight past the names that
+       failed without ever pinning itself away from the newest one. */
     var last = '';
     try { last = localStorage.getItem(REMEMBER) || ''; } catch (e) {}
-    if (last && MODELS.indexOf(last) > 0) MODELS = [last].concat(MODELS.filter(function (m) { return m !== last; }));
+    order = MODELS.slice();
+    if (last && order.indexOf(last) > 1) {
+      order = [order[0], last].concat(order.slice(1).filter(function (m) { return m !== last; }));
+    }
     mi = 0;
     return connect();
   }
@@ -125,8 +148,9 @@ var LIVE = (function () {
   }
 
   function connect() {
-    if (mi >= MODELS.length) { connecting = false; err = err || 'no live model answered'; fire({ kind: 'error', error: err }); return Promise.resolve(false); }
-    model = MODELS[mi];
+    if (!order.length) order = MODELS.slice();
+    if (mi >= order.length) { connecting = false; err = err || 'no live model answered'; fire({ kind: 'error', error: err }); return Promise.resolve(false); }
+    model = order[mi];
     tried.push(model);
     return new Promise(function (res) {
       var sock;
@@ -429,5 +453,6 @@ var LIVE = (function () {
 
   return { start: start, stop: stop, say: say, look: look, on: on, why: why,
            available: available, running: running, healthy: healthy, state: state,
-           MODELS: MODELS, _handle: handle, _act: act, _stripDo: stripDo, _brief: brief };
+           MODELS: MODELS, _order: function () { return order.slice(); },
+           _handle: handle, _act: act, _stripDo: stripDo, _brief: brief };
 })();

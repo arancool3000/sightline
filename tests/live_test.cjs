@@ -133,6 +133,35 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
     const s=await page.evaluate(()=>({ why: LIVE.why(), st: LIVE.state(), models: LIVE.MODELS }));
     ok('with no key it says so rather than looking broken', /no gemini key/i.test(s.why), s.why);
     ok('SETUP: several model names are tried, because the ids move', s.models.length>=3, s.models.length);
+    /* "do 3 flash then for audio instead of 2.5 flash." */
+    ok('the newest full-dialog model is the one asked for first',
+       /gemini-3-flash-live/.test(s.models[0]), s.models[0]);
+    ok('and 2.5 native audio is behind it, not in front',
+       s.models.findIndex(m=>/2\.5/.test(m)) > 0, s.models);
+    /* The specialists are unlimited too and would look like a working
+       assistant that ignores every instruction. */
+    ok('CONTROL: no translate-only or transcribe-only model is in the list',
+       !s.models.some(m=>/translate|transcribe/i.test(m)), s.models);
+
+    /* THE ONE THAT WOULD HAVE UNDONE IT. Remembering what connected last
+       time must never outrank the preferred model, or the choice gets
+       made once - on whichever day the newest happened to be down. */
+    const pinned=await page.evaluate(async()=>{
+      try { localStorage.setItem('sightline.live.model.v2','models/gemini-2.0-flash-live-001'); } catch(e){}
+      const realWS=window.WebSocket, realHas=GEM.has, realKey=GEM.key;
+      GEM.has=()=>true; GEM.key=()=>'AIzaTESTTESTTESTTESTTEST';
+      /* A socket that never opens, so start() lays out its order and waits. */
+      window.WebSocket=function(){ this.close=function(){}; };
+      LIVE.start();
+      const order=LIVE._order();
+      window.WebSocket=realWS; GEM.has=realHas; GEM.key=realKey; LIVE.stop();
+      try { localStorage.removeItem('sightline.live.model.v2'); } catch(e){}
+      return order;
+    });
+    ok('even with an older model remembered, the newest is still tried first',
+       /gemini-3-flash-live/.test(pinned[0]||''), pinned);
+    ok('and the remembered one is second, so a known-good name is not walked to',
+       /2\.0-flash-live/.test(pinned[1]||''), pinned);
 
     const src=await page.evaluate(()=>fetch('js/live.js').then(r=>r.text()));
     /* An AudioContext starts SUSPENDED and a suspended one plays nothing
