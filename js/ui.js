@@ -1457,6 +1457,22 @@ var UI = (function () {
     var railGames = U.$('#railGames');
     if (railGames) railGames.addEventListener('click', openGames);
 
+    /* ---- the VR door ----
+       The whole app in two views. It needs the camera, so it says so
+       rather than opening a black rectangle. */
+    var railVR = U.$('#railVR');
+    if (railVR) railVR.addEventListener('click', function () {
+      if (!window.STEREO) return;
+      if (STEREO.running()) { STEREO.stop(); railVR.setAttribute('aria-pressed', 'false'); return; }
+      if (!STEREO.start()) { U.toast('VR needs the camera on: press START first.', 4000); return; }
+      railVR.setAttribute('aria-pressed', 'true');
+      var rail = U.$('#rail');
+      if (rail) { rail.hidden = true; U.$('#dockMore').setAttribute('aria-expanded', 'false'); }
+    });
+    if (window.STEREO) STEREO.on(function (ev) {
+      if (railVR) railVR.setAttribute('aria-pressed', ev.kind === 'on' ? 'true' : 'false');
+    });
+
     dock('dockMore', function () {
       var rail = U.$('#rail'), b = U.$('#dockMore');
       rail.hidden = !rail.hidden;

@@ -117,12 +117,33 @@ var CMD = (function () {
        same thing as "take a video". A number is optional everywhere it
        appears, because "zoom in" is a sentence and so is "zoom in by
        three". */
+    /* ---- VR MODE, WHICH IS NOT A GAME ----
+       Two views of the whole app, for a viewer. It sits ABOVE the play
+       command in the table because "start vr mode" would otherwise be
+       eaten by the game's own "start vr". */
+    { name: 'vr mode',
+      re: /^(?:vr|cardboard|stereo)\s*mode\b|^(?:turn on|start|enter|go)\s+(?:into\s+)?(?:vr|cardboard|stereo)\s*mode\b|^(?:split|two|2)\s+(?:the\s+)?(?:views?|screens?|eyes?)\b/i,
+      run: function () {
+        if (!window.STEREO) return false;
+        if (STEREO.running()) return { say: 'Already in VR.' };
+        return STEREO.start()
+          ? { say: 'VR. Put the phone in the viewer. Say leave VR to come back.' }
+          : { say: 'The camera is not running.' };
+      } },
+    { name: 'leave vr',
+      re: /^(?:leave|exit|stop|end|turn off|close)\s+(?:the\s+)?(?:vr|cardboard|stereo)(?:\s*mode)?\b/i,
+      run: function () {
+        if (!window.STEREO || !STEREO.running()) return { say: 'VR is not on.' };
+        STEREO.stop();
+        return { say: 'Back to one view.' };
+      } },
+
     /* --- games ---
 
        "start vr hands free games with it" - so starting one is something
        you say, not something you reach into a cardboard box to tap. */
     { name: 'stop game',
-      re: /^(?:stop|quit|leave|exit|end)\s+(?:the\s+)?(?:game|vr|playing)\b/i,
+      re: /^(?:stop|quit|leave|exit|end)\s+(?:the\s+)?(?:game|playing)\b/i,
       run: function () {
         if (!window.VR || !VR.running()) return { say: 'No game is running.' };
         var s = VR.score();
@@ -130,13 +151,25 @@ var CMD = (function () {
         return { say: s ? ('Stopped. ' + s.score + ' points.') : 'Stopped.' };
       } },
     { name: 'play',
-      re: /^(?:play|start|launch|open)\s+(?:the\s+|a\s+)?(?:vr\s+)?(?:game|cubes?|cube slice|slicing|slice)\b|^(?:play|start)\s+vr\b/i,
-      run: function () {
+      re: /^(?:play|start|launch|open)\s+(?:the\s+|a\s+)?(?:vr\s+)?(?:game|cubes?|cube slice|slicing|slice|orbs?|orb hold|holding)\b|^(?:play|start)\s+vr\b/i,
+      run: function (m, said) {
         if (!window.VR) return false;
         if (VR.running()) return { say: 'Already playing.' };
         if (!window.CAM || !CAM.live()) return { say: 'The camera is not running.' };
-        return VR.start('slice')
-          ? { say: 'Cube slice. Hold your hands up and swing through them.' }
+        /* WHICH GAME IS READ OFF THE TABLE, not off a name written here:
+           a game added to VR.GAMES can be asked for by its own title the
+           day it arrives, and there is no list to keep in step. */
+        var want = '', text = String(said || '').toLowerCase();
+        VR.list().forEach(function (g) {
+          if (want) return;
+          var words = g.title.toLowerCase().split(/\s+/);
+          if (text.indexOf(g.title.toLowerCase()) >= 0 || text.indexOf(g.id) >= 0) want = g.id;
+          else if (words.some(function (w) { return w.length > 3 && text.indexOf(w) >= 0; })) want = g.id;
+        });
+        var pick = want || (VR.list()[0] || {}).id || 'slice';
+        var chose = VR.list().filter(function (g) { return g.id === pick; })[0];
+        return VR.start(pick)
+          ? { say: (chose ? chose.title + '. ' + chose.how : 'Playing.') }
           : { say: 'I could not start that.' };
       } },
 
@@ -402,7 +435,7 @@ var CMD = (function () {
     for (var i = 0; i < TABLE.length; i++) {
       if (words > MAX_WORDS && !TABLE[i].long) continue;
       var m = line.match(TABLE[i].re);
-      if (m) return { name: TABLE[i].name, m: m, entry: TABLE[i] };
+      if (m) return { name: TABLE[i].name, m: m, entry: TABLE[i], said: line };
     }
     return null;
   }
@@ -417,7 +450,10 @@ var CMD = (function () {
     var hit = match(text);
     if (!hit) return null;
     var out;
-    try { out = hit.entry.run(hit.m); }
+    /* The cleaned line goes through as well as the match: a command that
+       has to tell WHICH of several things was asked for cannot get that
+       out of a regex written before the list existed. */
+    try { out = hit.entry.run(hit.m, hit.said || text); }
     catch (e) { return null; }
     if (!out) return null;
     out.name = hit.name;

@@ -22,7 +22,12 @@ const s=http.createServer((q,res)=>{let p=decodeURIComponent(q.url.split('?')[0]
     const more=document.getElementById('dockMore'); if(more) more.click();
       const strip=document.querySelector('.modes');
       const sr=strip.getBoundingClientRect();
-      const btns=[...document.querySelectorAll('.mbtn')].map(b=>{
+      /* The FILTER chips, which are what has to share the strip five ways.
+         GAMES and VR are also .mbtn but live in their own pill, so
+         measuring them against the strip's bounds called a correct layout
+         clipped. They are checked on their own below, against the screen,
+         which is the thing that actually has to hold them. */
+      const btns=[...document.querySelectorAll('.modes .mbtn')].map(b=>{
         const r=b.getBoundingClientRect();
         return {t:b.textContent.trim(), full: r.left>=sr.left-0.5 && r.right<=sr.right+0.5, h:Math.round(r.height)};
       });
@@ -35,17 +40,25 @@ const s=http.createServer((q,res)=>{let p=decodeURIComponent(q.url.split('?')[0]
         const r=b.getBoundingClientRect();
         return {w:Math.round(r.width), h:Math.round(r.height), on:r.right<=innerWidth+0.5&&r.left>=-0.5};
       });
-      return {btns, dock, overflow: strip.scrollWidth>Math.ceil(sr.width),
+      const extra=[...document.querySelectorAll('.rail-extra .mbtn')].map(b=>{
+        const r=b.getBoundingClientRect();
+        return {t:b.textContent.trim(), h:Math.round(r.height),
+                on:r.right<=innerWidth+0.5 && r.left>=-0.5 && r.width>=44};
+      });
+      return {btns, dock, extra, overflow: strip.scrollWidth>Math.ceil(sr.width),
               overlap: cc.left < sr.right-0.5 && cc.bottom > sr.top+0.5,
               flipReachable: flip.width>=36 && flip.height>=36 && flip.top>=0,
               touch: btns.every(x=>x.h>=44)};
     });
     const hidden=r.btns.filter(x=>!x.full).map(x=>x.t);
     const dockOk = r.dock.length===5 && r.dock.every(d=>d.w>=44&&d.h>=44&&d.on);
-    const ok = hidden.length===0 && !r.overlap && r.touch && r.flipReachable && dockOk;
+    const offScreen=r.extra.filter(x=>!x.on||x.h<44).map(x=>x.t);
+    const ok = hidden.length===0 && offScreen.length===0 && !r.overlap &&
+               r.touch && r.flipReachable && dockOk;
     if(!ok) bad++;
     console.log((ok?'PASS  ':'FAIL  ')+name.padEnd(14)+w+'px   '+
       (hidden.length?'clipped: '+hidden.join(','):'all 5 fully visible')+
+      (offScreen.length?'   off screen: '+offScreen.join(','):'   +'+r.extra.length+' extra ok')+
       (r.overlap?'   OVERLAPS BUTTONS':'')+(r.touch?'':'   TOUCH<44')+(r.flipReachable?'':'   FLIP UNREACHABLE')+
       (dockOk?'   dock 5/5':'   DOCK '+JSON.stringify(r.dock)));
     await ctx.close();

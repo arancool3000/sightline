@@ -73,19 +73,25 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
       c.fillStyle='#d9a487'; c.fillRect(30,170,60,60);
       for (let i=0;i<14;i++) VR._readHands(cv);
       const b2=VR._hands();
-      /* And an empty room. */
+      /* And an empty room. One missing frame must NOT drop the hand - a
+         hand that blinks out on a single bad frame takes the sword with
+         it - but a room with nobody in it must end up empty. */
       c.fillStyle='#2b2f33'; c.fillRect(0,0,320,240);
-      for (let i=0;i<4;i++) VR._readHands(cv);
+      VR._readHands(cv);
+      const blink=VR._hands();
+      for (let i=0;i<12;i++) VR._readHands(cv);
       const empty=VR._hands();
       return { right:{seen:a.right.seen, x:+a.right.x.toFixed(2), y:+a.right.y.toFixed(2)},
                rightWhenLeft:a.right.seen,
                left:{seen:b2.left.seen, x:+b2.left.x.toFixed(2)},
+               blink:blink.left.seen||blink.right.seen,
                emptyL:empty.left.seen, emptyR:empty.right.seen };
     });
     ok('a hand low on the right is seen as the right hand', r.right.seen===true, r.right);
     ok('and it is on the right of the frame', r.right.x>0.55, r.right);
     ok('and low in it, where a hand held up actually is', r.right.y>0.5, r.right);
     ok('a hand low on the left is seen as the left hand', r.left.seen===true && r.left.x<0.45, r.left);
+    ok('one missing frame does not drop the hand', r.blink===true, r);
     ok('CONTROL: an empty room sees no hands at all',
        r.emptyL===false && r.emptyR===false, r);
   }
