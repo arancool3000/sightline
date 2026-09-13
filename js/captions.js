@@ -193,7 +193,8 @@ var CAPS = (function () {
     try { if (rec) rec.abort(); } catch (e) {}
   }
   var autoLang = '';
-  function health() { return { supported: !!SR, wantOn: wantOn, listening: on,
+  function health() { return { supported: !!SR, wantOn: wantOn, listening: on || onScribe,
+                               ears: onScribe ? 'live' : (recording ? 'recorded' : 'on-device'),
                                note: lastNote, netFails: netFails,
                                quietMs: lastSign ? Date.now() - lastSign : -1 }; }
 
@@ -221,8 +222,62 @@ var CAPS = (function () {
     sign();
     note('STARTING');
     watch();
-    spin();
+    if (!scribeStart()) spin();
     return true;
+  }
+
+  /* ---- THE UNLIMITED TRANSCRIBER, TRIED BEFORE THE BROWSER'S OWN ------
+
+     The Live transcribe model is unlimited on this key and hears better
+     than any on-device recogniser, and on iOS Safari there IS no on-device
+     recogniser - which is the case that matters. The browser's own engine
+     stays as the fallback and takes over the moment this one drops, so a
+     socket that closes mid-sentence costs one sentence and not the
+     feature. */
+  var onScribe = false, asked = false;
+
+  function scribeStart() {
+    if (!window.SCRIBE || !SCRIBE.canHear) return false;
+    /* The model list is fetched once per session and nothing may have
+       needed it yet. Ask, start the browser's ears meanwhile, and take
+       over when the answer arrives - so the first sentence is never lost
+       waiting for a lookup. */
+    if (!SCRIBE.models().hear && !asked) {
+      asked = true;
+      SCRIBE.find().then(function () {
+        if (wantOn && !onScribe && !held) { if (scribeStart() && rec && on) { try { rec.abort(); } catch (e) {} } }
+      }, function () {});
+    }
+    if (!SCRIBE.canHear()) return false;
+    var started = SCRIBE.listen(function (text, lang) {
+      if (!wantOn) return;
+      sign(); note('LISTENING'); UI.captionState('listening');
+      interim = '';
+      if (!silent) push(text, lang);
+      tellHeard(text);
+    }, function (partial) {
+      if (!wantOn) return;
+      sign();
+      interim = partial;
+      if (!silent) UI.captionDraw(lines, interim, null);
+      tellPartial(partial);
+    }, function (why) {
+      onScribe = false;
+      if (!wantOn) return;
+      /* Say what happened once, then carry on with the browser's ears
+         rather than leaving somebody looking at a dead caption bar. */
+      note('ON-DEVICE');
+      if (supported()) { clearTimeout(restartTimer); restartTimer = setTimeout(spin, 250); }
+      else if (canRecord()) startRecording();
+    });
+    if (started) { onScribe = true; note('LISTENING'); UI.captionState('listening'); }
+    return started;
+  }
+
+  function scribeStop() {
+    if (!onScribe) return;
+    onScribe = false;
+    try { SCRIBE.stop(); } catch (e) {}
   }
 
   function spin() {
@@ -420,6 +475,7 @@ var CAPS = (function () {
     netFails = 0;
     confHist = []; tried = {}; locked = false; autoLang = '';
     stopRecording();
+    scribeStop();
     note('');
     if (rec) {
       /* abort() discards a pending utterance; stop() delivers it, which is
@@ -473,13 +529,18 @@ var CAPS = (function () {
       if (wantOn) UI.captionDraw(lines, interim, null);
     };
 
-    var viaGemini = (window.GEM && GEM.has && GEM.has())
-      ? GEM.translate(text, from, to).then(function (r) { return (r && r.ok) ? r.text : ''; },
-                      function () { return ''; })
+    /* SCRIBE is the whole chain in one call: the unlimited Live translate
+       model, then Gemini's text model, then MyMemory - which needs no key
+       at all, so this step still answers for a reader who has never
+       entered one. The endpoint stays below it for a setup that has its
+       own. */
+    var chain = (window.SCRIBE && SCRIBE.translate)
+      ? SCRIBE.translate(text, from, to).then(function (r) { return (r && r.ok) ? r.text : ''; },
+                         function () { return ''; })
       : Promise.resolve('');
 
-    viaGemini.then(function (out) {
-      if (out) return done(out);
+    chain.then(function (out) {
+      if (out) { line.via = (window.SCRIBE && SCRIBE.via) ? SCRIBE.via() : ''; return done(out); }
       if (!SET.hasApi()) return done('', 'no key and no endpoint - showing the original');
       return IDENT.post('/v1/translate', { text: text, from: from, to: to })
         .then(function (r) { done((r && r.ok && r.text) ? r.text : ''); },
@@ -536,7 +597,13 @@ var CAPS = (function () {
     v = !!v;
     if (v === held) return;
     held = v;
-    if (held) { try { if (rec && on) rec.abort(); } catch (e) {} return; }
+    if (held) {
+      try { if (rec && on) rec.abort(); } catch (e) {}
+      /* The live session wants the one microphone this phone has. */
+      scribeStop();
+      return;
+    }
+    if (wantOn && scribeStart()) return;
     if (wantOn && !on) { clearTimeout(restartTimer); restartTimer = setTimeout(spin, 250); }
   }
   function isHeld() { return held; }

@@ -68,7 +68,7 @@ var LIVE = (function () {
      construction; the hand list stays only for when the lookup itself
      cannot be reached. */
   var LIST = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=';
-  var found = null, listing = null;
+  var found = null, listing = null, foundAll = null;
 
   /* Newest and most capable first, by what the name says about it. A
      dialog model outranks a transcriber, and a bigger number outranks a
@@ -93,10 +93,16 @@ var LIVE = (function () {
       .then(function (j) {
         listing = null;
         var all = (j && j.models) || [];
-        var live = all.filter(function (m) {
+        var bidi = all.filter(function (m) {
           return (m.supportedGenerationMethods || []).indexOf('bidiGenerateContent') >= 0;
-        }).map(function (m) { return m.name; })
-          .filter(function (n) { return rank(n) >= 0; })
+        }).map(function (m) { return m.name; });
+        /* The whole bidi list, transcribers and translators included. The
+           conversation list below throws those away on purpose, but the
+           caption track wants exactly the ones it throws away, and asking
+           the API twice for the same answer is a second request for
+           nothing. */
+        foundAll = bidi.slice();
+        var live = bidi.filter(function (n) { return rank(n) >= 0; })
           .sort(function (a, b) { return rank(b) - rank(a); });
         found = live.length ? live : null;
         return found;
@@ -687,6 +693,10 @@ var LIVE = (function () {
            MODELS: MODELS, _order: function () { return order.slice(); },
            TOOLS: TOOLS, _declarations: declarations, _phraseFor: phraseFor, _toolCall: toolCall,
            _rank: rank, _discover: discover, _legacy: function () { return legacy; },
+           /* Every model this key can hold a socket with, discovered once
+              and shared, so the caption track does not list them again. */
+           bidi: function () { return discover().then(function () { return foundAll ? foundAll.slice() : null; }); },
+           bidiNow: function () { return foundAll ? foundAll.slice() : null; },
            _flip: flipAudioShape, FRAME_MS: FRAME_MS,
            _handle: handle, _act: act, _stripDo: stripDo, _brief: brief };
 })();
