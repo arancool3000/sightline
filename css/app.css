@@ -654,3 +654,15 @@ body.navigating #statusStrip{bottom:calc(var(--safe-b) + 186px)}
 .ask-row{display:flex;gap:8px}
 .ask-row .hbtn{flex:1}
 .ask-row .hbtn.primary{background:var(--acc);border-color:var(--acc);color:#061018}
+
+/* ---------- games ----------
+   A cardboard viewer shows two halves of one screen, so the game is one
+   canvas drawn twice rather than two elements. Everything else gets out
+   of the way: in a box there is nothing to tap but the one big button. */
+#vrRoot{position:fixed;inset:0;z-index:70;background:#04070b}
+#vrCanvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+/* The seam, so the two eyes have an edge to sit either side of. */
+#vrRoot:after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;
+  background:rgba(120,190,255,.18);pointer-events:none}
+#vrOut{position:absolute;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--safe-b) + 10px);z-index:2;min-width:120px}

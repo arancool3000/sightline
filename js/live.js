@@ -312,6 +312,8 @@ var LIVE = (function () {
     { name: 'clear_boxes',     say: 'clear',               what: 'Remove every highlight and box from the view.' },
     { name: 'take_photo',      say: 'take a photo',        what: 'Take a photograph of what the camera can see right now.' },
     { name: 'translate_view',  say: 'translate this sign', what: 'Read the writing in view and lay the translation over it, for a sign or a menu in another language.' },
+    { name: 'play_game',       say: 'play the cube game',  what: 'Start the hands-free cube slicing game, played by swinging your hands in front of the camera through a cardboard viewer.' },
+    { name: 'stop_game',       say: 'stop the game',       what: 'Leave the game and go back to the camera.' },
     { name: 'stop_translating', say: 'stop translating',   what: 'Stop laying translations over the view.' },
     { name: 'start_recording', say: 'start recording',     what: 'Start recording a video of what the camera can see.' },
     { name: 'stop_recording',  say: 'stop recording',      what: 'Stop the video that is recording and show it.' },

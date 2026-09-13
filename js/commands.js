@@ -117,6 +117,29 @@ var CMD = (function () {
        same thing as "take a video". A number is optional everywhere it
        appears, because "zoom in" is a sentence and so is "zoom in by
        three". */
+    /* --- games ---
+
+       "start vr hands free games with it" - so starting one is something
+       you say, not something you reach into a cardboard box to tap. */
+    { name: 'stop game',
+      re: /^(?:stop|quit|leave|exit|end)\s+(?:the\s+)?(?:game|vr|playing)\b/i,
+      run: function () {
+        if (!window.VR || !VR.running()) return { say: 'No game is running.' };
+        var s = VR.score();
+        VR.stop();
+        return { say: s ? ('Stopped. ' + s.score + ' points.') : 'Stopped.' };
+      } },
+    { name: 'play',
+      re: /^(?:play|start|launch|open)\s+(?:the\s+|a\s+)?(?:vr\s+)?(?:game|cubes?|cube slice|slicing|slice)\b|^(?:play|start)\s+vr\b/i,
+      run: function () {
+        if (!window.VR) return false;
+        if (VR.running()) return { say: 'Already playing.' };
+        if (!window.CAM || !CAM.live()) return { say: 'The camera is not running.' };
+        return VR.start('slice')
+          ? { say: 'Cube slice. Hold your hands up and swing through them.' }
+          : { say: 'I could not start that.' };
+      } },
+
     /* --- reading a sign --- */
     { name: 'translate view',
       /* Bare "translate" is a sentence, so the noun after it is optional -

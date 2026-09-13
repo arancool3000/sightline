@@ -187,6 +187,8 @@
      straight back up. */
   function covered() {
     if (document.hidden) return true;
+    /* A game owns the whole screen and the camera with it. */
+    if (window.VR && VR.running()) return true;
     var ids = ['settings', 'mapPanel', 'sheet'];
     for (var i = 0; i < ids.length; i++) {
       var el = document.getElementById(ids[i]);
