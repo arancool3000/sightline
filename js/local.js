@@ -335,6 +335,24 @@ var LOCAL = (function () {
      materials rather than things. Those are worse than the COCO word. */
   var JUNK = /^(web site|envelope|book jacket|comic book|menu|packet|carton|jigsaw puzzle|crossword|velvet|wool|jean|handkerchief|bath towel|quilt|window screen|shoji|theater curtain|mosquito net|chain-link fence|picket fence|stone wall|worm fence|maze)$/i;
 
+  /* ⛔ THE GENERAL CLASSIFIER NEVER GETS TO NAME A PERSON.
+
+     "it thinks person = groom?"
+
+     ImageNet has no class for a person. What it has is a thousand OTHER
+     things, among them groom, scuba diver, ballplayer, academic gown,
+     suit and military uniform - so shown a person it MUST return one of
+     those, and it will do it confidently and repeatedly, which is exactly
+     what the evidence gate reads as agreement.
+
+     There is nothing to salvage: every answer this model can give about a
+     person is wrong, because the right one is not in its vocabulary.
+     People are named by the face pipeline and the public-figure gate, or
+     they are not named at all. */
+  function personKind(t) {
+    return !!(window.IDENT && IDENT.kindOf && IDENT.kindOf(t.cls) === 'person');
+  }
+
   /* ---- classification -------------------------------------------------- */
 
   /* Draw a track's crop into the 224 pad. Letterboxed rather than stretched:
@@ -408,6 +426,16 @@ var LOCAL = (function () {
       if (!preds || !preds.length) return null;
       var top = preds[0];
       var name = tidy(top.className);
+
+      if (personKind(t)) {
+        /* Not "low confidence" - out of vocabulary. The box stays and the
+           face pipeline still runs; nothing invents a noun. */
+        t.local = null;
+        t.scan = 'dismissed';
+        t.why = 'PEOPLE ARE NAMED BY FACE, NOT BY GUESS';
+        t.settled = performance.now();
+        return null;
+      }
 
       if (top.probability < MIN_SCORE || JUNK.test(name)) {
         t.local = null;                       // keep the generic COCO word

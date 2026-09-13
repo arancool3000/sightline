@@ -16,6 +16,10 @@ const s=http.createServer((q,res)=>{let p=decodeURIComponent(q.url.split('?')[0]
     await p.waitForTimeout(900);
     await p.click('#btnStart'); await p.waitForTimeout(1500);
     const r=await p.evaluate(()=>{
+      /* The filter chips live behind the dock's MORE button now, so they are
+       hidden until asked for - measuring them closed read 0px high and
+       failed for a correct layout. Open it the way a finger does. */
+    const more=document.getElementById('dockMore'); if(more) more.click();
       const strip=document.querySelector('.modes');
       const sr=strip.getBoundingClientRect();
       const btns=[...document.querySelectorAll('.mbtn')].map(b=>{
@@ -27,17 +31,23 @@ const s=http.createServer((q,res)=>{let p=decodeURIComponent(q.url.split('?')[0]
          rail and went red for a correct layout. */
       const cc=document.querySelector('#btnCaptions').getBoundingClientRect();
       const flip=document.querySelector('#btnFlip').getBoundingClientRect();
-      return {btns, overflow: strip.scrollWidth>Math.ceil(sr.width),
+      const dock=[...document.querySelectorAll('.dbtn')].map(b=>{
+        const r=b.getBoundingClientRect();
+        return {w:Math.round(r.width), h:Math.round(r.height), on:r.right<=innerWidth+0.5&&r.left>=-0.5};
+      });
+      return {btns, dock, overflow: strip.scrollWidth>Math.ceil(sr.width),
               overlap: cc.left < sr.right-0.5 && cc.bottom > sr.top+0.5,
               flipReachable: flip.width>=36 && flip.height>=36 && flip.top>=0,
               touch: btns.every(x=>x.h>=44)};
     });
     const hidden=r.btns.filter(x=>!x.full).map(x=>x.t);
-    const ok = hidden.length===0 && !r.overlap && r.touch && r.flipReachable;
+    const dockOk = r.dock.length===5 && r.dock.every(d=>d.w>=44&&d.h>=44&&d.on);
+    const ok = hidden.length===0 && !r.overlap && r.touch && r.flipReachable && dockOk;
     if(!ok) bad++;
     console.log((ok?'PASS  ':'FAIL  ')+name.padEnd(14)+w+'px   '+
       (hidden.length?'clipped: '+hidden.join(','):'all 5 fully visible')+
-      (r.overlap?'   OVERLAPS BUTTONS':'')+(r.touch?'':'   TOUCH<44')+(r.flipReachable?'':'   FLIP UNREACHABLE'));
+      (r.overlap?'   OVERLAPS BUTTONS':'')+(r.touch?'':'   TOUCH<44')+(r.flipReachable?'':'   FLIP UNREACHABLE')+
+      (dockOk?'   dock 5/5':'   DOCK '+JSON.stringify(r.dock)));
     await ctx.close();
   }
   await b.close();s.close();

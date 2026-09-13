@@ -330,6 +330,45 @@ var IDENT = (function () {
   /* Tap anywhere: identify a square region around the tap. This is how
      insects, trees, flowers, fungi and anything else outside the 80 local
      classes get named. */
+  /* ---- CIRCLE TO SEARCH ----
+
+     "add circle to search."
+
+     A loop drawn on the view is a better question than a tap: it says
+     which of the six things in front of you, and how much of it. The
+     region it encloses becomes the crop, and from there it is the tap
+     path exactly - the reader's own Gemini first, the older route behind
+     it - because "what is this" should not have two answers depending on
+     how you asked.
+
+     sx/sy/sw/sh are screen pixels; the camera's cover map turns them into
+     frame pixels, mirrored when the front camera is on. */
+  function inRegion(sx, sy, sw, sh) {
+    var m = CAM.coverMap();
+    var x1 = sx, x2 = sx + sw;
+    if (SET.get('facing') === 'user') { var t1 = m.ew - x2, t2 = m.ew - x1; x1 = t1; x2 = t2; }
+    var box = [
+      U.clamp((x1 - m.dx) / m.scale, 0, m.vw - 1),
+      U.clamp((sy - m.dy) / m.scale, 0, m.vh - 1),
+      0, 0
+    ];
+    box[2] = U.clamp((x2 - x1) / m.scale, 24, m.vw - box[0]);
+    box[3] = U.clamp(sh / m.scale, 24, m.vh - box[1]);
+
+    var t = { id: -2, cls: 'object', box: box, raw: box, localState: '', local: null, tier: '', label: '' };
+    UI.openPending('Looking at what you circled\u2026');
+
+    return tapAsk(t).then(function (rec) {
+      if (rec && rec.name) { UI.openRecord(rec); return rec; }
+      /* No key, or turned away: the on-device classifier and Wikipedia,
+         the same fallback a tap has. */
+      return LOCAL.label(U.$('#cam'), t).then(function () {
+        if (!t.local) { UI.openError('nothing-there'); return null; }
+        return fromLocal(t).then(function (r2) { UI.openRecord(r2); return r2; });
+      });
+    }, function () { UI.openError(''); return null; });
+  }
+
   function atPoint(sx, sy) {
     var m = CAM.coverMap();
     var fx = (SET.get('facing') === 'user' ? (m.ew - sx) : sx);
@@ -414,5 +453,6 @@ var IDENT = (function () {
 
   return { forTrack: forTrack, atPoint: atPoint, kindOf: kindOf, busy: busy, fromLocal: fromLocal,
            health: healthOf,
-           status: status, KICKER: KICKER, post: post, _enrich: enrich, tapAsk: tapAsk };
+           status: status, KICKER: KICKER, post: post, _enrich: enrich, tapAsk: tapAsk,
+           inRegion: inRegion };
 })();

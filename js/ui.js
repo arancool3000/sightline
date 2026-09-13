@@ -238,6 +238,18 @@ var UI = (function () {
     });
 
     drawFaces(ctx, w, h);
+    if (lasso) {
+      /* What you are circling, while you circle it. */
+      ctx.save();
+      ctx.strokeStyle = '#4fe3ff';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([9, 7]);
+      ctx.beginPath();
+      ctx.ellipse(lasso[0] + lasso[2] / 2, lasso[1] + lasso[3] / 2,
+                  Math.max(12, lasso[2] / 2), Math.max(12, lasso[3] / 2), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
     navArrows(ctx, w, h);
     AR.sweep();
     needsDraw = false;
@@ -255,6 +267,7 @@ var UI = (function () {
      the same way the map puts buildings there: known bearing, known
      distance, camera at chest height, ground assumed flat. That is enough
      to lay a chevron on the pavement without any depth sensing at all. */
+  var lasso = null;             // the circle being drawn, in screen pixels
   var navPlanAt = 0, navPlanned = null;
   /* The corners of the chevrons drawn last frame, in screen pixels. Kept
      so the shape they make can be measured rather than eyeballed - the
@@ -917,6 +930,9 @@ var UI = (function () {
      that can do better. Saying "sewing machine?" is worth more than
      saying nothing, and it is still not a claim. */
   var SCENE_MEAN = 0.46, SCENE_MARGIN = 0.18;
+  /* The words ImageNet reaches for when it is shown a person. Not one of
+     them is an answer about who that is. */
+  var PEOPLE_WORDS = /^(groom|bridegroom|scuba diver|ballplayer|academic gown|mortarboard|suit|jersey|military uniform|bow tie|maillot|bikini|miniskirt|jean|sweatshirt|cardigan|kimono|abaya|trench coat|lab coat|wig|sunglasses?|cowboy hat|bearskin|shower cap|swimming trunks|brassiere|diaper|py?jama)\b/i;
 
   function sceneLabel(r) {
     var chip = U.$('#sceneChip');
@@ -934,6 +950,15 @@ var UI = (function () {
       return;
     }
 
+    /* The same fault on a different surface: a crop of the middle of the
+       frame that happens to be a person comes back "groom" or "suit". */
+    if (r.kind === 'person' || PEOPLE_WORDS.test(String(r.name || ''))) {
+      sceneCur = { name: '', kind: 'person', ask: true, box: r.box, unsure: true };
+      tele('#sceneName', 'Tap to identify');
+      tele('#sceneKind', 'a person');
+      if (chip.hidden) chip.hidden = false;
+      return;
+    }
     var strong = r.score >= SCENE_MEAN && (r.margin === undefined || r.margin >= SCENE_MARGIN);
     if (!strong) {
       /* A guess, said as a guess, with the door to a better answer still
@@ -1249,9 +1274,73 @@ var UI = (function () {
       else if (CAPS.start('captions')) { document.body.classList.add('caps-on'); }
     });
 
+    /* ---- the dock ----
+       Five doors that are always in the same place, as in the reference.
+       Every one of them presses a control that already exists, so the
+       dock cannot do anything the app cannot. */
+    var dock = function (id, fn) { var b = U.$('#' + id); if (b) b.addEventListener('click', fn); };
+    dock('dockHome', function () {
+      var all = U.$('#rail .mbtn[data-mode="all"]');
+      if (all) all.click();
+      U.$('#rail').hidden = true;
+      U.$('#dockMore').setAttribute('aria-expanded', 'false');
+    });
+    dock('dockMap', function () { if (window.MAP) MAP.setOpen(true); });
+    dock('dockShot', function () { openScene(); });
+    dock('dockSet', function () { U.$('#btnSettings').click(); });
+    dock('dockMore', function () {
+      var rail = U.$('#rail'), b = U.$('#dockMore');
+      rail.hidden = !rail.hidden;
+      b.setAttribute('aria-expanded', rail.hidden ? 'false' : 'true');
+    });
+
     U.$('#btnFlip').addEventListener('click', function () {
       CAM.flip().then(function () { SET.set('facing', CAM.current()); TRACK.reset(); dirty(); });
     });
+
+    /* ---- drawing a circle round something ----
+
+       A drag on the view is a question about what is inside it. A tap is
+       still a tap: nothing here fires until the finger has actually
+       travelled, so the two cannot be confused. */
+    (function () {
+      var st = U.$('#stage');
+      var on = false, sx = 0, sy = 0, minx = 0, miny = 0, maxx = 0, maxy = 0, moved = 0;
+      var MIN_DRAG = 26;
+
+      var skip = function (target) {
+        return !!(target && target.closest &&
+          target.closest('#rail,#hudTL,#hudTR,#sheet,#settings,#gate,#captionBar,#sceneChip,#codeCard,#radarPod,#nearCard,.ask-ov'));
+      };
+      st.addEventListener('pointerdown', function (ev) {
+        if (!CAM.live() || skip(ev.target) || ev.pointerType === 'mouse' && ev.button !== 0) return;
+        on = true; moved = 0;
+        var r = cv.getBoundingClientRect();
+        sx = ev.clientX - r.left; sy = ev.clientY - r.top;
+        minx = maxx = sx; miny = maxy = sy;
+      });
+      st.addEventListener('pointermove', function (ev) {
+        if (!on) return;
+        var r = cv.getBoundingClientRect();
+        var x = ev.clientX - r.left, y = ev.clientY - r.top;
+        moved = Math.max(moved, Math.abs(x - sx) + Math.abs(y - sy));
+        minx = Math.min(minx, x); maxx = Math.max(maxx, x);
+        miny = Math.min(miny, y); maxy = Math.max(maxy, y);
+        if (moved > MIN_DRAG) { lasso = [minx, miny, maxx - minx, maxy - miny]; dirty(); }
+      });
+      var end = function () {
+        if (!on) return;
+        on = false;
+        var box = lasso;
+        lasso = null; dirty();
+        if (!box || moved <= MIN_DRAG) return;
+        if (box[2] < 24 || box[3] < 24) return;
+        IDENT.inRegion(box[0], box[1], box[2], box[3]);
+      };
+      st.addEventListener('pointerup', end);
+      st.addEventListener('pointercancel', end);
+      st.addEventListener('pointerleave', end);
+    })();
 
     U.$('#stage').addEventListener('click', function (ev) {
       if (!CAM.live()) return;
@@ -1480,13 +1569,51 @@ var UI = (function () {
 
   function nameFace(f) {
     var was = f.name || '';
-    var asked = window.prompt(was ? ('Name for this face (now "' + was + '")') : 'Who is this?', was);
-    if (asked === null) return;
-    var name = String(asked).trim();
-    if (!name) { if (f.id) FACES.forget(f.id); toastFace('Forgotten.'); return; }
-    var p = FACES.remember(f.descriptor, name);
-    toastFace(p ? ('Saved as ' + p.name + '. Only on this device.') : 'Could not save that face.');
-    buildFaceList();
+    /* window.prompt is a native modal and iOS pauses the camera behind
+       one. CAM.wake() puts it back whatever happens - but the prompt is
+       also the wrong thing to show over a camera, so it is asked for in
+       the app's own sheet. */
+    askName(was ? ('Name for this face (now "' + was + '")') : 'Who is this?', was, function (asked) {
+      if (asked === null) return;
+      var name = String(asked).trim();
+      if (!name) { if (f.id) FACES.forget(f.id); toastFace('Forgotten.'); return; }
+      var p = FACES.remember(f.descriptor, name);
+      toastFace(p ? ('Saved as ' + p.name + '. Only on this device.') : 'Could not save that face.');
+      buildFaceList();
+    });
+  }
+
+  /* One small dialog, in the page, so the camera never goes behind a
+     native one. Answers null when it is dismissed, like prompt did. */
+  function askName(title, value, done) {
+    var ov = document.createElement('div');
+    ov.className = 'ask-ov';
+    var card = document.createElement('div');
+    card.className = 'ask-card glass';
+    var h = document.createElement('div'); h.className = 'ask-h'; h.textContent = title;
+    var input = document.createElement('input');
+    input.type = 'text'; input.value = value || ''; input.autocomplete = 'off';
+    input.setAttribute('aria-label', title);
+    var row = document.createElement('div'); row.className = 'ask-row';
+    var no = document.createElement('button'); no.className = 'hbtn'; no.textContent = 'CANCEL';
+    var yes = document.createElement('button'); yes.className = 'hbtn primary'; yes.textContent = 'SAVE';
+    row.appendChild(no); row.appendChild(yes);
+    card.appendChild(h); card.appendChild(input); card.appendChild(row);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    var shut = function (v) {
+      if (ov.parentNode) ov.parentNode.removeChild(ov);
+      if (window.CAM && CAM.wake) CAM.wake();
+      done(v);
+    };
+    no.addEventListener('click', function () { shut(null); });
+    yes.addEventListener('click', function () { shut(input.value); });
+    ov.addEventListener('click', function (e) { if (e.target === ov) shut(null); });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') shut(input.value);
+      else if (e.key === 'Escape') shut(null);
+    });
+    setTimeout(function () { try { input.focus(); input.select(); } catch (e) {} }, 30);
   }
   function toastFace(m) { if (window.U && U.toast) U.toast(m, 3200); }
 
@@ -1504,8 +1631,11 @@ var UI = (function () {
       i.textContent = 'met ' + new Date(p.met).toLocaleDateString();
       var ren = document.createElement('button'); ren.textContent = 'RENAME';
       ren.addEventListener('click', function () {
-        var n = window.prompt('Name', p.name);
-        if (n !== null && String(n).trim()) { FACES.rename(p.id, n); buildFaceList(); }
+        askName('New name for ' + p.name, p.name, function (v) {
+          if (v === null) return;
+          var t = String(v).trim();
+          if (t) { FACES.rename(p.id, t); buildFaceList(); }
+        });
       });
       var del = document.createElement('button'); del.textContent = 'FORGET';
       del.addEventListener('click', function () { FACES.forget(p.id); buildFaceList(); });

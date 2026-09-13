@@ -7,7 +7,39 @@ var CAM = (function () {
   var work = document.createElement('canvas');     // scratch for crops
   var wctx = work.getContext('2d', { willReadFrequently: true });
 
-  function attach(v) { video = v; }
+  function attach(v) {
+    video = v;
+    /* NOTHING IN THIS APP EVER WANTS THE CAMERA PAUSED.
+
+       "camera freezes after saving someone's name... i have to press the
+        camera switch button twice and camera is back."
+
+       window.prompt() is a native modal, and iOS pauses a playing <video>
+       while one is up. Nothing played it again afterwards, so the last
+       painted frame sat there looking like a crash - and flipping twice
+       fixed it only because each flip re-acquires the stream.
+
+       Rather than hunt every dialog that might do this, the rule is the
+       simple one: this element is a live camera, so if anything pauses it
+       it goes straight back to playing. */
+    video.addEventListener('pause', function () {
+      if (stream) wake();
+    });
+    /* Coming back from the app switcher, or from a modal that suspended
+       the whole page, lands here rather than on 'pause'. */
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) wake();
+    });
+  }
+
+  /* Play it if it is not playing. Safe to call at any time. */
+  function wake() {
+    if (!video || !stream) return false;
+    if (!video.paused && video.readyState >= 2) return false;
+    var p = video.play();
+    if (p && p.catch) p.catch(function () {});
+    return true;
+  }
 
   function stop() {
     if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
@@ -113,7 +145,7 @@ var CAM = (function () {
     } catch (e) { return null; }
   }
 
-  return { attach: attach, start: start, stop: stop, flip: flip, current: current,
+  return { attach: attach, start: start, stop: stop, flip: flip, current: current, wake: wake,
            size: size, live: live, crop: crop, toScreen: toScreen, coverMap: coverMap,
            frame: frame };
 })();
