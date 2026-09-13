@@ -186,6 +186,84 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ok   ' + n); }
     ok('SETUP: the bare form works too', breath.bare === true, breath);
   }
 
+  console.log('\nTHE CAMERA, BY VOICE');
+  {
+    /* "take photo, take video, capture, start recording, stop recording,
+        zoom in by (x amount...)" - said every way people say them. */
+    const c = await page.evaluate(() => {
+      const seen = [];
+      const realPhoto = CAM.photo, realStart = CAM.startRec, realStop = CAM.stopRec,
+            realRec = CAM.recording, realBy = CAM.zoomBy, realSet = CAM.setZoom,
+            realShowP = UI.showPhoto, realShowC = UI.showClip;
+      let rec = false, zoomAt = 1;
+      CAM.photo = () => { seen.push('photo'); return 'data:image/jpeg;base64,xx'; };
+      CAM.startRec = () => { seen.push('start'); rec = true; return true; };
+      CAM.recording = () => rec;
+      const realMs = CAM.recMs; CAM.recMs = () => 4000;
+      CAM.stopRec = () => { seen.push('stop'); rec = false; return Promise.resolve({ url: 'blob:x', ms: 4000, bytes: 1e6, type: 'video/mp4' }); };
+      CAM.zoomBy = (m) => { zoomAt = Math.min(4, zoomAt * m); seen.push('by' + m); return { at: zoomAt, min: 1, max: 4, capped: zoomAt === 4 }; };
+      CAM.setZoom = (v) => { zoomAt = Math.min(4, Math.max(1, v)); seen.push('to' + v); return { at: zoomAt, min: 1, max: 4, capped: v > 4 }; };
+      UI.showPhoto = () => {}; UI.showClip = () => {};
+
+      const out = {};
+      ['take a photo', 'capture', 'snap', 'take a picture'].forEach((p, i) => { out['p' + i] = !!CMD.run(p); });
+      out.rec = !!CMD.run('start recording');
+      out.recAgain = (CMD.run('take a video') || {}).say || '';
+      out.stopped = (CMD.run('stop recording') || {}).say || '';
+      out.by3 = (CMD.run('zoom in by 3') || {}).say || '';
+      out.tooBig = (CMD.run('zoom in by 50') || {}).say || '';
+      out.back = (CMD.run('zoom out by 2') || {}).say || '';
+      out.reset = (CMD.run('reset zoom') || {}).say || '';
+      out.flip = !!CMD.match('flip the camera');
+      out.notACommand = !!CMD.match('what is that picture on the wall');
+
+      CAM.photo = realPhoto; CAM.startRec = realStart; CAM.stopRec = realStop;
+      CAM.recording = realRec; CAM.zoomBy = realBy; CAM.setZoom = realSet; CAM.recMs = realMs;
+      UI.showPhoto = realShowP; UI.showClip = realShowC;
+      return { out, seen };
+    });
+    ok('every way of asking for a photo takes one',
+       c.out.p0 && c.out.p1 && c.out.p2 && c.out.p3, c.out);
+    ok('and the camera really was asked', c.seen.filter(x => x === 'photo').length === 4, c.seen);
+    ok('"start recording" records', c.out.rec === true, c.out);
+    ok('asking again while it runs says so rather than starting twice',
+       /already recording/i.test(c.out.recAgain), c.out.recAgain);
+    ok('"stop recording" stops it and says how long', /4 second/.test(c.out.stopped), c.out.stopped);
+    ok('"zoom in by 3" zooms by three', /3x/.test(c.out.by3), c.out.by3);
+    /* "if x is too big it goes to maximum available zoom" */
+    ok('a number bigger than the camera allows goes to its maximum, not an error',
+       /as far as it goes/i.test(c.out.tooBig) && /4x/.test(c.out.tooBig), c.out.tooBig);
+    ok('"zoom out by 2" comes back down', /2x/.test(c.out.back), c.out.back);
+    ok('"reset zoom" returns to normal', /normal/i.test(c.out.reset), c.out.reset);
+    ok('the camera can be flipped by voice', c.out.flip === true, c.out);
+    ok('CONTROL: a question about a picture is not a command to take one',
+       c.out.notACommand === false, c.out);
+
+    /* The map's zoom and the camera's were two commands, and the map's
+       matched first - so "zoom in by three" answered "the map is not
+       open". Whatever is filling the screen is what zooms. */
+    const both = await page.evaluate(() => {
+      const realSet = CAM.setZoom, realBy = CAM.zoomBy;
+      let cam = 0;
+      CAM.zoomBy = () => { cam++; return { at: 2, min: 1, max: 4, capped: false }; };
+      CAM.setZoom = () => { cam++; return { at: 2, min: 1, max: 4, capped: false }; };
+      MAP.setOpen(false);
+      const closed = MAPVIEW.state().mpp;
+      CMD.run('zoom in by 3');
+      const camWhenClosed = cam;
+      MAP.setOpen(true);
+      const before = MAPVIEW.state().mpp;
+      CMD.run('zoom in by 3');
+      const after = MAPVIEW.state().mpp;
+      MAP.setOpen(false);
+      CAM.setZoom = realSet; CAM.zoomBy = realBy;
+      return { camWhenClosed, camTotal: cam, mapMoved: after < before, closed };
+    });
+    ok('with the map closed, zoom is the camera', both.camWhenClosed === 1, both);
+    ok('with the map open, the same words zoom the map', both.mapMoved === true, both);
+    ok('CONTROL: and the camera was not zoomed as well', both.camTotal === 1, both);
+  }
+
   ok('no page errors throughout', errs.length === 0, errs);
   console.log('\n' + pass + '/' + (pass + fail) + ' passed');
   await b.close(); server.close(); process.exit(fail ? 1 : 0);

@@ -201,6 +201,7 @@
 
     if (!CAM.live()) return;
     if (covered()) { paused = true; return; }
+    if (window.LENS) LENS.step(performance.now());
     if (paused) {
       /* Coming back: forget what was half-measured while the screen was
          somewhere else, so a stale box does not jump on the first frame. */

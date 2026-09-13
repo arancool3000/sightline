@@ -310,6 +310,14 @@ var LIVE = (function () {
     { name: 'identify',        say: '\u0000identify',       what: 'Identify the main thing in view exactly - the make, the model, the species, the breed. Call this whenever you are asked what something IS, or told you got it wrong. It asks a model that is better at this than you are and gives you the answer back.' },
     { name: 'stop_directions', say: 'stop directions',     what: 'Stop navigating and put the route away.' },
     { name: 'clear_boxes',     say: 'clear',               what: 'Remove every highlight and box from the view.' },
+    { name: 'take_photo',      say: 'take a photo',        what: 'Take a photograph of what the camera can see right now.' },
+    { name: 'translate_view',  say: 'translate this sign', what: 'Read the writing in view and lay the translation over it, for a sign or a menu in another language.' },
+    { name: 'stop_translating', say: 'stop translating',   what: 'Stop laying translations over the view.' },
+    { name: 'start_recording', say: 'start recording',     what: 'Start recording a video of what the camera can see.' },
+    { name: 'stop_recording',  say: 'stop recording',      what: 'Stop the video that is recording and show it.' },
+    { name: 'flip_camera',     say: 'flip the camera',     what: 'Switch between the front and back cameras.' },
+    { name: 'zoom_to',         say: 'zoom to ',            what: 'Zoom the camera to a factor. Anything larger than the camera allows becomes its maximum.',
+      arg: 'times', argWhat: 'How many times to magnify, for example "3".' },
     { name: 'directions_to',   say: 'directions to ',      what: 'Start walking directions to a place.',
       arg: 'place', argWhat: 'Where to go, for example "the post office".' },
     { name: 'box',             say: 'box the ',            what: 'Draw a box around something in view so the person can see which one you mean.',
@@ -337,7 +345,9 @@ var LIVE = (function () {
       if (t.say.charAt(0) === '\u0000') return t.say;   // handled here, not by the table
       if (!t.arg) return t.say;
       var v = String((args && args[t.arg]) || '').trim();
-      return v ? (t.say + v) : '';
+      if (!v) return '';
+      /* "zoom to 3" is not a sentence the table knows; "zoom to 3x" is. */
+      return t.say + v + (t.name === 'zoom_to' ? 'x' : '');
     }
     return '';
   }

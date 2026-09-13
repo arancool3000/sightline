@@ -30,7 +30,7 @@ const SHELL = [
   './js/camera.js', './js/geo.js', './js/roads.js', './js/route.js',
   './js/map.js', './js/mapview.js', './js/scan.js', './js/codes.js',
   './js/evidence.js', './js/faces.js', './js/track.js', './js/local.js',
-  './js/species.js', './js/identify.js', './js/gemini.js', './js/live.js', './js/captions.js',
+  './js/species.js', './js/identify.js', './js/gemini.js', './js/live.js', './js/lens.js', './js/captions.js',
   './js/commands.js', './js/voice.js', './js/ar.js', './js/ui.js',
   './js/app.js',
   './vendor/tf.min.js', './vendor/tf-backend-wasm.min.js', './vendor/coco-ssd.min.js',

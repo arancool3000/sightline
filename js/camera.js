@@ -42,7 +42,122 @@ var CAM = (function () {
   }
 
   function stop() {
+    if (recorder) stopRec();
     if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+  }
+
+  /* ---- ZOOM ----
+
+     Two kinds, and the caller should not have to know which it got. A
+     phone camera that reports a zoom capability is zoomed for real, in the
+     lens; anything else is scaled in the page, which is a crop of the same
+     pixels but is what "zoom in" means to the person asking.
+
+     "if x is too big it goes to maximum available zoom" - so nothing here
+     ever refuses a number. It clamps and says where it landed. */
+  var zoomAt = 1, digital = 1;
+
+  function track() {
+    if (!stream) return null;
+    var t = stream.getVideoTracks()[0];
+    return t || null;
+  }
+  function zoomRange() {
+    var t = track();
+    var c = t && t.getCapabilities ? t.getCapabilities() : null;
+    if (c && c.zoom && c.zoom.max > c.zoom.min) {
+      return { min: c.zoom.min, max: c.zoom.max, real: true, step: c.zoom.step || 0.1 };
+    }
+    /* No lens zoom: scale the picture instead, up to 4x, past which a
+       720-line frame is mush and pretending otherwise helps nobody. */
+    return { min: 1, max: 4, real: false, step: 0.1 };
+  }
+  function zoom() { return zoomAt; }
+
+  /* Set an absolute factor. Answers what it actually reached. */
+  function setZoom(v) {
+    var r = zoomRange();
+    var want = Math.max(r.min, Math.min(r.max, Number(v) || r.min));
+    zoomAt = want;
+    if (r.real) {
+      var t = track();
+      try { t.applyConstraints({ advanced: [{ zoom: want }] }); } catch (e) { /* refused mid-frame */ }
+      digital = 1;
+    } else {
+      digital = want;
+      if (video) {
+        video.style.transform = (facing === 'user' ? 'scaleX(-1) ' : '') +
+                                (want > 1.001 ? 'scale(' + want.toFixed(3) + ')' : '');
+      }
+    }
+    return { at: want, max: r.max, min: r.min, capped: want !== (Number(v) || r.min), real: r.real };
+  }
+  /* Relative, which is how anybody says it out loud: "zoom in by two". */
+  function zoomBy(mult) {
+    var m = Number(mult);
+    if (!isFinite(m) || m <= 0) m = 2;
+    return setZoom(zoomAt * m);
+  }
+
+  /* ---- A STILL ----
+
+     Full frame at the sensor's own size, drawn once. Answers a data URL so
+     the caller can show it, save it, or hand it to something else. */
+  function photo() {
+    if (!live()) return null;
+    var w = video.videoWidth, h = video.videoHeight;
+    /* Digital zoom is a crop, so a photograph taken while zoomed is the
+       crop the person can see, not the whole sensor behind it. */
+    var sw = w / digital, sh = h / digital;
+    var sx = (w - sw) / 2, sy = (h - sh) / 2;
+    work.width = Math.round(sw); work.height = Math.round(sh);
+    if (facing === 'user') { wctx.save(); wctx.translate(work.width, 0); wctx.scale(-1, 1); }
+    wctx.drawImage(video, sx, sy, sw, sh, 0, 0, work.width, work.height);
+    if (facing === 'user') wctx.restore();
+    return work.toDataURL('image/jpeg', 0.92);
+  }
+
+  /* ---- VIDEO ----
+
+     MediaRecorder over the same track, so nothing is re-encoded and
+     nothing else has to stop. The container is whatever the browser will
+     actually give: Safari wants mp4, everything else takes webm, and
+     asking for one it does not have records nothing at all. */
+  var recorder = null, chunks = [], recStart = 0;
+
+  function recType() {
+    var want = ['video/mp4;codecs=avc1', 'video/mp4',
+                'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+    for (var i = 0; i < want.length; i++) if (MediaRecorder.isTypeSupported(want[i])) return want[i];
+    return '';
+  }
+  function recording() { return !!recorder; }
+  function recMs() { return recorder ? (Date.now() - recStart) : 0; }
+
+  function startRec() {
+    if (recorder || !stream || !window.MediaRecorder) return false;
+    var type = recType();
+    try { recorder = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream); }
+    catch (e) { recorder = null; return false; }
+    chunks = []; recStart = Date.now();
+    recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    recorder.start(1000);        // a slice a second, so a crash loses one second
+    return true;
+  }
+  /* Answers a blob URL and how long it ran, or null if nothing was going. */
+  function stopRec() {
+    if (!recorder) return Promise.resolve(null);
+    var r = recorder, ms = Date.now() - recStart;
+    recorder = null;
+    return new Promise(function (res) {
+      r.onstop = function () {
+        var blob = new Blob(chunks, { type: r.mimeType || 'video/webm' });
+        chunks = [];
+        res({ url: URL.createObjectURL(blob), ms: ms, type: blob.type, bytes: blob.size });
+      };
+      try { r.stop(); } catch (e) { res(null); }
+    });
   }
 
   function start(which) {
@@ -66,6 +181,9 @@ var CAM = (function () {
         stream = s;
         video.srcObject = s;
         video.classList.toggle('mirror', facing === 'user');
+        /* A new stream starts at 1: a lens zoom does not survive it, and a
+           digital one left behind would scale the wrong picture. */
+        zoomAt = 1; digital = 1; video.style.transform = '';
         return video.play().catch(function () { /* autoplay policies */ });
       })
       .then(function () { return ready(); });
@@ -146,6 +264,9 @@ var CAM = (function () {
   }
 
   return { attach: attach, start: start, stop: stop, flip: flip, current: current, wake: wake,
+           zoom: zoom, setZoom: setZoom, zoomBy: zoomBy, zoomRange: zoomRange,
+           photo: photo, startRec: startRec, stopRec: stopRec, recording: recording, recMs: recMs,
+           canRecord: function () { return !!(window.MediaRecorder && recType()); },
            size: size, live: live, crop: crop, toScreen: toScreen, coverMap: coverMap,
            frame: frame };
 })();

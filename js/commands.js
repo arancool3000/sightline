@@ -94,13 +94,6 @@ var CMD = (function () {
       re: /^(?:show|open|bring up|go to|display)\s+(?:me\s+)?(?:the\s+)?map\b/i,
       run: function () { MAP.setOpen(true); return { say: 'Map.' }; } },
 
-    { name: 'zoom',
-      re: /^zoom\s+(in|out)\b/i,
-      run: function (m) {
-        if (!mapOpen()) return { say: 'The map is not open.' };
-        var did = press(/in/i.test(m[1]) ? 'mapZoomIn' : 'mapZoomOut');
-        return did ? { say: /in/i.test(m[1]) ? 'Closer.' : 'Wider.' } : false;
-      } },
 
     { name: 'follow me',
       re: /^(?:follow me|centre on me|center on me|back to me|find me|where am i)\b/i,
@@ -115,6 +108,119 @@ var CMD = (function () {
         var want = !/\b(?:hide|off)\b/i.test(m[0]);
         var k = setLayer(m[1], want);
         return k ? { say: (want ? 'Showing ' : 'Hiding ') + k + '.' } : false;
+      } },
+
+    /* --- the camera itself ---
+
+       Said the way people say them. "capture" and "snap" are the same
+       thing as "take a photo"; "record" and "start recording" are the
+       same thing as "take a video". A number is optional everywhere it
+       appears, because "zoom in" is a sentence and so is "zoom in by
+       three". */
+    /* --- reading a sign --- */
+    { name: 'translate view',
+      /* Bare "translate" is a sentence, so the noun after it is optional -
+         the first cut demanded one and matched nothing on its own. "label"
+         is deliberately absent: "read the label" is the barcode scanner's,
+         and that command sits further down the table. */
+      re: /^translate\b|^read\s+(?:the\s+|this\s+|that\s+)?(?:sign|menu|writing|text|page)\b/i,
+      run: function () {
+        if (!window.LENS) return false;
+        if (!LENS.available()) return { say: 'Reading a sign needs a Gemini key.' };
+        if (LENS.running()) return { say: 'Already translating what I can see.' };
+        LENS.start();
+        return { say: 'Reading it.' };
+      } },
+    { name: 'stop translating',
+      re: /^(?:stop|turn off|cancel)\s+(?:the\s+)?translat(?:ing|ion)\b/i,
+      run: function () {
+        if (!window.LENS || !LENS.running()) return { say: 'Nothing is being translated.' };
+        LENS.stop();
+        return { say: 'Stopped.' };
+      } },
+
+    { name: 'photo',
+      re: /^(?:take|grab|shoot)?\s*(?:a\s+)?(?:photo|picture|photograph|snap|shot)\b|^(?:capture|snap)\b(?!\s+(?:video|clip))/i,
+      run: function () {
+        if (!window.CAM || !CAM.photo) return false;
+        var url = CAM.photo();
+        if (!url) return { say: 'The camera is not running.' };
+        if (window.UI && UI.showPhoto) UI.showPhoto(url);
+        return { say: 'Got it.' };
+      } },
+
+    { name: 'stop recording',
+      re: /^(?:stop|end|finish)\s+(?:the\s+)?(?:recording|record|video|filming|clip)\b|^stop\s+filming\b/i,
+      run: function () {
+        if (!window.CAM || !CAM.recording || !CAM.recording()) return { say: 'Nothing is recording.' };
+        var secs = Math.round(CAM.recMs() / 1000);
+        CAM.stopRec().then(function (clip) {
+          if (clip && window.UI && UI.showClip) UI.showClip(clip);
+        });
+        return { say: 'Stopped. ' + secs + ' second' + (secs === 1 ? '' : 's') + '.' };
+      } },
+
+    { name: 'record',
+      re: /^(?:take|shoot|start|begin)?\s*(?:a\s+)?(?:video|recording|clip|filming)\b|^(?:record|film)\b/i,
+      run: function () {
+        if (!window.CAM || !CAM.startRec) return false;
+        if (CAM.recording()) return { say: 'Already recording. Say stop recording when you are done.' };
+        if (!CAM.canRecord()) return { say: 'This browser will not record video.' };
+        return CAM.startRec()
+          ? { say: 'Recording. Say stop recording when you are done.' }
+          : { say: 'I could not start recording.' };
+      } },
+
+    /* ONE ZOOM, AND IT KNOWS WHAT IS BEING ZOOMED.
+
+       There were two - the map's and the camera's - and the map's came
+       first and matched "zoom in by three", so a camera zoom answered
+       "the map is not open". What a person means by zoom is whatever is
+       filling the screen: the map while the map is up, the camera
+       otherwise. */
+    { name: 'zoom',
+      re: /^zoom\s+(?:(in|out)\b\s*)?(?:(?:by|to)\s+)?(?:times\s+)?([\d.]+)?\s*(?:x|times)?\b/i,
+      run: function (m) {
+        var dir = (m[1] || 'in').toLowerCase();
+        var n = m[2] ? parseFloat(m[2]) : null;
+        var to = /^zoom\s+to\b/i.test(m[0]);
+
+        if (mapOpen()) {
+          /* The map has its own two buttons; a number means that many
+             presses of one of them. */
+          var times = Math.max(1, Math.min(6, Math.round(n || 1)));
+          var id = dir === 'out' ? 'mapZoomOut' : 'mapZoomIn';
+          var did = false;
+          for (var i = 0; i < times; i++) did = press(id) || did;
+          return did ? { say: dir === 'out' ? 'Wider.' : 'Closer.' } : false;
+        }
+
+        if (!window.CAM || !CAM.setZoom) return false;
+        if (to && n) return { say: zoomWords(CAM.setZoom(n)) };
+        var by = (n && isFinite(n) && n > 0) ? n : 2;
+        return { say: zoomWords(CAM.zoomBy(dir === 'out' ? 1 / by : by)) };
+      } },
+
+    { name: 'reset zoom',
+      re: /^(?:reset|clear)\s+(?:the\s+)?zoom\b|^zoom\s+(?:all\s+the\s+way\s+)?out\s+(?:fully|all the way)\b/i,
+      run: function () {
+        if (!window.CAM || !CAM.setZoom) return false;
+        CAM.setZoom(1);
+        return { say: 'Back to normal.' };
+      } },
+
+    { name: 'flip camera',
+      re: /^(?:flip|switch|turn(?:\s+a?round)?|change)\s+(?:the\s+)?camera\b|^(?:selfie|front camera|back camera|rear camera)\b/i,
+      run: function (m) {
+        var btn = document.getElementById('btnFlip');
+        if (!btn) return false;
+        /* "front camera" when already on the front is not a flip. */
+        var want = /selfie|front/i.test(m[0]) ? 'user' : /back|rear/i.test(m[0]) ? 'environment' : null;
+        if (want && window.CAM && CAM.current && CAM.current() === want) {
+          return { say: 'Already on that one.' };
+        }
+        btn.click();
+        return { say: 'Switched.' };
       } },
 
     /* --- the camera --- */
@@ -225,6 +331,15 @@ var CMD = (function () {
       .trim().toLowerCase();
   }
   function human(m) { return m < 1000 ? (m + ' metres') : ((m / 1000).toFixed(1) + ' kilometres'); }
+  /* "if x is too big it goes to maximum available zoom" - so it never
+     refuses a number, it clamps and says where it landed. */
+  function zoomWords(r) {
+    if (!r) return 'The camera will not zoom.';
+    var at = (Math.round(r.at * 10) / 10) + 'x';
+    if (r.at <= r.min + 0.001) return 'Back to normal.';
+    if (r.capped && r.at >= r.max - 0.001) return 'As far as it goes, ' + at + '.';
+    return at + '.';
+  }
 
   /* Whatever wants to hear about a display change. VOICE hooks this so a
      spoken "box the bike" and a Gemini-driven one go the same way. */

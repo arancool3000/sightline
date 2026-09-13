@@ -238,6 +238,7 @@ var UI = (function () {
     });
 
     drawFaces(ctx, w, h);
+    if (window.LENS && LENS.running()) drawLens(ctx, w, h);
     if (lasso) {
       /* What you are circling, while you circle it. */
       ctx.save();
@@ -439,6 +440,81 @@ var UI = (function () {
      They had the same name for one commit, and the ground version's
      three-argument call silently broke the flat one - the fallback that
      every first visit to a new area uses. Named apart now. */
+  /* ---- THE TRANSLATION, WHERE THE WORDS WERE ----
+
+     The colour is sampled from the picture rather than chosen, so the
+     patch belongs to the scene: the ground is the block's own average and
+     the ink is whichever of black or white can actually be read on it.
+     A guessed colour is what makes an overlay look like a sticker. */
+  var lensPad = null, lensCtx = null;
+
+  function sampleColour(box, w, h) {
+    var vid = U.$('#cam');
+    if (!vid || !vid.videoWidth) return null;
+    if (!lensPad) { lensPad = document.createElement('canvas'); lensPad.width = lensPad.height = 12;
+                    lensCtx = lensPad.getContext('2d', { willReadFrequently: true }); }
+    var vw = vid.videoWidth, vh = vid.videoHeight;
+    try {
+      lensCtx.drawImage(vid, box[0] * vw, box[1] * vh, Math.max(1, box[2] * vw), Math.max(1, box[3] * vh), 0, 0, 12, 12);
+      var d = lensCtx.getImageData(0, 0, 12, 12).data;
+      var r = 0, g = 0, b = 0, n = 0;
+      for (var i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+      r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+      /* Rec. 709 luma: which ink is readable on this ground is a question
+         about brightness, not about hue. */
+      var lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      return { bg: 'rgb(' + r + ',' + g + ',' + b + ')', ink: lum > 0.55 ? '#0b0f14' : '#f4f8fb' };
+    } catch (e) { return null; }   // a tainted canvas, on some engines
+  }
+
+  function drawLens(ctx, w, h) {
+    var list = LENS.all();
+    for (var i = 0; i < list.length; i++) {
+      var b = list[i], box = b.box;
+      /* Frame fractions to screen pixels, through the same cover map
+         everything else uses, so the patch sits on the words at any
+         aspect ratio. */
+      var m = CAM.coverMap();
+      var x = m.dx + box[0] * m.vw * m.scale;
+      var y = m.dy + box[1] * m.vh * m.scale;
+      var bw = box[2] * m.vw * m.scale;
+      var bh = box[3] * m.vh * m.scale;
+      if (SET.get('facing') === 'user') x = m.ew - x - bw;
+      if (bw < 14 || bh < 8) continue;
+
+      var col = sampleColour(box, w, h) || { bg: 'rgba(10,16,26,.92)', ink: '#f4f8fb' };
+      ctx.save();
+      ctx.fillStyle = col.bg;
+      ctx.globalAlpha = 0.96;
+      roundRect(ctx, x - 3, y - 2, bw + 6, bh + 4, Math.min(7, bh * 0.35));
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      /* Fit the words to the box the words came out of. */
+      var size = Math.max(9, Math.min(bh * 0.82, 34));
+      ctx.fillStyle = col.ink;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      for (var t = 0; t < 6; t++) {
+        ctx.font = '600 ' + size.toFixed(1) + 'px -apple-system,system-ui,sans-serif';
+        if (ctx.measureText(b.out).width <= bw || size <= 9) break;
+        size *= 0.86;
+      }
+      ctx.fillText(b.out, x, y + bh / 2, bw);
+      ctx.restore();
+    }
+  }
+  function roundRect(c, x, y, w2, h2, r) {
+    r = Math.max(0, Math.min(r, w2 / 2, h2 / 2));
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.lineTo(x + w2 - r, y); c.quadraticCurveTo(x + w2, y, x + w2, y + r);
+    c.lineTo(x + w2, y + h2 - r); c.quadraticCurveTo(x + w2, y + h2, x + w2 - r, y + h2);
+    c.lineTo(x + r, y + h2); c.quadraticCurveTo(x, y + h2, x, y + h2 - r);
+    c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y);
+    c.closePath();
+  }
+
   function chevronOnGround(ctx, a, tip, b) {
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -826,6 +902,35 @@ var UI = (function () {
   }
 
   function openRecord(rec) { showSheet(record(rec)); }
+
+  /* ---- what the camera just took ----
+
+     A photograph nobody can keep is a flash of light, so it is shown with
+     a Save on it. A plain <a download> is the only thing that works
+     everywhere; where the browser refuses one - iOS does - the picture is
+     on screen at full size and can be held and saved, which is what
+     people do there anyway. */
+  function showPhoto(url) {
+    showSheet('<div class="d-kicker">PHOTO</div>' +
+      '<div class="d-hero" data-hero><img src="' + U.esc(url) + '" alt="The photograph just taken"></div>' +
+      '<div class="d-actions"><a class="hbtn primary" download="sightline-' + stamp() + '.jpg" href="' +
+      U.esc(url) + '">SAVE</a></div>' +
+      '<p class="d-note">Hold the picture to save it if the button does nothing.</p>');
+  }
+  function showClip(clip) {
+    if (!clip || !clip.url) { U.toast('That recording came back empty', 3000); return; }
+    var secs = Math.round(clip.ms / 1000);
+    var mb = clip.bytes ? (Math.round(clip.bytes / 1e5) / 10) + ' MB' : '';
+    showSheet('<div class="d-kicker">VIDEO</div>' +
+      '<div class="d-hero" data-hero><video src="' + U.esc(clip.url) + '" controls playsinline></video></div>' +
+      grid([['Length', secs + 's'], ['Size', mb]]) +
+      '<div class="d-actions"><a class="hbtn primary" download="sightline-' + stamp() +
+      (/mp4/.test(clip.type) ? '.mp4' : '.webm') + '" href="' + U.esc(clip.url) + '">SAVE</a></div>');
+  }
+  function stamp() {
+    var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
 
   function openTrack(t) {
     openTrackId = t.id;
@@ -1919,6 +2024,7 @@ var UI = (function () {
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,
            refreshOpen: refreshOpen, sceneLabel: sceneLabel, sceneSpecies: sceneSpecies,
+           showPhoto: showPhoto, showClip: showClip,
            faces: faces, faceAt: faceAt, nameFace: nameFace, buildFaceList: buildFaceList,
            voiceFocus: function () { return voiceLive() ? voiceFocus : null; },
            voiceMatches: voiceMatches, startVoice: startVoice,
