@@ -267,6 +267,29 @@ var UI = (function () {
      the same way the map puts buildings there: known bearing, known
      distance, camera at chest height, ground assumed flat. That is enough
      to lay a chevron on the pavement without any depth sensing at all. */
+  /* ---- IS THIS TAP ON THE VIEW, OR ON A CONTROL? ----
+
+     "the new bottom menu when you tap on it also registers the look at
+      object command like you tapped on an object on your screen."
+
+     It did, and the reason is worth writing down: this was a DENY LIST of
+     panel ids, kept in two places, and the dock was in neither. A deny
+     list of controls is wrong by construction - every control added later
+     is a tap on the camera until somebody remembers to add it, and the
+     status pill and the map panel were missing too.
+
+     So it is an allow list, in one place. The view is the video, the
+     overlay drawn on it, and the stage they sit in. Anything else is a
+     control, whether or not it existed when this was written. */
+  function onTheView(el) {
+    if (!el || !el.id && !el.closest) return false;
+    var id = el.id || '';
+    if (id === 'stage' || id === 'cam' || id === 'overlay') return true;
+    /* The AR layer does not take pointer events, so a tap through it
+       lands on the overlay - but a CARD inside it is a control. */
+    return false;
+  }
+
   var lasso = null;             // the circle being drawn, in screen pixels
   var navPlanAt = 0, navPlanned = null;
   /* The corners of the chevrons drawn last frame, in screen pixels. Kept
@@ -1308,10 +1331,7 @@ var UI = (function () {
       var on = false, sx = 0, sy = 0, minx = 0, miny = 0, maxx = 0, maxy = 0, moved = 0;
       var MIN_DRAG = 26;
 
-      var skip = function (target) {
-        return !!(target && target.closest &&
-          target.closest('#rail,#hudTL,#hudTR,#sheet,#settings,#gate,#captionBar,#sceneChip,#codeCard,#radarPod,#nearCard,.ask-ov'));
-      };
+      var skip = function (target) { return !onTheView(target); };
       st.addEventListener('pointerdown', function (ev) {
         if (!CAM.live() || skip(ev.target) || ev.pointerType === 'mouse' && ev.button !== 0) return;
         on = true; moved = 0;
@@ -1344,7 +1364,7 @@ var UI = (function () {
 
     U.$('#stage').addEventListener('click', function (ev) {
       if (!CAM.live()) return;
-      if (ev.target.closest('#rail,#hudTL,#hudTR,#sheet,#settings,#gate,#captionBar,#sceneChip,#codeCard,#radarPod,#nearCard')) return;
+      if (!onTheView(ev.target)) return;
       var r = cv.getBoundingClientRect();
       var x = ev.clientX - r.left, y = ev.clientY - r.top;
       /* A face is checked first: tapping someone's face means "who is
@@ -1894,7 +1914,7 @@ var UI = (function () {
     });
   }
 
-  return { _navShapes: function () { return navShapes.slice(); }, init: init, draw: draw, openPlace: openPlace, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
+  return { _onTheView: onTheView, _navShapes: function () { return navShapes.slice(); }, init: init, draw: draw, openPlace: openPlace, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
            status: status,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,

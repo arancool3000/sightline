@@ -242,6 +242,44 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
     await ctx2.close();
   }
 
+  /* ---- a tap on a control is not a tap on the camera ----
+
+     "the new bottom menu when you tap on it also registers the look at
+      object command like you tapped on an object on your screen."
+
+     The guard was a DENY LIST of panel ids kept in two places, and the
+     dock was in neither - so was the status pill, and the map panel. It
+     is an allow list now, in one place: the video, the overlay, the
+     stage. This walks every control the app has and checks none of them
+     reads as the view. */
+  console.log('\nTAPPING A CONTROL IS NOT TAPPING THE CAMERA');
+  {
+    const ctx3 = await b.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    const p3 = watch(await ctx3.newPage());
+    await p3.route('**/vendor/**', r => (/\.(bin|tflite|wasm)$/.test(r.request().url()) ? r.abort() : r.continue()));
+    await p3.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded' });
+    await p3.waitForFunction(() => window.UI && window.IDENT, null, { timeout: 20000 });
+    const r = await p3.evaluate(() => {
+      const g = document.getElementById('gate'); g.classList.add('hidden'); g.hidden = true;
+      /* Every control that sits over the camera, dock included. */
+      const ids = ['dockHome','dockMap','dockShot','dockSet','dockMore','btnFlip','btnVoice',
+                   'btnCaptions','btnSettings','sceneChip','radarPod','nearCard','statusStrip',
+                   'askChip','mapPanel','sheet','settings','captionBar'];
+      const view = ['stage','cam','overlay'];
+      const said = [];
+      ids.forEach(id => { const el = document.getElementById(id);
+                          if (el) said.push({ id, view: UI._onTheView(el) }); });
+      const seenAsView = view.map(id => ({ id, view: UI._onTheView(document.getElementById(id)) }));
+      return { said, seenAsView };
+    });
+    ok('SETUP: there are controls to check', r.said.length >= 10, r.said.length);
+    ok('not one control reads as the camera view',
+       r.said.every(x => x.view === false), r.said.filter(x => x.view));
+    ok('CONTROL: the video, the overlay and the stage DO',
+       r.seenAsView.every(x => x.view === true), r.seenAsView);
+    await ctx3.close();
+  }
+
   done(b);
 })().catch(e => {
   const why = crashed || String(e && e.message || e).split('\n')[0];
