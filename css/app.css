@@ -67,19 +67,27 @@ input,select{font:inherit;color:inherit}
 /* ---------- top left ---------- */
 #hudTL{
   position:absolute;left:14px;top:calc(var(--safe-t) + 14px);z-index:6;
-  display:flex;flex-direction:column;align-items:flex-start;gap:9px;pointer-events:none;
+  /* stretch, so the cards in the column are one width instead of each
+     sizing to its own text */
+  display:flex;flex-direction:column;align-items:stretch;gap:9px;pointer-events:none;
+  width:min(54vw,230px);
   max-width:min(52vw,224px)
 }
 #hudTL>.glass{max-width:100%}
 /* The stack of small rows under the weather, from the reference: an icon,
    a title, a detail line. Rows come and go with what is true. */
-.stack{display:flex;flex-direction:column;padding:4px 0;width:100%;min-width:168px}
-.srow{display:flex;align-items:center;gap:10px;padding:7px 12px}
-.srow+.srow{border-top:1px solid rgba(120,190,255,.12)}
-.s-ic{flex:0 0 26px;height:26px;display:grid;place-items:center;border-radius:8px;
+/* ⚠ NOT .srow. The settings panel already owns that name, three hundred
+   lines further down, with justify-content:space-between and no side
+   padding - and being later it won. That is what "bad positioning" was:
+   the text shoved to the far right of the card and out past its edge.
+   One name, one owner. */
+.stack{display:flex;flex-direction:column;padding:4px 0;width:100%}
+.hrow{display:flex;align-items:center;gap:10px;padding:7px 12px}
+.hrow+.hrow{border-top:1px solid rgba(120,190,255,.12)}
+.h-ic{flex:0 0 26px;height:26px;display:grid;place-items:center;border-radius:8px;
   background:rgba(120,190,255,.14);color:#9fd8ff}
-.s-ic.ok{background:rgba(110,231,160,.16);color:#6ee7a0}
-.s-t{display:flex;flex-direction:column;min-width:0;line-height:1.25}
+.h-ic.ok{background:rgba(110,231,160,.16);color:#6ee7a0}
+.s-t{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;line-height:1.25;text-align:left}
 .s-t b{font-size:12.5px;font-weight:600}
 /* The detail line WRAPS. "badly cropped" was this line ellipsised inside a
    pane narrower than the weather card above it. */

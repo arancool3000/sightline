@@ -44,6 +44,13 @@ var LIVE = (function () {
                                    (window.AudioContext || window.webkitAudioContext) &&
                                    navigator.mediaDevices && navigator.mediaDevices.getUserMedia); }
   function running() { return open; }
+  /* OPEN IS NOT THE SAME AS WORKING. The socket answers setupComplete
+     before the microphone has been granted, and if getUserMedia is refused
+     the session sits there connected and deaf. Anything that hands its
+     input over to the live session must ask THIS, or a failed microphone
+     takes the on-device recogniser down with it and nothing answers at
+     all. */
+  function healthy() { return !!(open && node && stream); }
   function state() { return { open: open, connecting: connecting, model: model, error: err,
                               you: youSaid, it: itSaid }; }
 
@@ -238,6 +245,10 @@ var LIVE = (function () {
         };
         mic.connect(node);
         node.connect(ac.destination);   // Safari will not run a node with no sink
+        /* The live session owns the microphone while it is up: two
+           getUserMedia consumers on one phone is how one of them goes
+           silent. The on-device recogniser is released when it closes. */
+        try { if (window.CAPS && CAPS.hold) CAPS.hold(true); } catch (e) {}
         fire({ kind: 'mic' });
       }, function () { err = 'the microphone was refused'; fire({ kind: 'error', error: err }); });
   }
@@ -301,6 +312,7 @@ var LIVE = (function () {
     try { if (mic) mic.disconnect(); } catch (e) {}
     try { if (stream) stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
     node = null; mic = null; stream = null;
+    try { if (window.CAPS && CAPS.hold) CAPS.hold(false); } catch (e) {}
     var was = open;
     open = false; connecting = false;
     youSaid = ''; itSaid = '';
@@ -310,6 +322,6 @@ var LIVE = (function () {
   }
 
   return { start: start, stop: stop, say: say, look: look, on: on,
-           available: available, running: running, state: state,
+           available: available, running: running, healthy: healthy, state: state,
            MODELS: MODELS, _handle: handle, _act: act, _stripDo: stripDo, _brief: brief };
 })();

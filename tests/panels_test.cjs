@@ -119,7 +119,13 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   /* Headless software GL with every model loaded ticks slowly, so what is
      asserted is that work HAPPENS - the discriminator is the paused case
      being exactly zero, not a frame rate this machine cannot reach. */
-  ok('SETUP: with the camera showing, the pipeline runs', live.draw > 0 && live.scene > 0, live);
+  /* The scene pass is PACED, so which of the classifiers lands inside a
+     1.5s window depends on the machine - it read scene:0 with everything
+     else moving once a third browser joined the suite. The setup only has
+     to establish that work happens; the discriminator below is that the
+     paused case is exactly zero, and that is unaffected. */
+  ok('SETUP: with the camera showing, the pipeline runs',
+     live.draw > 0 && (live.scene + live.species + live.scan) > 0, live);
 
   await page.evaluate(()=>{ document.getElementById('settings').hidden = false; });
   const behind = await sample(1500);
@@ -201,6 +207,41 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
   const btn = await page.evaluate(()=>({ button: !!document.getElementById('btnScan'), watching: SCAN.state().ready }));
   ok('there is no scan button', btn.button === false, btn);
   ok('because the scanner is already watching', btn.watching === true, btn);
+  /* ---- the rows under the weather sit where they were put ----
+
+     "bad positioning", with a screenshot of the air quality row shoved to
+     the right of its card and spilling past the edge. The cause was a NAME
+     COLLISION: .srow belonged to the settings panel three hundred lines
+     further down, with justify-content:space-between and no side padding,
+     and being later it won. Nothing about the markup was wrong, so this
+     asserts the GEOMETRY - where the text actually lands - which is the
+     only thing that catches a rule written somewhere else. */
+  console.log('\nTHE ROWS UNDER THE WEATHER');
+  {
+    const ctx2 = await b.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    const p2 = watch(await ctx2.newPage());
+    await p2.route('**/vendor/**', r => (/\.(bin|tflite|wasm)$/.test(r.request().url()) ? r.abort() : r.continue()));
+    await p2.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded' });
+    await p2.waitForFunction(() => window.UI && window.GEO, null, { timeout: 20000 });
+    const r = await p2.evaluate(() => {
+      const g = document.getElementById('gate'); g.classList.add('hidden'); g.hidden = true;
+      GEO._set({ lat: 51.5, lon: -0.1, acc: 10 }, 135, [], { temp: 18, code: 51, wind: 10, aqi: 21 });
+      const box = s => { const el = document.querySelector(s); if (!el) return null;
+                         const b = el.getBoundingClientRect();
+                         return { x: Math.round(b.x), r: Math.round(b.right), w: Math.round(b.width) }; };
+      return { row: box('#aqRow'), ic: box('#aqRow .h-ic'), txt: box('#aqRow .s-t'),
+               wx: box('#wxCard'), stack: box('#hudStack'),
+               text: (document.getElementById('aqRowTxt') || {}).textContent || '' };
+    });
+    ok('SETUP: the air quality row is drawn', !!r.row && !!r.ic && !!r.txt && !!r.text, r);
+    ok('its text begins just after its icon, not across the card',
+       r.txt.x <= r.ic.r + 14, { iconEnds: r.ic.r, textStarts: r.txt.x });
+    ok('and it stays inside the card', r.txt.r <= r.row.r - 6, { textEnds: r.txt.r, cardEnds: r.row.r });
+    ok('the stack is the same width as the weather card above it',
+       Math.abs(r.stack.w - r.wx.w) <= 2, { stack: r.stack.w, weather: r.wx.w });
+    await ctx2.close();
+  }
+
   done(b);
 })().catch(e => {
   const why = crashed || String(e && e.message || e).split('\n')[0];

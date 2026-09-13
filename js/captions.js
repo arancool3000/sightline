@@ -250,7 +250,7 @@ var CAPS = (function () {
         if (r.isFinal) { fresh += r[0].transcript; conf = r[0].confidence; }
         else interim += r[0].transcript;
       }
-      if (interim) UI.captionDraw(lines, interim, null);
+      if (interim) { UI.captionDraw(lines, interim, null); tellPartial(interim); }
       if (fresh.trim()) {
         judge(conf, fresh);
         tellHeard(fresh.trim());
@@ -498,6 +498,21 @@ var CAPS = (function () {
      captions produce. One recogniser, two readers - a second one would mean
      a second microphone stream and, on the browsers that send audio away to
      be recognised, sending it twice. */
+  /* THE PARTIAL TEXT, AS IT GROWS.
+
+     "i talk, no response. like siri it should detect when i stop talking."
+
+     tellHeard only ever fired on a FINAL result, and with continuous
+     recognition an engine can hold a final for seconds - or never send one
+     while somebody keeps talking. So the assistant sat there with the
+     words on screen and nothing happening. The partial is handed out as it
+     grows and the listener decides when it has stopped growing, which is
+     the only way to know somebody has finished a sentence. */
+  var partialFns = [];
+  function onPartial(fn) { if (partialFns.indexOf(fn) === -1) partialFns.push(fn); }
+  function offPartial(fn) { partialFns = partialFns.filter(function (f) { return f !== fn; }); }
+  function tellPartial(text) { partialFns.forEach(function (f) { try { f(text); } catch (e) {} }); }
+
   var heardFns = [];
   function onHeard(fn) { if (heardFns.indexOf(fn) === -1) heardFns.push(fn); }
   function offHeard(fn) { heardFns = heardFns.filter(function (f) { return f !== fn; }); }
@@ -534,5 +549,6 @@ var CAPS = (function () {
            shortOf: shortOf, health: health, detectLang: detectLang,
            canRecord: canRecord, recording: function () { return recording; },
            onHeard: onHeard, offHeard: offHeard, listen: listen, isSilent: isSilent,
-           hold: hold, isHeld: isHeld };
+           hold: hold, isHeld: isHeld,
+           onPartial: onPartial, offPartial: offPartial, _tellPartial: tellPartial };
 })();

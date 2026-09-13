@@ -1660,7 +1660,7 @@ var UI = (function () {
     if (r.hidden !== !show) r.hidden = !show;
     var st = U.$('#hudStack');
     if (st) {
-      var any = !!st.querySelector('.srow:not([hidden])');
+      var any = !!st.querySelector('.hrow:not([hidden])');
       if (st.hidden !== !any) st.hidden = !any;
     }
   }

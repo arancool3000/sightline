@@ -51,6 +51,7 @@ var VOICE = (function () {
     if (!CAPS.supported() && !CAPS.canRecord()) return false;
     on = true;
     CAPS.onHeard(heard);
+    if (CAPS.onPartial) CAPS.onPartial(onPartial);
     CAPS.listen();           // shared with captions: one recogniser, two readers
     fire({ kind: 'listening' });
     return true;
@@ -59,19 +60,71 @@ var VOICE = (function () {
   function stop() {
     if (awakeTimer) { clearTimeout(awakeTimer); awakeTimer = 0; }
     on = false; awake = false; thinking = false;
+    if (endTimer) { clearTimeout(endTimer); endTimer = 0; }
+    partial = '';
     CAPS.offHeard(heard);
+    if (CAPS.offPartial) CAPS.offPartial(onPartial);
     fire({ kind: 'off' });
   }
 
   /* Every finished line the recogniser produces passes through here. While
      asleep it is only ever compared against the wake word and dropped. */
+  /* ---- KNOWING WHEN YOU HAVE FINISHED ----
+
+     "i talk, no response. like siri it should detect when i stop talking."
+
+     The recogniser only reported a FINAL result, and with continuous
+     recognition an engine can hold one for seconds, or never send it at
+     all while somebody keeps talking. So the words appeared on screen and
+     nothing happened.
+
+     The partial text is watched instead: every time it grows the clock is
+     reset, and when it has not grown for END_MS the sentence is over.
+     That is what a person means by "I have stopped talking" - not silence
+     in the microphone, which a room never gives you, but the words
+     stopping. A final that arrives afterwards says the same thing, so the
+     two are deduplicated rather than asked twice. */
+  var END_MS = 850;
+  var partial = '', endTimer = 0, lastTaken = '', lastTakenAt = 0;
+
+  function onPartial(text) {
+    if (!on) return;
+    if (window.LIVE && LIVE.healthy()) return;
+    var t = String(text || '').trim();
+    if (!t) return;
+
+    /* Waking is instant: nobody should have to finish a sentence before
+       the app admits it heard its own name. */
+    if (!awake && (WAKE.test(t) || BARE.test(t))) { wake(); }
+
+    if (!awake || thinking) return;
+    partial = t;
+    if (endTimer) clearTimeout(endTimer);
+    endTimer = setTimeout(function () {
+      endTimer = 0;
+      var said = partial; partial = '';
+      if (said) take(said);
+    }, END_MS);
+  }
+
   function heard(text) {
     if (!on) return;
-    /* While the live session is up it is hearing the person directly -
-       the on-device recogniser's copy would ask everything twice. */
-    if (window.LIVE && LIVE.running()) return;
+    /* While the live session is HEARING - not merely connected - it has
+       the microphone and the on-device copy would ask everything twice. */
+    if (window.LIVE && LIVE.healthy()) return;
+    if (endTimer) { clearTimeout(endTimer); endTimer = 0; }
+    partial = '';
     var line = String(text || '').trim();
     if (!line) return;
+    take(line);
+  }
+
+  /* One door, whether the words came from a final result or from noticing
+     that they stopped arriving. */
+  function take(line) {
+    /* The final almost always repeats what the endpoint already took. */
+    if (line === lastTaken && (Date.now() - lastTakenAt) < 5000) return;
+    lastTaken = line; lastTakenAt = Date.now();
 
     if (!awake) {
       var m = line.match(WAKE) || line.match(BARE);
@@ -493,7 +546,8 @@ var VOICE = (function () {
 
   return { start: start, stop: stop, state: state, on: onEvent, ask: askNow, awakeMs: awakeMs,
            wake: wake, speak: speak, _heard: heard, _apply: apply, _settle: settle,
-           _pending: function () { return pendingQ; }, _timeoutMs: ASK_TIMEOUT_MS, _setTimeoutMs: function (v) { ASK_TIMEOUT_MS = v; },
+           _pending: function () { return pendingQ; },
+           _partial: onPartial, _endMs: function () { return END_MS; }, _setEndMs: function (v) { END_MS = v; }, _timeoutMs: ASK_TIMEOUT_MS, _setTimeoutMs: function (v) { ASK_TIMEOUT_MS = v; },
            _setFollowupMs: function (v) { FOLLOWUP_MS = v; }, _followupMs: function () { return FOLLOWUP_MS; },
            isSceneQuestion: isSceneQuestion,
            WAKE: WAKE, ACTIONS: ACTIONS };
