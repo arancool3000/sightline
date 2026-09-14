@@ -400,25 +400,33 @@ var VR = (function () {
     return { id: k, title: GAMES[k].title, how: GAMES[k].how }; }); }
 
   function sliceGame() {
-    var cubes = [], bits = [], t = 0, next = 0, score = 0, combo = 0, best = 0, missed = 0;
+    var cubes = [], bits = [], t = 0, next = 0, score = 0, combo = 0, best = 0, missed = 0, bombs = 0;
     var SPEED = 2.2, EVERY = 0.78, BLADE = 0.34, SWING = 0.012;
 
+    /* BOMBS. A game where everything coming at you should be hit is a
+       game you can win by waving, and waving is not playing. One thing
+       you must NOT touch turns every swing into a decision - which is
+       the whole difference between this and an exercise. They arrive
+       only once the ramp has started, so the first few seconds still
+       teach you what a cube is. */
     function spawn() {
       var lane = Math.random();
+      var bomb = t > 12 && Math.random() < Math.min(0.22, 0.06 + t / 400);
       cubes.push({
         x: (lane - 0.5) * SPAN * 0.72,
         y: (Math.random() * 0.5 - 0.1) * SPAN * 0.4,
         z: 9 + Math.random() * 2,
-        size: 0.17 + Math.random() * 0.05,
+        size: bomb ? 0.15 : 0.17 + Math.random() * 0.05,
         spin: (Math.random() - 0.5) * 2,
         hand: lane < 0.5 ? 'left' : 'right',
+        bomb: bomb,
         cut: false
       });
     }
 
     return {
       score: function () { return { score: score, combo: combo, best: best, missed: missed,
-                                    live: cubes.length }; },
+                                    bombs: bombs, live: cubes.length }; },
       step: function (dt) {
         t += dt;
         /* It gets harder. A game at one speed for ever is a demo; the
@@ -449,6 +457,18 @@ var VR = (function () {
               if (Math.abs(p.x - c.x) > c.size + BLADE) return;
               if (Math.abs(p.y - c.y) > c.size + BLADE) return;
               c.cut = true;
+              if (c.bomb) {
+                /* Hitting one costs the streak and some of the score.
+                   It does not end the run: a game that stops dead the
+                   first time you brush something is a game people put
+                   down. */
+                score = Math.max(0, score - 25);
+                combo = 0; bombs++;
+                hit('-25', { x: c.x, y: c.y, z: c.z }, 2);
+                miss();
+                cubes.splice(i, 1);
+                return;
+              }
               var got = 10 + combo * 2;
               score += got;
               combo++;
@@ -462,7 +482,12 @@ var VR = (function () {
               cubes.splice(i, 1);
             });
           }
-          if (!c.cut && c.z < 0.2) { cubes.splice(i, 1); missed++; combo = 0; miss(); }
+          if (!c.cut && c.z < 0.2) {
+            cubes.splice(i, 1);
+            /* Letting a BOMB through is the right play, so it is not a
+               miss and it does not break the streak. */
+            if (!c.bomb) { missed++; combo = 0; miss(); }
+          }
         }
         for (var j = bits.length - 1; j >= 0; j--) {
           var b = bits[j];
@@ -485,6 +510,7 @@ var VR = (function () {
         }
 
         cubes.slice().sort(function (p, q) { return q.z - p.z; }).forEach(function (c) {
+          if (c.bomb) return bomb(ctx, c, eye, vw, vh);
           cube(ctx, c, eye, vw, vh, c.hand === 'left' ? '#4fe3ff' : '#ff7ad4', 1);
         });
         bits.forEach(function (b) {
@@ -605,6 +631,29 @@ var VR = (function () {
     };
   }
 
+  /* A bomb. ⚠ IT IS A DIFFERENT SHAPE, not just a different colour: a
+     cheap viewer lens and a moving picture are exactly where two hues
+     stop being distinguishable, and "the red one" is no use to anybody
+     colourblind. A round outline with a cross through it reads at a
+     glance, at speed, in one colour. */
+  function bomb(ctx, c, eye, vw, vh) {
+    var f = project({ x: c.x, y: c.y, z: c.z }, eye, vw, vh);
+    if (!f) return;
+    var r = c.size * f.s;
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,12,18,.92)';
+    ctx.beginPath(); ctx.arc(f.x, f.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#ff5566';
+    ctx.lineWidth = Math.max(2, 5 / c.z);
+    ctx.stroke();
+    var d = r * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(f.x - d, f.y - d); ctx.lineTo(f.x + d, f.y + d);
+    ctx.moveTo(f.x + d, f.y - d); ctx.lineTo(f.x - d, f.y + d);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   /* A cube as a front face and the four edges running back to it: enough
      to read as a box, and cheap enough to draw sixty of. */
   function cube(ctx, c, eye, vw, vh, colour, alpha) {
@@ -643,6 +692,21 @@ var VR = (function () {
   /* ---- running one ---- */
 
   var root = null, cv = null, ctx = null, game = null, id = '', raf = 0, last = 0;
+  /* ONE VIEW BY DEFAULT. "not always split view" - most of the time the
+     phone is in a hand, not a box, and half a screen each for two eyes
+     nobody is using is just a smaller game. The viewer is the special
+     case, so it is the one you ask for. Remembered, because somebody who
+     owns a viewer owns it tomorrow too. */
+  var SPLIT_KEY = 'sightline.vr.split';
+  var split = false;
+  try { split = localStorage.getItem(SPLIT_KEY) === '1'; } catch (e) {}
+  function splitOn() { return split; }
+  function setSplit(v) {
+    split = !!v;
+    try { localStorage.setItem(SPLIT_KEY, split ? '1' : '0'); } catch (e) {}
+    if (root) buildBar();
+    return split;
+  }
   var listeners = [];
   function on(fn) { listeners.push(fn); }
   function fire(ev) { listeners.forEach(function (f) { try { f(ev); } catch (e) {} }); }
@@ -662,6 +726,7 @@ var VR = (function () {
     armGyro();
     recentre();
     feel.flash = 0; feel.shake = 0; feel.pops = [];
+    ready = 3.2;
     game = GAMES[key].make();
     build();
     last = performance.now();
@@ -687,13 +752,34 @@ var VR = (function () {
     root.id = 'vrRoot';
     cv = document.createElement('canvas');
     cv.id = 'vrCanvas';
-    var out = document.createElement('button');
-    out.id = 'vrOut'; out.className = 'hbtn'; out.textContent = 'LEAVE';
-    out.addEventListener('click', stop);
-    root.appendChild(cv); root.appendChild(out);
+    root.appendChild(cv);
     document.body.appendChild(root);
+    buildBar();
     size();
     window.addEventListener('resize', size);
+  }
+
+  /* LEAVE, and the view toggle beside it. Rebuilt rather than relabelled
+     because the label IS the state and there is then no second place
+     where the two can disagree. */
+  var bar = null;
+  function buildBar() {
+    if (!root) return;
+    if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+    bar = document.createElement('div');
+    bar.id = 'vrBar';
+    var mk = function (id2, text, fn) {
+      var b = document.createElement('button');
+      b.id = id2; b.className = 'hbtn'; b.type = 'button'; b.textContent = text;
+      b.addEventListener('click', fn);
+      bar.appendChild(b);
+      return b;
+    };
+    mk('vrOut', 'LEAVE', stop);
+    mk('vrSplit', split ? '1 VIEW' : '2 VIEWS', function () { setSplit(!split); });
+    root.appendChild(bar);
+    /* The seam belongs to the two-eye layout, not to the overlay. */
+    if (split) root.className = 'two'; else root.className = '';
   }
   function size() {
     if (!cv) return;
@@ -704,12 +790,20 @@ var VR = (function () {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  /* THREE SECONDS BEFORE IT STARTS. A game that begins the instant you
+     tap it begins while you are still lowering the phone, and the first
+     thing it teaches you is that you lost something. The hands are read
+     through the countdown, so it doubles as the moment you find out
+     whether the camera can see them. */
+  var ready = 0;
+
   function tick(now) {
     if (!game) return;
     raf = requestAnimationFrame(tick);
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     readHands(document.getElementById('cam'));
+    if (ready > 0) { ready -= dt; draw(); return; }
     game.step(dt);
     feelStep(dt);
     draw();
@@ -718,7 +812,7 @@ var VR = (function () {
   function draw() {
     if (!ctx || !cv) return;
     var w = cv.clientWidth, h = cv.clientHeight;
-    var vw = w / 2;
+    var vw = split ? w / 2 : w;
     ctx.fillStyle = '#04070b';
     ctx.fillRect(0, 0, w, h);
     /* Two eyes, two viewports, one world. */
@@ -726,7 +820,8 @@ var VR = (function () {
        rather than as a hit. */
     var kx = feel.shake ? (Math.random() - 0.5) * feel.shake : 0;
     var ky = feel.shake ? (Math.random() - 0.5) * feel.shake : 0;
-    [[-EYE, 0], [EYE, vw]].forEach(function (pair) {
+    var eyes = split ? [[-EYE, 0], [EYE, vw]] : [[0, 0]];
+    eyes.forEach(function (pair) {
       ctx.save();
       ctx.beginPath(); ctx.rect(pair[1], 0, vw, h); ctx.clip();
       ctx.translate(pair[1] + kx, ky);
@@ -753,10 +848,20 @@ var VR = (function () {
     ctx.font = '600 12px ui-monospace,Menlo,monospace';
     ctx.fillText(s.score, w / 2, 44);
     var hs = handState();
-    if (!hs.left.seen && !hs.right.seen) {
+    var sees = hs.left.seen || hs.right.seen;
+    if (!sees) {
       ctx.fillStyle = 'rgba(230,240,250,.7)';
       ctx.font = '600 12px -apple-system,system-ui,sans-serif';
-      ctx.fillText('Hold your hands up in front of the camera', w / 2, h - 24);
+      ctx.fillText('Hold your hands up in front of the camera', w / 2, h - 74);
+    }
+    if (ready > 0) {
+      var n = Math.ceil(ready - 0.2);
+      ctx.fillStyle = sees ? '#b8ff6a' : 'rgba(230,240,250,.8)';
+      ctx.font = '700 64px ui-monospace,Menlo,monospace';
+      ctx.fillText(n > 0 ? String(n) : 'GO', w / 2, h / 2 + 22);
+      ctx.fillStyle = 'rgba(230,240,250,.7)';
+      ctx.font = '600 12px -apple-system,system-ui,sans-serif';
+      ctx.fillText(sees ? 'Got your hands' : 'Looking for your hands', w / 2, h / 2 + 52);
     }
     ctx.restore();
   }
@@ -768,7 +873,7 @@ var VR = (function () {
            _project: project, _handPoint: handPoint, _draw: draw,
            _head: function () { return { yaw: head.yaw, pitch: head.pitch }; },
            _setHead: function (y, p2) { head.yaw = y; head.pitch = p2; },
-           _tilt: onTilt, _recentre: recentre, _feelStep: feelStep,
+           _tilt: onTilt, _recentre: recentre, split: splitOn, setSplit: setSplit, _ready: function () { return ready; }, _feelStep: feelStep,
            _feel: function () { return { flash: feel.flash, shake: feel.shake,
                                          pops: feel.pops.length }; } };
 })();

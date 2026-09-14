@@ -253,6 +253,100 @@ const ok=(n,c,x)=>{if(c){pass++;console.log('  ok   '+n);}else{fail++;console.lo
        VR_OPPOSITE(g), g);
   }
 
+  console.log('\nONE VIEW UNLESS YOU ASK FOR TWO');
+  {
+    /* ⚠ THE DEFAULT CANNOT BE READ AFTER SETTING IT. The module reads the
+       remembered choice once, when the file loads, so a test that calls
+       setSplit(false) and then asks is only reading its own call - it
+       passes for a build that defaults to two views. The stored choice is
+       cleared and the page reloaded, which is the only way to ask what a
+       phone that has never been told does. */
+    await page.evaluate(()=>{ try{ localStorage.removeItem('sightline.vr.split'); }catch(e){} });
+    await page.reload({waitUntil:'domcontentloaded'});
+    await page.waitForFunction(()=>window.VR&&window.CAM,null,{timeout:30000});
+    await page.evaluate(()=>{ const g=document.getElementById('gate'); if(g){g.classList.add('hidden'); g.hidden=true;} });
+
+    const v=await page.evaluate(()=>{
+      const realLive=CAM.live; CAM.live=()=>true;
+      VR.start('slice');
+      const flat=VR.split();
+      const seamFlat=document.getElementById('vrRoot').className.indexOf('two')>=0;
+      /* The toggle is a button somebody can reach, not only an API. */
+      const btn=document.getElementById('vrSplit');
+      const label1=btn.textContent.trim();
+      const tall=btn.getBoundingClientRect().height;
+      btn.click();
+      const two=VR.split();
+      const label2=document.getElementById('vrSplit').textContent.trim();
+      const seamTwo=document.getElementById('vrRoot').className.indexOf('two')>=0;
+      /* And it is remembered, so a viewer owner is not asked every time. */
+      const kept=localStorage.getItem('sightline.vr.split');
+      document.getElementById('vrSplit').click();
+      VR.stop(); CAM.live=realLive;
+      return { flat, two, label1, label2, seamFlat, seamTwo, tall, kept };
+    });
+    ok('a phone that has never been told opens ONE view', v.flat===false, v);
+    ok('CONTROL: and draws no seam down the middle of it', v.seamFlat===false, v);
+    ok('the button offers the other one', v.label1==='2 VIEWS' && v.label2==='1 VIEW', v);
+    ok('pressing it splits the view', v.two===true && v.seamTwo===true, v);
+    ok('it is thumb-sized', v.tall>=44, v.tall);
+    ok('and the choice is remembered', v.kept==='1', v);
+  }
+
+  console.log('\nNOT EVERYTHING COMING AT YOU SHOULD BE HIT');
+  {
+    const g=await page.evaluate(()=>{
+      /* Swing at EVERYTHING for long enough that bombs are arriving. A
+         player who waves at all of it must do worse than one who waves
+         at none of it - that is the whole point of a bomb. */
+      const swipe=(game,secs)=>{
+        let sw=0;
+        for (let i=0;i<secs*50;i++){
+          sw+=0.02;
+          VR._setHand('right',{seen:true,x:0.5+Math.sin(sw*9)*0.25,y:0.5,
+                               vx:Math.cos(sw*9)*0.06,vy:0.02});
+          VR._setHand('left',{seen:true,x:0.5+Math.cos(sw*7)*0.25,y:0.5,
+                              vx:-Math.sin(sw*7)*0.06,vy:0.02});
+          game.step(0.02);
+        }
+        VR._setHand('left',{seen:false}); VR._setHand('right',{seen:false,vx:0,vy:0});
+        return game.score();
+      };
+      const wild=swipe(VR.GAMES.slice.make(), 60);
+      /* CONTROL: early on there are none, so a beginner is not punished
+         for swinging before they know what a bomb looks like. */
+      const early=(()=>{ const game=VR.GAMES.slice.make();
+        let sw=0;
+        for (let i=0;i<8*50;i++){ sw+=0.02;
+          VR._setHand('right',{seen:true,x:0.5+Math.sin(sw*9)*0.25,y:0.5,
+                               vx:Math.cos(sw*9)*0.06,vy:0.02});
+          game.step(0.02); }
+        VR._setHand('right',{seen:false,vx:0,vy:0});
+        return game.score(); })();
+      return { wild, early };
+    });
+    ok('SETUP: a long game really was played', g.wild.score>0 || g.wild.missed>0, g.wild);
+    ok('waving at everything sets some off', g.wild.bombs>0, g.wild);
+    ok('CONTROL: none arrive in the first few seconds', g.early.bombs===0, g.early);
+  }
+
+  console.log('\nIT COUNTS YOU IN');
+  {
+    const c=await page.evaluate(async()=>{
+      const realLive=CAM.live; CAM.live=()=>true;
+      VR.start('slice');
+      const atStart=VR._ready();
+      const scoreAtStart=VR.score();
+      await new Promise(r=>setTimeout(r,250));
+      const soon=VR._ready();
+      VR.stop(); CAM.live=realLive;
+      return { atStart, soon, live:scoreAtStart?scoreAtStart.live:-1 };
+    });
+    ok('there is a countdown before the first cube', c.atStart>2, c);
+    ok('and it runs down', c.soon<c.atStart, c);
+    ok('CONTROL: nothing has arrived while it counts', c.live===0, c);
+  }
+
   ok('no page errors throughout', errs.length===0, errs);
   console.log('\n'+pass+'/'+(pass+fail)+' passed');
   await b.close(); server.close(); process.exit(fail?1:0);

@@ -712,8 +712,11 @@ body.navigating #statusStrip{bottom:calc(var(--safe-b) + 186px)}
    of the way: in a box there is nothing to tap but the one big button. */
 #vrRoot{position:fixed;inset:0;z-index:70;background:#04070b}
 #vrCanvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
-/* The seam, so the two eyes have an edge to sit either side of. */
-#vrRoot:after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;
+/* The seam, so the two eyes have an edge to sit either side of. It is
+   only there when there ARE two eyes: a line down the middle of a
+   one-view game is a scratch on the screen. */
+#vrRoot.two:after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;
   background:rgba(120,190,255,.18);pointer-events:none}
-#vrOut{position:absolute;left:50%;transform:translateX(-50%);
-  bottom:calc(var(--safe-b) + 10px);z-index:2;min-width:120px}
+#vrBar{position:absolute;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--safe-b) + 10px);z-index:2;display:flex;gap:10px}
+#vrBar .hbtn{min-width:104px;min-height:44px}
