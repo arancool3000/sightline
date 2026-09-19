@@ -707,7 +707,13 @@ var UI = (function () {
 
   /* ---------- dossier ---------- */
 
-  function showSheet(html) { sheetBody.innerHTML = html; pruneHero(sheetBody); sheet.hidden = false; }
+  /* A body class as well as the hidden flag, because in landscape the
+     dossier is a panel down one side and the dock has to step out from
+     under it. One writer, so the class and the panel cannot disagree. */
+  function showSheet(html) {
+    sheetBody.innerHTML = html; pruneHero(sheetBody); sheet.hidden = false;
+    document.body.classList.add('sheet-on');
+  }
 
   /* ---------- games ---------- */
 
@@ -740,7 +746,7 @@ var UI = (function () {
       });
     });
   }
-  function closeSheet() { sheet.hidden = true; openTrackId = null; }
+  function closeSheet() { sheet.hidden = true; openTrackId = null; document.body.classList.remove('sheet-on'); }
 
   var SPEC_ORDER = [/manufacturer|maker|brand/i, /^model/i, /released|launched|year/i,
                     /price|cost|from\b/i, /where to buy|retail|stockist|buy/i];
@@ -2076,7 +2082,7 @@ var UI = (function () {
     });
   }
 
-  return { _onTheView: onTheView, _navShapes: function () { return navShapes.slice(); }, init: init, draw: draw, openPlace: openPlace, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
+  return { _onTheView: onTheView, _showSheet: showSheet, _closeSheet: closeSheet, _navShapes: function () { return navShapes.slice(); }, init: init, draw: draw, openPlace: openPlace, dirty: dirty, resize: resize, tele: tele, modelStatus: modelStatus,
            status: status,
            openTrack: openTrack, openRecord: openRecord, openPending: openPending,
            openError: openError, needEndpoint: needEndpoint, close: closeSheet,

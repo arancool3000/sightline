@@ -720,3 +720,96 @@ body.navigating #statusStrip{bottom:calc(var(--safe-b) + 186px)}
 #vrBar{position:absolute;left:50%;transform:translateX(-50%);
   bottom:calc(var(--safe-b) + 10px);z-index:2;display:flex;gap:10px}
 #vrBar .hbtn{min-width:104px;min-height:44px}
+
+/* ======================================================================
+   LANDSCAPE ON A PHONE
+
+   "landscape on iphone looks horrendous."
+
+   It was: every panel is sized for a tall screen, so on 390 points of
+   height the two HUD columns, the subject chip floating in the middle of
+   the picture and a 58-point dock left almost nothing to look THROUGH -
+   and the dossier came up as a full-width slab across a short screen,
+   one column of text 844 points wide, which is an unreadable line length
+   and covers the thing it is describing.
+
+   So a phone held sideways gets its own layout rather than the tall one
+   squeezed. Three rules, and they are the whole idea:
+
+     1. THE MIDDLE OF THE VIEW BELONGS TO THE VIEW. Panels hug the edges
+        and the centre is left clear.
+     2. A SHORT SCREEN IS A NARROW ONE FOR TEXT. The dossier and the
+        settings become a side panel down one edge, at a column width
+        somebody can actually read.
+     3. NOTHING GROWS INTO THE MIDDLE. The HUD columns are capped and
+        scroll instead of stacking down the screen.
+
+   Bounded to phones: max-height 520px is a phone or a small tablet on
+   its side, never a laptop, which has the height for the tall layout and
+   looks worse in this one.
+
+   ⚠ In landscape the notch is on the SIDE, so the side insets are the
+   ones that matter and the app had only ever read top and bottom. */
+@media (orientation:landscape) and (max-height:520px){
+  :root{--safe-l:env(safe-area-inset-left,0px);--safe-r:env(safe-area-inset-right,0px)}
+
+  /* ---- the two HUD columns ---- */
+  #hudTL{
+    left:calc(12px + var(--safe-l));top:calc(var(--safe-t) + 10px);
+    width:min(30vw,206px);max-width:min(30vw,206px);gap:6px;
+    /* Capped and scrolling: a column that keeps growing is what put a
+       card over the middle of the picture. */
+    max-height:calc(100% - 78px - var(--safe-t) - var(--safe-b));
+    overflow-y:auto;-webkit-overflow-scrolling:touch;pointer-events:auto
+  }
+  #hudTR{right:calc(12px + var(--safe-r));top:calc(var(--safe-t) + 10px);gap:6px}
+  /* Tighter rows, because the same words in less height is the whole
+     job here - not smaller words. */
+  .hrow{padding:5px 10px;gap:8px}
+  .h-ic{flex:0 0 22px;height:22px;border-radius:7px}
+  .s-t b{font-size:12px}
+  .s-t i{font-size:10.5px;line-height:1.25}
+  .ask{padding:5px 12px 5px 7px}
+  .ask-ic{flex:0 0 24px;height:24px}
+  /* Anything inside a HUD card that draws itself - the little map - is
+     kept inside the card rather than running past its own label. */
+  #hudTL canvas,#hudTL img{max-width:100%;max-height:54px;object-fit:cover}
+
+  /* ---- the foot ---- */
+  #dock{bottom:calc(var(--safe-b) + 6px);padding:3px;gap:0}
+  .dbtn{width:48px;height:44px}
+  /* The subject chip sat 150px up, which on a short screen is the middle
+     of the picture. It belongs just above the dock. */
+  #sceneChip{bottom:calc(var(--safe-b) + 62px);max-width:min(56vw,420px);padding:7px 11px 7px 12px}
+  .sc-name{font-size:14px}
+  #rail{bottom:calc(var(--safe-b) + 58px)}
+  /* The two bottom corners sat 76px up, which on a short screen put them
+     level with the middle of the picture and, on the left, straight
+     under the HUD column. Down into the corners, and smaller. */
+  #radarPod{left:calc(10px + var(--safe-l));bottom:calc(var(--safe-b) + 58px);padding:6px 10px 6px 6px;gap:8px}
+  #radar{width:46px;height:46px;border-radius:10px}
+  .pod-txt{max-width:92px}
+  .pod-txt b{font-size:11.5px}
+  .pod-txt i{font-size:10px}
+  #nearCard{right:calc(10px + var(--safe-r));bottom:calc(var(--safe-b) + 58px);width:min(30vw,170px)}
+  .near-row{padding:4px 10px;font-size:11px}
+  #codeCard{bottom:calc(var(--safe-b) + 60px);max-height:60%}
+
+  /* ---- the dossier, as a side panel ---- */
+  #sheet{
+    left:auto;right:0;top:0;bottom:0;width:min(46vw,440px);max-height:none;
+    border-top:0;border-left:1px solid var(--acc-dim);
+    padding:calc(var(--safe-t) + 16px) calc(18px + var(--safe-r)) 20px 20px;
+    animation:slidein .2s cubic-bezier(.2,.8,.3,1)
+  }
+  #settings{
+    left:auto;right:0;width:min(58vw,560px);
+    border-left:1px solid var(--acc-dim);
+    padding-right:calc(18px + var(--safe-r))
+  }
+  /* With a panel down the right, the dock centres on what is LEFT of the
+     screen. Half a dock under a panel reads as a broken layout. */
+  body.sheet-on #dock{left:calc((100% - min(46vw,440px)) / 2)}
+  body.sheet-on #sceneChip{left:calc((100% - min(46vw,440px)) / 2);max-width:min(40vw,330px)}
+}
+@keyframes slidein{from{transform:translateX(16px);opacity:0}to{transform:none;opacity:1}}
