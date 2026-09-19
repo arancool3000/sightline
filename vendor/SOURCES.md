@@ -26,3 +26,18 @@ and check the version the ponyfill asks for still matches:
 
 `tests/panels_test.cjs` decodes a real EAN-13 through this pair, which is
 the check that fails when they drift apart.
+
+## models/hands — MediaPipe hand tracking
+- `palm_detection_lite.tflite` (1,985,440 bytes)
+- `hand_landmark_lite.tflite` (2,071,408 bytes)
+
+From `https://storage.googleapis.com/mediapipe-assets/`, Google's own
+published assets. Apache 2.0, the same licence as MediaPipe itself.
+
+Vendored rather than fetched so hand tracking works offline, needs no
+key and has no per-call limit — the standing rule for this app. Run
+through the `tf-tflite` runtime that was already here for the species
+models. Nothing else in the pipeline changes: `js/hands.js` rebuilds the
+detector's anchor grid (2016 boxes, strides 8/16/16/16 over 192px) and
+MediaPipe's own rect transformation, both of which are pinned by
+`tests/hands_test.cjs` against photographs of real hands.

@@ -284,11 +284,33 @@ var VR = (function () {
   function recentre() { zero = null; head.yaw = 0; head.pitch = 0; }
 
   function copyHand(h) {
-    return { x: h.x, y: h.y, vx: h.vx, vy: h.vy, n: h.n, seen: h.seen };
+    return { x: h.x, y: h.y, vx: h.vx, vy: h.vy, n: h.n, seen: h.seen, pts: h.pts || null };
   }
+  /* ---- WHICH TRACKER IS ANSWERING ----
+
+     "hand tracking is very bad" ... "hand tracking is very very bad."
+
+     Twice, so the colour heuristic below is not the answer and a third
+     go at it would have been the third round of the same mistake. The
+     real models are in hands.js - MediaPipe's palm detector and hand
+     landmarker, vendored, offline, no key. This is the one place that
+     decides which is speaking, so nothing downstream has to care, and
+     the skin tracker stays as the fallback for a device where four
+     megabytes of model will not load. */
+  function realHands() { return window.HANDS && HANDS.good(); }
+
   /* A copy, never the live object: a caller that holds on to a reading would
      otherwise watch it change under them on the next frame. */
-  function handState() { return { left: copyHand(hands.left), right: copyHand(hands.right) }; }
+  function handState() {
+    if (realHands()) return HANDS.state();
+    return { left: copyHand(hands.left), right: copyHand(hands.right) };
+  }
+
+  /* One door in, whichever is answering. */
+  function readAny(video) {
+    if (realHands()) { HANDS.step(video); return; }
+    readHands(video);
+  }
 
   /* ---- the world ---- */
 
@@ -725,6 +747,10 @@ var VR = (function () {
        requires before it will send a single orientation event. */
     armGyro();
     recentre();
+    /* Asked for at the tap, not at boot: four megabytes is not something
+       to fetch for somebody who never opens a game. The skin tracker
+       covers the first second or two while it arrives. */
+    if (window.HANDS) { HANDS.forget(); HANDS.load(); }
     feel.flash = 0; feel.shake = 0; feel.pops = [];
     ready = 3.2;
     game = GAMES[key].make();
@@ -742,6 +768,7 @@ var VR = (function () {
     if (root && root.parentNode) root.parentNode.removeChild(root);
     root = null; cv = null; ctx = null;
     dropGyro();
+    if (window.HANDS) HANDS.forget();
     feel.flash = 0; feel.shake = 0; feel.pops = [];
     if (was) fire({ kind: 'end', game: id, score: was });
     id = '';
@@ -802,7 +829,7 @@ var VR = (function () {
     raf = requestAnimationFrame(tick);
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    readHands(document.getElementById('cam'));
+    readAny(document.getElementById('cam'));
     if (ready > 0) { ready -= dt; draw(); return; }
     game.step(dt);
     feelStep(dt);
@@ -854,6 +881,12 @@ var VR = (function () {
       ctx.font = '600 12px -apple-system,system-ui,sans-serif';
       ctx.fillText('Hold your hands up in front of the camera', w / 2, h - 74);
     }
+    if (ready > 0 && !realHands()) {
+      ctx.fillStyle = 'rgba(230,240,250,.5)';
+      ctx.font = '600 10px -apple-system,system-ui,sans-serif';
+      ctx.fillText(window.HANDS && HANDS.why() ? 'Using colour tracking'
+                                               : 'Loading hand tracking\u2026', w / 2, h / 2 + 74);
+    }
     if (ready > 0) {
       var n = Math.ceil(ready - 0.2);
       ctx.fillStyle = sees ? '#b8ff6a' : 'rgba(230,240,250,.8)';
@@ -869,6 +902,7 @@ var VR = (function () {
   return { start: start, stop: stop, running: running, current: current, score: score,
            list: list, on: on, GAMES: GAMES,
            _hands: handState, _readHands: readHands, _isSkin: isSkin,
+           _real: realHands, _readAny: readAny,
            _setHand: function (k, o) { var h = hands[k]; if (h) for (var f in o) h[f] = o[f]; },
            _project: project, _handPoint: handPoint, _draw: draw,
            _head: function () { return { yaw: head.yaw, pitch: head.pitch }; },
