@@ -87,15 +87,55 @@ var LOCAL = (function () {
     try { tf.wasm.setWasmPaths('vendor/wasm/'); wasmPathsSet = true; } catch (e) {}
   }
 
+  /* ⚠ THE WORKAROUND FOR AN OLD IPAD WAS BREAKING A NEW IPHONE.
+
+     "failed to link vertex and fragment shaders" - reported on an iPhone
+     18 Pro, which is not hardware that needs taming. The settings above
+     were applied UNCONDITIONALLY, before anything had failed, and forcing
+     half-precision textures while refusing float32 render targets is
+     exactly the combination that produces a shader some drivers will not
+     link. So the fix for the old device was causing the failure on the
+     new one.
+
+     Taming is a FALLBACK now, not a default: plain WebGL is tried first
+     and PROVEN with a real multiply before it is trusted - a backend that
+     reports itself ready and then cannot compile a kernel is the failure
+     being guarded against, so asking it to compile one is the only
+     honest test. Only if that fails are the old settings applied and
+     WebGL tried again, and only then does it fall to WASM.
+
+     This also matters for heat: a device that falls to WASM or CPU runs
+     inference on the processor, and the pace governor in app.js is what
+     stops that cooking the phone. */
+  function proveBackend() {
+    if (!window.tf || !tf.tidy) return Promise.resolve(true);
+    try {
+      var v = tf.tidy(function () {
+        /* A convolution, not an add: the kernels that fail to link are the
+           shaped ones, and an elementwise add compiles on anything. */
+        var x = tf.ones([1, 8, 8, 4]);
+        var k = tf.ones([3, 3, 4, 4]);
+        return tf.conv2d(x, k, 1, 'same').sum();
+      });
+      return Promise.resolve(v.data()).then(function (d) {
+        v.dispose();
+        return !!(d && isFinite(d[0]) && d[0] > 0);
+      }, function () { try { v.dispose(); } catch (e2) {} return false; });
+    } catch (e) { return Promise.resolve(false); }
+  }
+
   function pickBackend() {
     if (!window.tf) return Promise.resolve('');
-    tameWebgl();
     readyWasm();
     var order = [];
     try {
       if (tf.findBackend && tf.findBackend('webgpu')) order.push('webgpu');
     } catch (e) { /* an unregistered backend must not be fatal */ }
     order.push('webgl');
+    /* The same backend again, with the old settings on. A second entry
+       rather than a flag, so the order below reads as what it is: try it
+       plain, try it tamed, then leave the GPU alone. */
+    order.push('webgl-tame');
     try { if (tf.findBackend && tf.findBackend('wasm')) order.push('wasm'); }
     catch (e) {}
     order.push('cpu');
@@ -108,14 +148,25 @@ var LOCAL = (function () {
          some failure paths hand back a bare boolean, and calling .then on
          that is a SYNCHRONOUS TypeError that escapes load() entirely,
          leaving no error recorded anywhere. Promise.resolve normalises it. */
+      var want = order[i], tame = want === 'webgl-tame';
+      if (tame) { tameWebgl(); want = 'webgl'; }
       var r;
-      try { r = tf.setBackend(order[i]); }
+      try { r = tf.setBackend(want); }
       catch (e) { return tryNext(i + 1); }
 
       return Promise.resolve(r)
         .then(function (ok) {
           if (ok === false) return tryNext(i + 1);
-          return Promise.resolve(tf.ready()).then(function () { return order[i]; });
+          return Promise.resolve(tf.ready()).then(function () {
+            /* Proven, not promised. Only the GPU backends can fail this
+               way, so the others are not made to pay for the check. */
+            if (want !== 'webgl' && want !== 'webgpu') return want;
+            return proveBackend().then(function (good) {
+              if (good) return want;
+              lastErr = want + ' could not compile a kernel';
+              return tryNext(i + 1);
+            });
+          });
         })
         .catch(function () { return tryNext(i + 1); });
     }

@@ -8,7 +8,11 @@
   var running = false;
   var lastDetect = 0;
   var GRID_MIN = 0.70;             // a scene crop must be this sure to be named at all
-  var DETECT_MS = 90;              // ~11 detector passes a second; boxes are smoothed between
+  var DETECT_MS = 200;             // five detector passes a second; boxes are smoothed between
+  /* ⚠ WAS 90ms - eleven passes a second, which nobody can read and the
+     phone pays for in heat. The boxes are smoothed between passes, so
+     what this number changes is the temperature, not what is on screen. */
+  var SCENE_MS = 300, lastSceneRun = 0;   // the label, three times a second
   var frameTimes = [];
   var loopHandle = null;
   var paused = false;
@@ -197,6 +201,90 @@
     return false;
   }
 
+  /* ---- HOW HARD TO WORK ----
+
+     "somehow making my iphone 18 pro overheat."
+
+     It was. The scene classifier - the label that says what you are
+     pointing at - was called EVERY ANIMATION FRAME with nothing but a
+     busy flag in front of it, so on a fast phone it ran back to back for
+     as long as the app was open: a neural network at whatever rate the
+     hardware could manage, for ever. On a device that fell back to WASM
+     or CPU (see local.js: the shader workaround was doing exactly that)
+     the same loop pins the processor instead. Either way the phone gets
+     hot and the battery goes.
+
+     Two rules fix it, and neither costs anything a reader can see:
+
+     1. A RATE. Nobody can read a label that changes fifteen times a
+        second. Three times a second is past what anyone notices, and it
+        is a fifth of the work.
+     2. WHEN THE PICTURE IS NOT CHANGING, THERE IS NOTHING NEW TO LEARN.
+        A phone on a desk, or held still while you read the answer, is
+        the common case - and it is pure waste. The frame is compared
+        with the last one at 32x24, which costs about nothing, and
+        everything slows to a crawl while the view is still.
+
+     ⚠ THE SLOWDOWN IS BOUNDED AND IT WAKES ON THE FIRST MOVING FRAME, so
+     the thing this must never do - be slow to answer when you point at
+     something new - cannot happen: moving is the case it runs fast in. */
+  var PACE_W = 32, PACE_H = 24;
+  var pacePad = null, paceCtx = null, paceLast = null;
+  var paceStill = 0;                  // consecutive frames with nothing moving
+  var STILL_ENOUGH = 8;               // about a sixth of a second of stillness
+  var paceAt = 0, paceVal = 1, stillMul = 1, backMul = 1;
+
+  function motion(video) {
+    if (!video || !video.videoWidth) return 1;
+    if (!pacePad) {
+      pacePad = document.createElement('canvas');
+      pacePad.width = PACE_W; pacePad.height = PACE_H;
+      paceCtx = pacePad.getContext('2d', { willReadFrequently: true });
+    }
+    var d;
+    try {
+      paceCtx.drawImage(video, 0, 0, PACE_W, PACE_H);
+      d = paceCtx.getImageData(0, 0, PACE_W, PACE_H).data;
+    } catch (e) { return 1; }        // tainted: assume it is moving
+    var n = PACE_W * PACE_H, now = new Uint8Array(n), moved = 0;
+    for (var i = 0; i < n; i++) {
+      var j = i * 4;
+      now[i] = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) >> 8;
+      if (paceLast && Math.abs(now[i] - paceLast[i]) > 8) moved++;
+    }
+    var had = !!paceLast;
+    paceLast = now;
+    if (!had) return 1;
+    /* A couple of per cent is camera noise, not a moving picture. */
+    return moved / n > 0.02 ? 1 : 0;
+  }
+
+  /* The multiplier every paced pass is measured in. Recomputed a few times
+     a second, not per frame - reading the frame to decide how often to
+     read the frame would be its own joke. */
+  function pace(now, video) {
+    if (now - paceAt >= 120) {
+      paceAt = now;
+      if (motion(video)) paceStill = 0; else paceStill++;
+      /* ⚠ TWO SEPARATE THINGS, AND THE FIRST CUT MULTIPLIED THEM UNDER
+         ONE CAP THAT THEREFORE CAPPED NOTHING: a sixth-rate ceiling
+         times a slow backend came out at FIFTEEN, so a parked phone on
+         the processor would have looked at the world every four and a
+         half seconds. The stillness easing and the backend's own floor
+         are kept apart, and the CAP IS ON WHAT COMES OUT. */
+      stillMul = paceStill < STILL_ENOUGH ? 1
+               : Math.min(6, 1 + (paceStill - STILL_ENOUGH) / 12);
+      /* A backend on the processor cannot be run at GPU rates without
+         the phone paying for it in heat. This is a floor under the rate,
+         not a reason to stop watching. */
+      var b = LOCAL.timing && LOCAL.timing().backend;
+      backMul = (b === 'wasm' || b === 'cpu') ? 2.5 : 1;
+      paceVal = Math.min(8, stillMul * backMul);
+    }
+    return paceVal;
+  }
+  function paceNow() { return paceVal; }
+
   function loop() {
     if (!running) return;
     loopHandle = requestAnimationFrame(loop);
@@ -230,7 +318,10 @@
        coming back as a shrub. */
     speciesScene(now);
 
-    if (LOCAL.ready()) {
+    var slow = pace(now, U.$('#cam'));
+
+    if (LOCAL.ready() && now - lastSceneRun >= SCENE_MS * slow) {
+      lastSceneRun = now;
       LOCAL.scene(U.$('#cam'), function (r) {
         /* The scene readout is a label on screen like any other, so a mode
            that excludes its kind must exclude it. */
@@ -246,7 +337,7 @@
     SCAN.step(U.$('#cam'));
     facePass(U.$('#cam'), now);
 
-    if (model && now - lastDetect >= detectEvery()) {
+    if (model && now - lastDetect >= detectEvery() * slow) {
       lastDetect = now;
       detectOnce(now);
     }
@@ -255,7 +346,7 @@
        person are both classes it knows, so nothing plotting at all was the
        tell that it never loaded. Sweep the frame ourselves instead, using the
        model that IS available locally. */
-    if (!model && LOCAL.ready() && now - lastGrid >= 260) {
+    if (!model && LOCAL.ready() && now - lastGrid >= 260 * slow) {
       lastGrid = now;
       LOCAL.gridStep(U.$('#cam'));
       gridToTracks(now);
@@ -396,7 +487,7 @@
      thing it is looking at, and that is all this needs. */
   var lastScene = 0, speciesRec = null;
   function speciesScene(now) {
-    if (!window.SPECIES || now - lastScene < 700) return;
+    if (!window.SPECIES || now - lastScene < 700 * paceNow()) return;
     var video = U.$('#cam');
     if (!video || !video.videoWidth) return;
     lastScene = now;
@@ -639,6 +730,20 @@
       UI.status('ERROR — ' + String((r && r.message) || r || 'unknown').slice(0, 110), 'bad');
     }
   });
+
+  /* A door for the probes. The pace governor decides how hot this app
+     runs, so it is the one thing here that has to be measurable from
+     outside rather than taken on trust. */
+  window.APP = {
+    pace: paceNow,
+    _motion: motion,
+    _pace: pace,
+    _still: function () { return paceStill; },
+    _parts: function () { return { still: stillMul, backend: backMul, out: paceVal }; },
+    _forget: function () { paceLast = null; paceStill = 0; paceVal = 1;
+                           stillMul = 1; backMul = 1; paceAt = 0; },
+    _rates: function () { return { detect: DETECT_MS, scene: SCENE_MS, paint: PAINT_MS }; }
+  };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
