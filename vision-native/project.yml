@@ -8,10 +8,15 @@ targets:
   Vision:
     type: application
     platform: iOS
+    # Listed file by file: XcodeGen treats a *.swiftpm folder as an opaque
+    # bundle and would copy it as a resource instead of compiling it.
     sources:
-      - path: Vision.swiftpm
-        excludes:
-          - Package.swift
+      - Vision.swiftpm/VisionApp.swift
+      - Vision.swiftpm/Spatial.swift
+      - Vision.swiftpm/SpatialWindow.swift
+      - Vision.swiftpm/HandTracker.swift
+      - Vision.swiftpm/Apps.swift
+      - Vision.swiftpm/Assets.xcassets
     info:
       path: build/Info.plist
       properties:
