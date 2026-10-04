@@ -6,7 +6,7 @@ import RealityKit
 
 @main
 struct VisionApp: App {
-    var body: some Scene {
+    var body: some SwiftUI.Scene {
         WindowGroup {
             ContentView()
                 .preferredColorScheme(.dark)

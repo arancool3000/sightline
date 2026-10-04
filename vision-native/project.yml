@@ -36,6 +36,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.arankeyhan.vision
+        # A module named "Vision" would shadow Apple's Vision framework.
+        PRODUCT_MODULE_NAME: SpatialVision
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
