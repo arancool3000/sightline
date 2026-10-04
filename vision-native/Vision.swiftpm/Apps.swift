@@ -1293,8 +1293,10 @@ final class TipsApp: SpatialApp {
     func nodes() -> [UINode] {
         var list: [UINode] = [
             Look.label("title", "What you can do without touching", CGRect(x: 32, y: 22, width: 700, height: 40), size: 26, weight: .bold),
-            Look.label("hands", "Hands: point at a button and pinch, or touch it in the air. Pinch the bar under a window to move it. For the Crown and Control Center, hold your finger over them on screen and pinch. Pinch and drag the Crown up or down for immersion.",
-                       CGRect(x: 32, y: 66, width: 760, height: 60), size: 15, color: .white.opacity(0.75)),
+            Look.label("hands", "Hands: point at a button and pinch, or touch it in the air. Pinch the bar under a window to move it.",
+                       CGRect(x: 32, y: 66, width: 760, height: 24), size: 15, color: .white.opacity(0.75)),
+            Look.label("button", "Camera Control is the Crown: click for Home, hold to recenter. Volume Down opens Control Center. In Ultra Wide, light-press and slide for immersion.",
+                       CGRect(x: 32, y: 94, width: 760, height: 40), size: 15, color: .white.opacity(0.75)),
         ]
         for (c, column) in columns.enumerated() {
             let x = 32 + CGFloat(c) * 390

@@ -20,6 +20,12 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
     private(set) var videoAspect: Float = 16.0 / 9.0
     /// Called on the capture queue for every frame while hands are enabled.
     var onFrame: ((CVPixelBuffer, TimeInterval) -> Void)?
+    /// Camera Control (light press, then slide): immersion 0...1 and the
+    /// environment index (0 = your room). Called on the main queue.
+    var onImmersion: ((Float) -> Void)?
+    var onEnvironment: ((Int) -> Void)?
+    var environmentTitles: [String] = ["Your Room"] + EnvironmentKind.allCases.map(\.title)
+    private var immersionSlider: AnyObject?
 
     private let output = AVCaptureVideoDataOutput()
     private let queue = DispatchQueue(label: "vision.ultrawide", qos: .userInteractive)
@@ -77,12 +83,37 @@ final class UltraWideCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDeleg
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: queue)
         if session.canAddOutput(output) { session.addOutput(output) }
+        if #available(iOS 18.0, *) { addCameraControls() }
         session.commitConfiguration()
 
         horizontalFOV = device.activeFormat.videoFieldOfView
         let dims = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
         if dims.height > 0 { videoAspect = Float(dims.width) / Float(dims.height) }
         configured = true
+    }
+
+    // MARK: Camera Control
+
+    /// On iPhones with Camera Control, a light press shows these; slide to adjust.
+    @available(iOS 18.0, *)
+    private func addCameraControls() {
+        guard session.supportsControls else { return }
+        session.setControlsDelegate(self, queue: queue)
+        let slider = AVCaptureSlider("Immersion", symbolName: "mountain.2.fill", in: 0...100, step: 5)
+        slider.setActionQueue(.main) { [weak self] value in self?.onImmersion?(value / 100) }
+        if session.canAddControl(slider) {
+            session.addControl(slider)
+            immersionSlider = slider
+        }
+        let picker = AVCaptureIndexPicker("Environment", symbolName: "globe.americas.fill", localizedIndexTitles: environmentTitles)
+        picker.setActionQueue(.main) { [weak self] index in self?.onEnvironment?(index) }
+        if !environmentTitles.isEmpty, session.canAddControl(picker) { session.addControl(picker) }
+    }
+
+    /// Keep the Camera Control dial in step when immersion changes elsewhere.
+    func showImmersion(_ value: Float) {
+        guard #available(iOS 18.0, *), let slider = immersionSlider as? AVCaptureSlider else { return }
+        slider.value = max(0, min(100, (value * 100 / 5).rounded() * 5))
     }
 
     // MARK: Orientation
@@ -160,4 +191,12 @@ final class CameraPreviewView: UIView {
             c.videoRotationAngle = angle
         }
     }
+}
+
+@available(iOS 18.0, *)
+extension UltraWideCamera: AVCaptureSessionControlsDelegate {
+    func sessionControlsDidBecomeActive(_ session: AVCaptureSession) {}
+    func sessionControlsWillEnterFullscreenAppearance(_ session: AVCaptureSession) {}
+    func sessionControlsWillExitFullscreenAppearance(_ session: AVCaptureSession) {}
+    func sessionControlsDidBecomeInactive(_ session: AVCaptureSession) {}
 }

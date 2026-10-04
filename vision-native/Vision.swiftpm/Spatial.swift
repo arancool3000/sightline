@@ -4,6 +4,7 @@ import ARKit
 import Combine
 import simd
 import QuartzCore
+import AVKit
 
 enum AppKind: CaseIterable {
     case safari, photos, files, notes, weather, clock, calculator, tips
@@ -90,6 +91,8 @@ final class Spatial: NSObject, ObservableObject {
     /// The window voice commands like "next" or "scroll down" go to.
     private weak var focused: SpatialWindow?
     private static let voiceKey = "vision.voiceOff"
+    private var buttonToken: UUID?
+    private var buttonHeld = false
 
     let arView: ARView
     let ultra = UltraWideCamera()
@@ -224,6 +227,7 @@ final class Spatial: NSObject, ObservableObject {
         }
 
         voice.onCommand = { [weak self] text in self?.handleVoice(text) }
+        installCameraButton()
         voiceOn = !UserDefaults.standard.bool(forKey: Self.voiceKey)
 
         // Show the Home View once tracking has had a moment to start, then
@@ -721,6 +725,7 @@ final class Spatial: NSObject, ObservableObject {
         if v > 0, environment == nil { applyEnvironment(lastEnvironment) }
         immersion = v
         refreshEnvironment()
+        ultra.showImmersion(v)
     }
 
     private func applyEnvironment(_ kind: EnvironmentKind) {
@@ -804,6 +809,51 @@ final class Spatial: NSObject, ObservableObject {
             arView.environment.sceneUnderstanding.options.remove(.occlusion)
         } else {
             arView.environment.sceneUnderstanding.options.insert(.occlusion)
+        }
+    }
+
+    // MARK: - Camera Control as the Digital Crown
+
+    /// Camera Control (and Volume Up, which iOS treats the same): click for
+    /// Home, hold to recenter. Volume Down: Control Center. In Ultra Wide,
+    /// light-press Camera Control and slide for immersion or environment.
+    private func installCameraButton() {
+        ultra.onImmersion = { [weak self] value in self?.setImmersion(value) }
+        ultra.onEnvironment = { [weak self] index in
+            let kinds = EnvironmentKind.allCases
+            self?.setEnvironment(index > 0 && index <= kinds.count ? kinds[index - 1] : nil)
+        }
+        guard #available(iOS 17.2, *) else { return }
+        let interaction = AVCaptureEventInteraction(primary: { [weak self] event in
+            self?.hardwareButton(event.phase, primary: true)
+        }, secondary: { [weak self] event in
+            self?.hardwareButton(event.phase, primary: false)
+        })
+        arView.addInteraction(interaction)
+    }
+
+    @available(iOS 17.2, *)
+    private func hardwareButton(_ phase: AVCaptureEvent.Phase, primary: Bool) {
+        switch phase {
+        case .began:
+            buttonHeld = false
+            guard primary else { return }
+            let token = UUID()
+            buttonToken = token
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard self.buttonToken == token else { return }
+                self.buttonHeld = true
+                self.recenter()
+            }
+        case .ended:
+            buttonToken = nil
+            guard !buttonHeld else { return }
+            if primary { crownPressed() } else { controlCenterShown.toggle() }
+        case .cancelled:
+            buttonToken = nil
+        @unknown default:
+            break
         }
     }
 
