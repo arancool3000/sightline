@@ -18,6 +18,10 @@ targets:
       - Vision.swiftpm/Apps.swift
       - Vision.swiftpm/Environments.swift
       - Vision.swiftpm/UltraWideCamera.swift
+      - Vision.swiftpm/Voice.swift
+      - Vision.swiftpm/Media.swift
+      - Vision.swiftpm/Browser.swift
+      - Vision.swiftpm/Notes.swift
       - Vision.swiftpm/Assets.xcassets
     info:
       path: build/Info.plist
@@ -36,6 +40,8 @@ targets:
         NSLocationWhenInUseUsageDescription: Weather uses your location for the local forecast.
         NSPhotoLibraryUsageDescription: Photos shows your whole library floating in your room, and lets you stand inside your panoramas.
         # Vision's own folder shows up in the Files app (On My iPhone ▸ Vision).
+        NSMicrophoneUsageDescription: Vision listens for voice commands and dictation, so you never need to touch the screen.
+        NSSpeechRecognitionUsageDescription: Your voice commands and dictation are turned into text, on this iPhone when possible.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
     settings:

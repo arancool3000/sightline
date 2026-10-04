@@ -5,8 +5,50 @@ import Combine
 import simd
 import QuartzCore
 
-enum AppKind {
-    case clock, calculator, notes, photos, weather, safari, files
+enum AppKind: CaseIterable {
+    case safari, photos, files, notes, weather, clock, calculator, tips
+
+    /// What you can call it out loud.
+    var spokenNames: [String] {
+        switch self {
+        case .safari: return ["safari", "browser", "the browser", "web", "the web", "internet", "the internet"]
+        case .photos: return ["photos", "photo", "pictures", "my photos", "gallery"]
+        case .files: return ["files", "my files", "documents", "file"]
+        case .notes: return ["notes", "note", "my notes"]
+        case .weather: return ["weather", "the weather"]
+        case .clock: return ["clock", "the clock", "time"]
+        case .calculator: return ["calculator", "the calculator", "calc"]
+        case .tips: return ["tips", "help", "commands", "voice commands"]
+        }
+    }
+
+    static func named(_ words: String) -> AppKind? {
+        allCases.first { $0.spokenNames.contains(words) }
+    }
+}
+
+/// A head-locked control on the screen (Crown, Control Center) that your hand
+/// can pinch: hold your fingertip over it as you see it on screen.
+struct HandTarget: Equatable {
+    let frame: CGRect
+    let action: () -> Void
+    static func == (a: HandTarget, b: HandTarget) -> Bool { a.frame == b.frame }
+}
+
+/// Written by SwiftUI as the layout changes, read by the hand tracker.
+final class HandTargetStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var targets: [String: HandTarget] = [:]
+    func set(_ t: [String: HandTarget]) {
+        lock.lock()
+        targets = t
+        lock.unlock()
+    }
+    func all() -> [String: HandTarget] {
+        lock.lock()
+        defer { lock.unlock() }
+        return targets
+    }
 }
 
 enum CameraMode: String {
@@ -37,6 +79,17 @@ final class Spatial: NSObject, ObservableObject {
     @Published private(set) var environment: EnvironmentKind?
     @Published private(set) var immersion: Float = 0
     @Published private(set) var panoramaShown = false
+    @Published var controlCenterShown = false
+    /// The on-screen control your hand is over, and where your fingertip is.
+    @Published private(set) var handHover: String?
+    @Published private(set) var handPoint: CGPoint?
+    @Published private(set) var voiceOn = true
+
+    let voice = VoiceControl()
+    let handTargets = HandTargetStore()
+    /// The window voice commands like "next" or "scroll down" go to.
+    private weak var focused: SpatialWindow?
+    private static let voiceKey = "vision.voiceOff"
 
     let arView: ARView
     let ultra = UltraWideCamera()
@@ -76,7 +129,8 @@ final class Spatial: NSObject, ObservableObject {
     private lazy var notesApp = NotesApp(spatial: self)
     private lazy var photosApp = PhotosApp(spatial: self)
     private lazy var weatherApp = WeatherApp()
-    private lazy var safariApp = SafariApp(spatial: self)
+    private(set) lazy var browserApp = BrowserApp(spatial: self)
+    private lazy var tipsApp = TipsApp()
     private lazy var homeApp = HomeApp(spatial: self)
     private lazy var filesApp = FilesApp(spatial: self)
 
@@ -91,10 +145,12 @@ final class Spatial: NSObject, ObservableObject {
 
     enum Interaction {
         case none
-        case pressing(SpatialWindow, String?)
-        case poking(SpatialWindow, String?)
+        case pressing(SpatialWindow, String?, CGPoint)
+        case poking(SpatialWindow, String?, CGPoint)
         case grabbing(SpatialWindow, start: SIMD3<Float>, from: SIMD3<Float>, gain: Float)
         case touchDragging(SpatialWindow, distance: Float, offset: SIMD3<Float>)
+        /// Pinching an on-screen control; for the Crown, dragging turns it.
+        case overlay(String, start: TimeInterval, y: CGFloat, immersion: Float, turning: Bool)
     }
 
     override init() {
@@ -167,10 +223,16 @@ final class Spatial: NSObject, ObservableObject {
             }
         }
 
-        // Show the Home View once tracking has had a moment to start.
+        voice.onCommand = { [weak self] text in self?.handleVoice(text) }
+        voiceOn = !UserDefaults.standard.bool(forKey: Self.voiceKey)
+
+        // Show the Home View once tracking has had a moment to start, then
+        // start listening (after the camera permission prompt, if any).
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             if !homeShown { toggleHome() }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            if voiceOn { voice.start() }
         }
     }
 
@@ -289,6 +351,44 @@ final class Spatial: NSObject, ObservableObject {
             pinching = false
         }
 
+        // 1b) Head-locked controls (Crown, Control Center): where your
+        //     fingertip appears on screen, pinch to press.
+        let screen = screenPoint(of: tip)
+        if case .overlay(let id, let start, let y0, let immersion0, var turning) = interaction {
+            if isPinch {
+                if id == "crown", let screen {
+                    if abs(screen.y - y0) > 14 { turning = true }
+                    if turning { setImmersion(immersion0 - Float(screen.y - y0) / 160) }
+                    interaction = .overlay(id, start: start, y: y0, immersion: immersion0, turning: turning)
+                }
+                setHandPoint(screen, hover: id)
+                return
+            }
+            interaction = .none
+            pinching = false
+            if id == "crown" {
+                if !turning {
+                    if now - start > 0.6 { recenter() } else { crownPressed() }
+                }
+            } else if let screen, overlayTarget(at: screen)?.id == id {
+                overlayTarget(at: screen)?.target.action()
+            }
+            return
+        }
+        if let screen, let over = overlayTarget(at: screen) {
+            cursor.isEnabled = false
+            clearHover(except: nil)
+            setHandPoint(screen, hover: over.id)
+            if isPinch && !pinching {
+                pinching = true
+                interaction = .overlay(over.id, start: now, y: screen.y, immersion: immersion, turning: false)
+            } else if !isPinch {
+                pinching = false
+            }
+            return
+        }
+        setHandPoint(nil, hover: nil)
+
         // 2) Direct touch: your fingertip at a window's glass.
         if let near = nearestWindow(to: tip) {
             let (w, l) = near
@@ -300,9 +400,12 @@ final class Spatial: NSObject, ObservableObject {
             w.barHighlighted = region == .bar
             showCursor(at: w.world(x: l.x, y: l.y, z: 0.002), pressed: l.z < 0.012)
             switch interaction {
-            case .poking(let pw, let pid):
+            case .poking(let pw, let pid, let point):
                 if l.z > 0.025 {
-                    if pw === w, pid == id { pw.activate(pid) }
+                    if pw === w, pid == id {
+                        focused = pw
+                        pw.activate(pid, at: point)
+                    }
                     pw.pressed = nil
                     interaction = .none
                 }
@@ -315,15 +418,16 @@ final class Spatial: NSObject, ObservableObject {
                     if region == .bar {
                         interaction = .grabbing(w, start: tip, from: w.targetPosition, gain: 1)
                         w.onWall = false
+                        focused = w
                         return
                     }
                     w.pressed = id
-                    interaction = .poking(w, id)
+                    interaction = .poking(w, id, CGPoint(x: l.x, y: l.y))
                 }
             }
             pinching = isPinch
             return
-        } else if case .poking(let pw, _) = interaction {
+        } else if case .poking(let pw, _, _) = interaction {
             pw.pressed = nil
             interaction = .none
         }
@@ -347,17 +451,20 @@ final class Spatial: NSObject, ObservableObject {
                 let gain = max(1, simd_distance(cam, hit.window.position) / max(0.15, simd_distance(cam, pinchPoint)))
                 interaction = .grabbing(hit.window, start: pinchPoint, from: hit.window.targetPosition, gain: gain)
                 hit.window.onWall = false
+                focused = hit.window
             case .close:
                 close(hit.window)
             case .content(let id):
                 hit.window.pressed = id
-                interaction = .pressing(hit.window, id)
+                let l = hit.window.local(hit.point)
+                interaction = .pressing(hit.window, id, CGPoint(x: l.x, y: l.y))
             }
         } else if !isPinch && pinching {
             pinching = false
-            if case .pressing(let w, let id) = interaction {
+            if case .pressing(let w, let id, let point) = interaction {
                 if let hit, hit.window === w, case .content(let hitID) = hit.region, hitID == id {
-                    w.activate(id)
+                    focused = w
+                    w.activate(id, at: point)
                 }
                 w.pressed = nil
             }
@@ -367,11 +474,12 @@ final class Spatial: NSObject, ObservableObject {
 
     private func handGone() {
         cursor.isEnabled = false
+        setHandPoint(nil, hover: nil)
         switch interaction {
         case .grabbing(let w, _, _, _):
             w.barHighlighted = false
             snapToSurface(w)
-        case .pressing(let w, _), .poking(let w, _):
+        case .pressing(let w, _, _), .poking(let w, _, _):
             w.pressed = nil
         default:
             break
@@ -381,6 +489,43 @@ final class Spatial: NSObject, ObservableObject {
         tipFilter.reset()
         thumbFilter.reset()
         clearHover(except: nil)
+    }
+
+    private func setHandPoint(_ p: CGPoint?, hover: String?) {
+        if hover != handHover { handHover = hover }
+        guard hover != nil, let p else {
+            if handPoint != nil { handPoint = nil }
+            return
+        }
+        if let old = handPoint, abs(old.x - p.x) < 1.5, abs(old.y - p.y) < 1.5 { return }
+        handPoint = p
+    }
+
+    /// The smallest on-screen control under a point (with a little slack).
+    private func overlayTarget(at p: CGPoint) -> (id: String, target: HandTarget)? {
+        var best: (id: String, target: HandTarget)?
+        for (id, t) in handTargets.all() where t.frame.insetBy(dx: -10, dy: -10).contains(p) {
+            if best == nil || t.frame.width * t.frame.height < best!.target.frame.width * best!.target.frame.height {
+                best = (id, t)
+            }
+        }
+        return best
+    }
+
+    /// Where a point in the room appears on the screen.
+    private func screenPoint(of p: SIMD3<Float>) -> CGPoint? {
+        switch cameraMode {
+        case .ar:
+            return arView.project(p)
+        case .ultraWide:
+            let v = headCamera.orientation.inverse.act(p - headCamera.position)
+            let size = arView.bounds.size
+            guard v.z < -0.01, size.width > 0, size.height > 0 else { return nil }
+            let tanV = tan(verticalFOV / 2)
+            let x = (v.x / -v.z) / (tanV * Float(size.width / size.height))
+            let y = (v.y / -v.z) / tanV
+            return CGPoint(x: CGFloat((x + 1) / 2) * size.width, y: CGFloat((1 - y) / 2) * size.height)
+        }
     }
 
     private func showCursor(at p: SIMD3<Float>, pressed: Bool) {
@@ -437,7 +582,10 @@ final class Spatial: NSObject, ObservableObject {
         guard let ray = screenRay(p), let hit = hitWindows(origin: ray.origin, direction: ray.direction) else { return }
         switch hit.region {
         case .close: close(hit.window)
-        case .content(let id): hit.window.activate(id)
+        case .content(let id):
+            let l = hit.window.local(hit.point)
+            focused = hit.window
+            hit.window.activate(id, at: CGPoint(x: l.x, y: l.y))
         case .bar: break
         }
     }
@@ -714,13 +862,15 @@ final class Spatial: NSObject, ObservableObject {
         case .notes: app = notesApp
         case .photos: app = photosApp
         case .weather: app = weatherApp
-        case .safari: app = safariApp
+        case .safari: app = browserApp
+        case .tips: app = tipsApp
         case .files:
             filesApp.refresh()
             app = filesApp
         }
         if let existing = windows.first(where: { $0.app === app }) {
             place(existing, yawOffset: 0)
+            focused = existing
             return
         }
         let w = SpatialWindow(app: app)
@@ -728,6 +878,7 @@ final class Spatial: NSObject, ObservableObject {
         w.snapToTarget()
         anchor.addChild(w.root)
         windows.append(w)
+        focused = w
         w.redraw()
         if homeShown { hideHome() }
     }
@@ -737,10 +888,12 @@ final class Spatial: NSObject, ObservableObject {
             hideHome()
             return
         }
+        w.app.didClose()
         w.root.removeFromParent()
         windows.removeAll { $0 === w }
-        if case .pressing(let iw, _) = interaction, iw === w { interaction = .none }
-        if case .poking(let iw, _) = interaction, iw === w { interaction = .none }
+        if focused === w { focused = windows.last }
+        if case .pressing(let iw, _, _) = interaction, iw === w { interaction = .none }
+        if case .poking(let iw, _, _) = interaction, iw === w { interaction = .none }
         if case .grabbing(let iw, _, _, _) = interaction, iw === w { interaction = .none }
     }
 
@@ -748,7 +901,7 @@ final class Spatial: NSObject, ObservableObject {
         homeShown ? hideHome() : showHome()
     }
 
-    private func showHome() {
+    func showHome() {
         let w = home ?? SpatialWindow(app: homeApp)
         home = w
         place(w, yawOffset: 0, distance: 0.6)
@@ -758,7 +911,7 @@ final class Spatial: NSObject, ObservableObject {
         homeShown = true
     }
 
-    private func hideHome() {
+    func hideHome() {
         home?.root.removeFromParent()
         homeShown = false
     }
@@ -827,7 +980,158 @@ final class Spatial: NSObject, ObservableObject {
         open(.files)
     }
 
-    func noteText(_ id: UUID) -> String { notesApp.text(id) }
 
-    func saveNote(_ id: UUID, text: String) { notesApp.save(id, text: text) }
+    // MARK: - Voice
+
+    func setVoice(_ on: Bool) {
+        voiceOn = on
+        UserDefaults.standard.set(!on, forKey: Self.voiceKey)
+        if on {
+            voice.start()
+            toast("Listening. Say “what can I say” for ideas.")
+        } else {
+            voice.stop()
+            toast("Voice is off. Turn it on in Control Center.")
+        }
+    }
+
+    func browse(_ query: String) {
+        open(.safari)
+        browserApp.go(query)
+    }
+
+    private func app(for kind: AppKind) -> SpatialApp {
+        switch kind {
+        case .clock: return clockApp
+        case .calculator: return calculatorApp
+        case .notes: return notesApp
+        case .photos: return photosApp
+        case .weather: return weatherApp
+        case .safari: return browserApp
+        case .files: return filesApp
+        case .tips: return tipsApp
+        }
+    }
+
+    /// The words after the first `count` words of what was said, keeping
+    /// dots and capitals ("go to BBC.co.uk" -> "BBC.co.uk").
+    private static func tail(_ raw: String, dropping count: Int) -> String {
+        raw.split(separator: " ").dropFirst(count).joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: " .?!,"))
+    }
+
+    private func handleVoice(_ raw: String) {
+        var t = VoiceControl.normalize(raw)
+        var dropped = 0
+        for prefix in ["hey vision ", "ok vision ", "okay vision ", "vision "] where t.hasPrefix(prefix) {
+            t = String(t.dropFirst(prefix.count))
+            dropped = prefix.split(separator: " ").count
+        }
+        guard !t.isEmpty, t.split(separator: " ").count <= 10 else { return }
+        let rawTail = Self.tail(raw, dropping: dropped)
+        if systemCommand(t, raw: rawTail) {
+            toast("“\(rawTail)”")
+            return
+        }
+        // Then the window you last used, then any other open window.
+        var order: [SpatialWindow] = []
+        if let focused, windows.contains(where: { $0 === focused }) { order.append(focused) }
+        order += windows.reversed().filter { $0 !== focused }
+        for w in order where w.app.handleVoice(t) {
+            focused = w
+            w.app.dirty = true
+            toast("“\(rawTail)”")
+            return
+        }
+    }
+
+    private func systemCommand(_ t: String, raw: String) -> Bool {
+        switch t {
+        case "home", "go home", "show home", "home view", "open home", "home screen":
+            if !homeShown { showHome() }
+        case "hide home", "close home":
+            hideHome()
+        case "recenter", "re center", "recentre", "re centre", "center", "centre", "bring windows here", "come here", "bring it here", "bring them here":
+            recenter(quiet: true)
+        case "control center", "control centre", "open control center", "open control centre", "show control center", "show control centre":
+            controlCenterShown = true
+        case "close control center", "close control centre", "hide control center", "hide control centre":
+            controlCenterShown = false
+        case "ultra wide", "ultrawide", "ultra wide on", "ultra wide mode", "wide mode", "zoom out", "point five":
+            setCameraMode(.ultraWide)
+        case "ar mode", "ar", "normal camera", "main camera", "ultra wide off", "zoom in", "augmented reality":
+            setCameraMode(.ar)
+        case "hands on", "hand tracking on", "track my hands", "turn on hands":
+            handsOn = true
+        case "hands off", "hand tracking off", "stop tracking my hands", "turn off hands":
+            handsOn = false
+        case "show mesh", "mesh on", "lidar mesh", "show lidar", "show the mesh":
+            if !meshVisible { toggleMesh() }
+        case "hide mesh", "mesh off", "hide the mesh":
+            if meshVisible { toggleMesh() }
+        case "stop listening", "voice off", "turn off voice", "stop voice control":
+            setVoice(false)
+        case "environments", "show environments", "open environments":
+            showEnvironments()
+        case "my room", "exit environment", "leave environment", "environment off", "no environment", "back to my room", "close environment", "show my room":
+            setEnvironment(nil)
+        case "more immersion", "immerse more", "more immersive", "turn it up", "more", "crown up":
+            setImmersion(immersion + 0.25)
+        case "less immersion", "immerse less", "less immersive", "turn it down", "less", "crown down":
+            setImmersion(immersion - 0.25)
+        case "full immersion", "fully immersed", "all the way":
+            setImmersion(1)
+        case "close", "close window", "close this", "close it", "close this window":
+            if let w = focused ?? windows.last { close(w) } else if homeShown { hideHome() }
+        case "close all", "close everything", "close all windows":
+            for w in windows { close(w) }
+        case "exit panorama", "leave panorama", "close panorama":
+            hidePanorama()
+        case "what can i say", "help", "show commands", "voice commands", "what can you do":
+            open(.tips)
+        case "new note", "take a note", "make a note", "write a note":
+            open(.notes)
+            notesApp.newNote()
+        default:
+            return otherCommand(t, raw: raw)
+        }
+        return true
+    }
+
+    private func otherCommand(_ t: String, raw: String) -> Bool {
+        let words = t.split(separator: " ").map(String.init)
+        // Environments by name: "night sky", "go to the moon".
+        for kind in EnvironmentKind.allCases {
+            for name in kind.spokenNames where [name, "go to " + name, "open " + name, "show " + name, name + " environment", "take me to " + name].contains(t) {
+                setEnvironment(kind)
+                return true
+            }
+        }
+        // Apps: "photos", "open photos", "close photos".
+        if let kind = AppKind.named(t) {
+            open(kind)
+            return true
+        }
+        for verb in ["open ", "launch ", "show ", "start ", "go to ", "show me "] where t.hasPrefix(verb) {
+            if let kind = AppKind.named(String(t.dropFirst(verb.count))) {
+                open(kind)
+                return true
+            }
+        }
+        if t.hasPrefix("close "), let kind = AppKind.named(String(t.dropFirst(6))) {
+            let target = app(for: kind)
+            if let w = windows.first(where: { $0.app === target }) { close(w) }
+            return true
+        }
+        // The web: "search for …", "google …", "go to apple.com".
+        for prefix in ["search the web for ", "search for ", "look up ", "google ", "search ", "find "] where t.hasPrefix(prefix) {
+            browse(Self.tail(raw, dropping: prefix.split(separator: " ").count))
+            return true
+        }
+        if t.hasPrefix("go to "), raw.contains(".") || words.contains("dot") {
+            browse(Self.tail(raw, dropping: 2))
+            return true
+        }
+        return false
+    }
 }

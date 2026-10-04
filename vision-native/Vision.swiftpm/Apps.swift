@@ -5,6 +5,9 @@ import Photos
 import QuickLookThumbnailing
 import UniformTypeIdentifiers
 import ImageIO
+import RealityKit
+import PDFKit
+import AVFoundation
 
 extension SpatialApp {
     func tick(_ now: Date) {}
@@ -52,6 +55,7 @@ final class HomeApp: SpatialApp {
                 Item(id: "weather", symbol: "cloud.sun.fill", colors: [Color.cyan, Color.blue], title: "Weather") { s?.open(.weather) },
                 Item(id: "clock", symbol: "clock.fill", colors: [Color(white: 0.3), Color(white: 0.1)], title: "Clock") { s?.open(.clock) },
                 Item(id: "calc", symbol: "plus.forwardslash.minus", colors: [Color.orange, Color(red: 0.8, green: 0.35, blue: 0)], title: "Calculator") { s?.open(.calculator) },
+                Item(id: "tips", symbol: "lightbulb.fill", colors: [Color.yellow, Color(red: 0.9, green: 0.6, blue: 0)], title: "Tips") { s?.open(.tips) },
             ]
         case .environments:
             items = [Item(id: "env-room", symbol: "house.fill", colors: [Color(white: 0.5), Color(white: 0.2)], title: "Your Room") { s?.setEnvironment(nil) }]
@@ -251,102 +255,6 @@ final class CalculatorApp: SpatialApp {
     }
 }
 
-// MARK: - Notes
-
-struct Note: Codable, Identifiable {
-    var id: UUID
-    var text: String
-    var date: Date
-}
-
-@MainActor
-final class NotesApp: SpatialApp {
-    let title = "Notes"
-    let size = CGSize(width: 620, height: 380)
-    var dirty = true
-    weak var spatial: Spatial?
-    private var notes: [Note] = []
-    private var selected: UUID?
-    private let key = "vision.notes"
-
-    init(spatial: Spatial) {
-        self.spatial = spatial
-        if let data = UserDefaults.standard.data(forKey: key), let saved = try? JSONDecoder().decode([Note].self, from: data) {
-            notes = saved
-        }
-        if notes.isEmpty {
-            notes = [Note(id: UUID(), text: "Welcome to Notes\nTap Edit to type with the keyboard. Notes stay on this iPhone.", date: Date())]
-        }
-        selected = notes.first?.id
-    }
-
-    private func persist() {
-        if let data = try? JSONEncoder().encode(notes) { UserDefaults.standard.set(data, forKey: key) }
-    }
-
-    func text(_ id: UUID) -> String { notes.first { $0.id == id }?.text ?? "" }
-
-    func save(_ id: UUID, text: String) {
-        guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
-        notes[i].text = text
-        notes[i].date = Date()
-        notes.sort { $0.date > $1.date }
-        persist()
-        dirty = true
-    }
-
-    func nodes() -> [UINode] {
-        var list: [UINode] = [
-            Look.label("title", "Notes", CGRect(x: 26, y: 20, width: 140, height: 40), size: 28, weight: .bold),
-            Look.symbolButton("new", "square.and.pencil", CGRect(x: 170, y: 20, width: 40, height: 40)) { [weak self] in
-                guard let self else { return }
-                let note = Note(id: UUID(), text: "", date: Date())
-                self.notes.insert(note, at: 0)
-                self.selected = note.id
-                self.persist()
-                self.spatial?.sheet = .note(note.id)
-            },
-        ]
-        for (i, note) in notes.prefix(5).enumerated() {
-            let lines = note.text.split(separator: "\n", omittingEmptySubsequences: false)
-            let title = lines.first.map(String.init) ?? ""
-            let id = note.id
-            let on = id == selected
-            list.append(UINode("note\(i)", CGRect(x: 16, y: 72 + CGFloat(i) * 58, width: 210, height: 52), radius: 14, action: { [weak self] in
-                self?.selected = id
-            }) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title.isEmpty ? "New Note" : title).font(.system(size: 16, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                    Text(note.date, style: .date).font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
-                }
-                .padding(.horizontal, 12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(on ? 0.16 : 0)))
-            })
-        }
-        if let note = notes.first(where: { $0.id == selected }) {
-            list.append(UINode("body", CGRect(x: 250, y: 24, width: 350, height: 270)) {
-                Text(note.text.isEmpty ? "Empty note" : note.text)
-                    .font(.system(size: 17))
-                    .foregroundStyle(.white.opacity(note.text.isEmpty ? 0.4 : 1))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            })
-            let id = note.id
-            list.append(Look.pill("edit", "Edit", CGRect(x: 250, y: 312, width: 160, height: 46), fill: .white, textColor: .black) { [weak self] in
-                self?.spatial?.sheet = .note(id)
-            })
-            list.append(Look.pill("delete", "Delete", CGRect(x: 424, y: 312, width: 120, height: 46)) { [weak self] in
-                guard let self else { return }
-                self.notes.removeAll { $0.id == id }
-                if self.notes.isEmpty { self.notes = [Note(id: UUID(), text: "", date: Date())] }
-                self.selected = self.notes.first?.id
-                self.persist()
-            })
-        }
-        return list
-    }
-}
-
 // MARK: - Photos (your whole library)
 
 @MainActor
@@ -389,9 +297,95 @@ final class PhotosApp: SpatialApp {
     private var started = false
     private let manager = PHCachingImageManager()
     private let perPage = 15
+    private let video = VideoSurface()
+    private var videoFor: String?
+
+    var attachment: Entity? { video.entity }
 
     init(spatial: Spatial) {
         self.spatial = spatial
+    }
+
+    func didClose() {
+        stopVideo()
+    }
+
+    private func stopVideo() {
+        video.stop()
+        videoFor = nil
+    }
+
+    /// The part of the viewer a video plays in (controls sit below it).
+    private var videoRect: CGRect {
+        let g = glassRect
+        return CGRect(x: g.minX + 20, y: 80, width: g.width - 40, height: g.height - 80 - 80)
+    }
+
+    private func playVideo(_ asset: PHAsset) {
+        let id = asset.localIdentifier
+        guard videoFor != id else { return }
+        stopVideo()
+        videoFor = id
+        let options = PHVideoRequestOptions()
+        options.isNetworkAccessAllowed = true
+        options.deliveryMode = .automatic
+        let size = CGSize(width: asset.pixelWidth, height: asset.pixelHeight)
+        PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { [weak self] item, _ in
+            guard let item else { return }
+            Task { @MainActor in
+                guard let self, self.videoFor == id else { return }
+                self.video.play(item, videoSize: size, in: self.videoRect, windowSize: self.size)
+                self.dirty = true
+            }
+        }
+    }
+
+    func handleVoice(_ t: String) -> Bool {
+        switch t {
+        case "next", "next photo", "next video", "next one": if viewing != nil { step(1) } else { turnPage(1) }
+        case "previous", "previous photo", "previous video", "back one", "last one": if viewing != nil { step(-1) } else { turnPage(-1) }
+        case "page down", "scroll down", "more", "down": turnPage(1)
+        case "page up", "scroll up", "up": turnPage(-1)
+        case "back", "go back", "close photo", "all photos":
+            stopVideo()
+            viewing = nil
+            full = nil
+            fullID = nil
+        case "first", "open first", "first photo", "show first", "open it", "open":
+            if assets?.count ?? 0 > 0 { viewing = page * perPage }
+        case "library", "all", "show library": select(.library)
+        case "favorites", "favourites", "show favorites", "show favourites": select(.favorites)
+        case "panoramas", "panorama", "show panoramas": select(.panoramas)
+        case "videos", "show videos": select(.videos)
+        case "play", "pause", "stop", "resume", "play video", "pause video": video.toggle()
+        case "skip", "forward", "skip forward": video.skip(15)
+        case "rewind", "skip back": video.skip(-15)
+        case "immerse", "stand inside", "go inside", "enter panorama":
+            if let i = viewing, let assets, i < assets.count, assets.object(at: i).mediaSubtypes.contains(.photoPanorama) { immerse(assets.object(at: i)) } else { return false }
+        default:
+            // "open 3" / "photo 3": the number on the current page.
+            let parts = t.split(separator: " ")
+            if parts.count == 2, ["open", "photo", "video", "show", "number"].contains(String(parts[0])),
+               let n = Self.number(String(parts[1])), n >= 1, n <= perPage, let assets, page * perPage + n - 1 < assets.count {
+                viewing = page * perPage + n - 1
+                return true
+            }
+            return false
+        }
+        dirty = true
+        return true
+    }
+
+    static func number(_ word: String) -> Int? {
+        if let n = Int(word) { return n }
+        let words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen"]
+        return words.firstIndex(of: word).map { $0 + 1 }
+    }
+
+    private func turnPage(_ d: Int) {
+        guard let assets else { return }
+        let pages = max(1, (assets.count + perPage - 1) / perPage)
+        page = max(0, min(pages - 1, page + d))
     }
 
     func tick(_ now: Date) {
@@ -410,6 +404,7 @@ final class PhotosApp: SpatialApp {
     }
 
     private func select(_ t: Tab) {
+        stopVideo()
         tab = t
         reload()
     }
@@ -573,6 +568,11 @@ final class PhotosApp: SpatialApp {
                     } else {
                         Color.white.opacity(0.08)
                     }
+                    Text("\(slot + 1)").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.black.opacity(0.45)))
+                        .padding(5)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     if isVideo {
                         Text(duration).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).shadow(radius: 2).padding(6)
                     } else if isPano {
@@ -588,6 +588,10 @@ final class PhotosApp: SpatialApp {
 
     private func viewer(_ asset: PHAsset) -> [UINode] {
         let g = glassRect
+        if asset.mediaType == .video {
+            return videoViewer(asset)
+        }
+        if video.isActive { stopVideo() }
         loadFull(asset)
         let image = full
         var list: [UINode] = [
@@ -611,11 +615,7 @@ final class PhotosApp: SpatialApp {
             Look.symbolButton("prev", "chevron.left", CGRect(x: g.minX + 20, y: g.midY - 23, width: 46, height: 46)) { [weak self] in self?.step(-1) },
             Look.symbolButton("next", "chevron.right", CGRect(x: g.maxX - 66, y: g.midY - 23, width: 46, height: 46)) { [weak self] in self?.step(1) },
         ]
-        if asset.mediaType == .video {
-            list.append(Look.pill("play", "▶  Play", CGRect(x: g.midX - 80, y: g.maxY - 70, width: 160, height: 46), fill: .white, textColor: .black) { [weak self] in
-                self?.spatial?.sheet = .video(asset)
-            })
-        } else if asset.mediaSubtypes.contains(.photoPanorama) {
+        if asset.mediaSubtypes.contains(.photoPanorama) {
             let inside = spatial?.panoramaShown ?? false
             list.append(Look.pill("immerse", inside ? "Exit Panorama" : "Immerse", CGRect(x: g.midX - 90, y: g.maxY - 70, width: 180, height: 46), fill: .white, textColor: .black) { [weak self] in
                 guard let self else { return }
@@ -623,6 +623,28 @@ final class PhotosApp: SpatialApp {
             })
         }
         return list
+    }
+
+    private func videoViewer(_ asset: PHAsset) -> [UINode] {
+        let g = glassRect
+        playVideo(asset)
+        let playing = video.isPlaying
+        let rect = videoRect
+        return [
+            UINode("screen", rect, radius: 16) {
+                RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.6))
+                    .overlay(Text("Loading video…").font(.system(size: 15)).foregroundStyle(.white.opacity(0.6)))
+            },
+            Look.symbolButton("back", "chevron.backward", CGRect(x: g.minX + 20, y: 20, width: 46, height: 46)) { [weak self] in
+                self?.stopVideo()
+                self?.viewing = nil
+            },
+            Look.symbolButton("prev", "backward.end.fill", CGRect(x: g.midX - 150, y: g.maxY - 66, width: 52, height: 52)) { [weak self] in self?.step(-1) },
+            Look.symbolButton("rew", "gobackward.15", CGRect(x: g.midX - 86, y: g.maxY - 66, width: 52, height: 52)) { [weak self] in self?.video.skip(-15) },
+            Look.symbolButton("play", playing ? "pause.fill" : "play.fill", CGRect(x: g.midX - 26, y: g.maxY - 70, width: 60, height: 60)) { [weak self] in self?.video.toggle() },
+            Look.symbolButton("ffw", "goforward.15", CGRect(x: g.midX + 46, y: g.maxY - 66, width: 52, height: 52)) { [weak self] in self?.video.skip(15) },
+            Look.symbolButton("next", "forward.end.fill", CGRect(x: g.midX + 110, y: g.maxY - 66, width: 52, height: 52)) { [weak self] in self?.step(1) },
+        ]
     }
 
     private func step(_ d: Int) {
@@ -648,6 +670,15 @@ final class FilesApp: SpatialApp {
         let bookmark: Data?
     }
 
+    /// What's open in the preview pane. Everything stays in the window.
+    enum Preview {
+        case image(UIImage)
+        case pdf(PDFDocument, page: Int)
+        case text([String], page: Int)
+        case picture(UIImage?)
+        case media(video: Bool)
+    }
+
     private var locations: [Location] = []
     private var selected = 0
     private var path: [URL] = []
@@ -656,10 +687,17 @@ final class FilesApp: SpatialApp {
     private var thumbs: [URL: UIImage] = [:]
     private var requested: Set<URL> = []
     private var page = 0
-    private var preview: (url: URL, image: UIImage)?
+    private var preview: (url: URL, kind: Preview)?
+    private var pdfImage: (key: String, image: UIImage)?
     private var errorText: String?
     private let bookmarksKey = "vision.folders"
     private let perPage = 15
+    private let player = VideoSurface()
+
+    var attachment: Entity? { player.entity }
+
+    private var x0: CGFloat { 244 }
+    private var previewRect: CGRect { CGRect(x: x0, y: 74, width: size.width - x0 - 20, height: size.height - 74 - 76) }
 
     init(spatial: Spatial) {
         self.spatial = spatial
@@ -679,8 +717,8 @@ final class FilesApp: SpatialApp {
         url.path.contains("Mobile Documents") ? "icloud.fill" : "folder.fill"
     }
 
-    /// A folder you picked in the Files sheet. The bookmark keeps access to
-    /// it (and everything inside) across launches.
+    /// A folder you picked during setup. The bookmark keeps access to it
+    /// (and everything inside) across launches.
     func addLocation(_ url: URL) {
         _ = url.startAccessingSecurityScopedResource()
         guard let data = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) else {
@@ -693,7 +731,11 @@ final class FilesApp: SpatialApp {
     }
 
     func refresh() {
-        load()
+        if preview == nil { load() }
+    }
+
+    func didClose() {
+        closePreview()
     }
 
     private func persist() {
@@ -709,6 +751,7 @@ final class FilesApp: SpatialApp {
     }
 
     private func select(_ i: Int) {
+        closePreview()
         selected = i
         path = []
         load()
@@ -718,7 +761,6 @@ final class FilesApp: SpatialApp {
 
     private func load() {
         page = 0
-        preview = nil
         errorText = nil
         let keys: [URLResourceKey] = [.isDirectoryKey, .isPackageKey]
         do {
@@ -742,19 +784,97 @@ final class FilesApp: SpatialApp {
         dirty = true
     }
 
+    private func goUp() {
+        if preview != nil {
+            closePreview()
+        } else if !path.isEmpty {
+            path.removeLast()
+            load()
+        }
+    }
+
+    private func closePreview() {
+        player.stop()
+        preview = nil
+        pdfImage = nil
+        dirty = true
+    }
+
+    // MARK: Opening
+
     private func open(_ url: URL) {
         if isFolder[url] == true {
             path.append(url)
             load()
             return
         }
-        if let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
-           let image = Self.downsample(url, maxPixels: 1800) {
-            preview = (url, image)
-            dirty = true
-            return
+        closePreview()
+        let type = UTType(filenameExtension: url.pathExtension)
+        if let type, type.conforms(to: .image), let image = Self.downsample(url, maxPixels: 1800) {
+            preview = (url, .image(image))
+        } else if let type, type.conforms(to: .pdf), let doc = PDFDocument(url: url), doc.pageCount > 0 {
+            preview = (url, .pdf(doc, page: 0))
+        } else if let type, type.conforms(to: .audiovisualContent) {
+            let isVideo = type.conforms(to: .movie) || type.conforms(to: .video)
+            preview = (url, .media(video: isVideo))
+            let rect = previewRect
+            let windowSize = size
+            Task { @MainActor in
+                let natural = isVideo ? await VideoSurface.naturalSize(of: url) : .zero
+                guard self.preview?.url == url else { return }
+                self.player.play(AVPlayerItem(url: url), videoSize: natural, in: rect, windowSize: windowSize)
+                self.dirty = true
+            }
+        } else if let type, type.conforms(to: .text), let text = Self.readText(url) {
+            preview = (url, .text(Self.paginate(text), page: 0))
+        } else {
+            preview = (url, .picture(nil))
+            let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 560, height: 360), scale: 2, representationTypes: .thumbnail)
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] representation, _ in
+                let image = representation?.uiImage
+                Task { @MainActor in
+                    guard let self, self.preview?.url == url else { return }
+                    self.preview = (url, .picture(image))
+                    if image == nil { self.errorText = "Vision can't show this kind of file" }
+                    self.dirty = true
+                }
+            }
         }
-        spatial?.sheet = .quickLook(url)
+        dirty = true
+    }
+
+    private static func readText(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+        let head = data.prefix(400_000)
+        return String(data: head, encoding: .utf8) ?? String(data: head, encoding: .isoLatin1)
+    }
+
+    /// Pages of about 1,100 characters, broken at line ends where possible.
+    private static func paginate(_ text: String) -> [String] {
+        var pages: [String] = []
+        var current = ""
+        for line in text.components(separatedBy: "\n") {
+            var rest = Substring(line)
+            repeat {
+                let room = 1100 - current.count
+                if rest.count <= room {
+                    current += rest + "\n"
+                    rest = ""
+                } else if room < 120 {
+                    pages.append(current)
+                    current = ""
+                } else {
+                    current += rest.prefix(room) + "\n"
+                    rest = rest.dropFirst(room)
+                }
+                if current.filter({ $0 == "\n" }).count >= 22 {
+                    pages.append(current)
+                    current = ""
+                }
+            } while !rest.isEmpty
+        }
+        if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pages.isEmpty { pages.append(current) }
+        return pages
     }
 
     static func downsample(_ url: URL, maxPixels: CGFloat) -> UIImage? {
@@ -783,6 +903,60 @@ final class FilesApp: SpatialApp {
         return nil
     }
 
+    private func turn(_ d: Int) {
+        guard let preview else {
+            let pages = max(1, (items.count + perPage - 1) / perPage)
+            page = max(0, min(pages - 1, page + d))
+            dirty = true
+            return
+        }
+        switch preview.kind {
+        case .pdf(let doc, let p):
+            self.preview = (preview.url, .pdf(doc, page: max(0, min(doc.pageCount - 1, p + d))))
+        case .text(let pages, let p):
+            self.preview = (preview.url, .text(pages, page: max(0, min(pages.count - 1, p + d))))
+        case .media:
+            player.skip(Double(d) * 15)
+        default:
+            break
+        }
+        dirty = true
+    }
+
+    // MARK: Voice
+
+    func handleVoice(_ t: String) -> Bool {
+        switch t {
+        case "back", "go back", "up", "close file", "close preview": goUp()
+        case "next", "next page", "page down", "scroll down", "down": turn(1)
+        case "previous", "previous page", "page up", "scroll up": turn(-1)
+        case "play", "pause", "stop", "resume": player.toggle()
+        default:
+            for prefix in ["open ", "show ", "go to "] where t.hasPrefix(prefix) {
+                let name = String(t.dropFirst(prefix.count))
+                if let n = PhotosApp.number(name), n >= 1, page * perPage + n - 1 < items.count {
+                    open(items[page * perPage + n - 1])
+                    return true
+                }
+                if let i = locations.firstIndex(where: { VoiceControl.normalize($0.name) == name }) {
+                    select(i)
+                    return true
+                }
+                let match = items.first { VoiceControl.normalize($0.deletingPathExtension().lastPathComponent) == name }
+                    ?? items.first { VoiceControl.normalize($0.lastPathComponent).hasPrefix(name) }
+                    ?? items.first { VoiceControl.normalize($0.lastPathComponent).contains(name) }
+                if let match {
+                    open(match)
+                    return true
+                }
+            }
+            return false
+        }
+        return true
+    }
+
+    // MARK: Drawing
+
     func nodes() -> [UINode] {
         var list: [UINode] = [
             UINode("sidebar", CGRect(x: 10, y: 10, width: 214, height: size.height - 20), radius: 30) {
@@ -806,6 +980,8 @@ final class FilesApp: SpatialApp {
             })
         }
         list.append(Look.pill("addfolder", "+ Add Folder", CGRect(x: 26, y: size.height - 116, width: 182, height: 42)) { [weak self] in
+            // Choosing a folder is part of setup: the system picker needs the touchscreen.
+            self?.spatial?.toast("Use the touchscreen to pick a folder")
             self?.spatial?.sheet = .folderPicker
         })
         if selected > 0 {
@@ -814,50 +990,25 @@ final class FilesApp: SpatialApp {
                 self.remove(self.selected)
             })
         }
-
-        let x0: CGFloat = 244
         if let preview {
-            let image = preview.image
-            let url = preview.url
-            list.append(UINode("preview", CGRect(x: x0, y: 74, width: size.width - x0 - 20, height: size.height - 94)) {
-                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            })
-            list.append(Look.symbolButton("back", "chevron.backward", CGRect(x: x0, y: 20, width: 42, height: 42)) { [weak self] in
-                self?.preview = nil
-            })
-            list.append(Look.label("name", url.lastPathComponent, CGRect(x: x0 + 54, y: 22, width: 330, height: 38), size: 19, weight: .semibold))
-            list.append(Look.pill("ql", "Quick Look", CGRect(x: size.width - 170, y: 20, width: 146, height: 42)) { [weak self] in
-                self?.spatial?.sheet = .quickLook(url)
-            })
-            return list
+            return list + previewNodes(preview.url, preview.kind)
         }
 
         var titleX = x0
         if !path.isEmpty {
-            list.append(Look.symbolButton("up", "chevron.backward", CGRect(x: x0, y: 20, width: 42, height: 42)) { [weak self] in
-                guard let self else { return }
-                self.path.removeLast()
-                self.load()
-            })
+            list.append(Look.symbolButton("up", "chevron.backward", CGRect(x: x0, y: 20, width: 42, height: 42)) { [weak self] in self?.goUp() })
             titleX += 54
         }
         let name = path.isEmpty ? locations[selected].name : folder.lastPathComponent
         list.append(Look.label("folder", name, CGRect(x: titleX, y: 22, width: 380, height: 38), size: 24, weight: .bold))
         let pages = max(1, (items.count + perPage - 1) / perPage)
         if pages > 1 {
-            list.append(Look.symbolButton("pgprev", "chevron.up", CGRect(x: size.width - 118, y: 22, width: 40, height: 40)) { [weak self] in
-                guard let self else { return }
-                self.page = max(0, self.page - 1)
-            })
-            list.append(Look.symbolButton("pgnext", "chevron.down", CGRect(x: size.width - 68, y: 22, width: 40, height: 40)) { [weak self] in
-                guard let self else { return }
-                self.page = min(pages - 1, self.page + 1)
-            })
+            list.append(Look.symbolButton("pgprev", "chevron.up", CGRect(x: size.width - 118, y: 22, width: 40, height: 40)) { [weak self] in self?.turn(-1) })
+            list.append(Look.symbolButton("pgnext", "chevron.down", CGRect(x: size.width - 68, y: 22, width: 40, height: 40)) { [weak self] in self?.turn(1) })
         }
         if items.isEmpty {
             let text = errorText ?? (selected == 0 && path.isEmpty
-                ? "Empty. Put files in the Files app ▸ On My iPhone ▸ Vision, or tap + Add Folder to open iCloud Drive or any folder."
+                ? "Empty. Put files in the Files app ▸ On My iPhone ▸ Vision, or add a folder such as iCloud Drive."
                 : "This folder is empty")
             list.append(UINode("empty", CGRect(x: x0, y: 120, width: size.width - x0 - 30, height: 200)) {
                 VStack(spacing: 10) {
@@ -872,13 +1023,13 @@ final class FilesApp: SpatialApp {
             let index = page * perPage + slot
             guard index < items.count else { break }
             let url = items[index]
-            let folder = isFolder[url] == true
-            let image = folder ? nil : thumbnail(url)
+            let isDir = isFolder[url] == true
+            let image = isDir ? nil : thumbnail(url)
             let frame = CGRect(x: x0 + CGFloat(slot % 5) * 112, y: 76 + CGFloat(slot / 5) * 128, width: 104, height: 120)
             list.append(UINode("f\(index)", frame, radius: 16, action: { [weak self] in self?.open(url) }) {
                 VStack(spacing: 6) {
                     Group {
-                        if folder {
+                        if isDir {
                             Image(systemName: "folder.fill").font(.system(size: 50)).foregroundStyle(Color(red: 0.45, green: 0.75, blue: 1))
                         } else if let image {
                             Image(uiImage: image).resizable().scaledToFit()
@@ -892,7 +1043,84 @@ final class FilesApp: SpatialApp {
                 }
                 .padding(.top, 8)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .overlay(alignment: .topLeading) {
+                    Text("\(slot + 1)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.7)).padding(6)
+                }
             })
+        }
+        return list
+    }
+
+    private func previewNodes(_ url: URL, _ kind: Preview) -> [UINode] {
+        let rect = previewRect
+        var list: [UINode] = [
+            Look.symbolButton("back", "chevron.backward", CGRect(x: x0, y: 20, width: 42, height: 42)) { [weak self] in self?.closePreview() },
+            Look.label("name", url.lastPathComponent, CGRect(x: x0 + 54, y: 22, width: size.width - x0 - 80, height: 38), size: 19, weight: .semibold),
+        ]
+        var pageText: String?
+        var paged = false
+        switch kind {
+        case .image(let image):
+            list.append(UINode("preview", rect) {
+                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            })
+        case .pdf(let doc, let p):
+            let key = "\(url.path)#\(p)"
+            if pdfImage?.key != key, let pdfPage = doc.page(at: p) {
+                pdfImage = (key, pdfPage.thumbnail(of: CGSize(width: rect.width * 2, height: rect.height * 2), for: .mediaBox))
+            }
+            let image = pdfImage?.image
+            list.append(UINode("preview", rect) {
+                ZStack {
+                    if let image { Image(uiImage: image).resizable().scaledToFit() }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            })
+            pageText = "Page \(p + 1) of \(doc.pageCount)"
+            paged = doc.pageCount > 1
+        case .text(let pages, let p):
+            list.append(UINode("preview", rect) {
+                Text(pages[p]).font(.system(size: 13, design: .monospaced)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.25)))
+            })
+            pageText = "Page \(p + 1) of \(pages.count)"
+            paged = pages.count > 1
+        case .picture(let image):
+            let note = errorText
+            list.append(UINode("preview", rect) {
+                VStack(spacing: 10) {
+                    if let image {
+                        Image(uiImage: image).resizable().scaledToFit()
+                    } else {
+                        Image(systemName: "doc.fill").font(.system(size: 60)).foregroundStyle(.white.opacity(0.6))
+                        Text(note ?? "Making a preview…").font(.system(size: 16)).foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            })
+        case .media(let isVideo):
+            let playing = player.isPlaying
+            if !isVideo {
+                list.append(UINode("preview", rect) {
+                    Image(systemName: "waveform").font(.system(size: 80, weight: .light)).foregroundStyle(.white.opacity(0.7))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                })
+            }
+            let mid = rect.midX
+            list.append(Look.symbolButton("rew", "gobackward.15", CGRect(x: mid - 92, y: size.height - 66, width: 52, height: 52)) { [weak self] in self?.player.skip(-15) })
+            list.append(Look.symbolButton("play", playing ? "pause.fill" : "play.fill", CGRect(x: mid - 30, y: size.height - 70, width: 60, height: 60)) { [weak self] in self?.player.toggle() })
+            list.append(Look.symbolButton("ffw", "goforward.15", CGRect(x: mid + 40, y: size.height - 66, width: 52, height: 52)) { [weak self] in self?.player.skip(15) })
+        }
+        if paged {
+            let mid = rect.midX
+            list.append(Look.symbolButton("prevpage", "chevron.left", CGRect(x: mid - 150, y: size.height - 62, width: 46, height: 46)) { [weak self] in self?.turn(-1) })
+            list.append(Look.symbolButton("nextpage", "chevron.right", CGRect(x: mid + 104, y: size.height - 62, width: 46, height: 46)) { [weak self] in self?.turn(1) })
+        }
+        if let pageText {
+            list.append(Look.label("pages", pageText, CGRect(x: rect.midX - 90, y: size.height - 52, width: 180, height: 26), size: 15, weight: .medium, color: .white.opacity(0.75), align: .center))
         }
         return list
     }
@@ -1033,46 +1261,47 @@ final class WeatherApp: SpatialApp {
     }
 }
 
-// MARK: - Safari
+// MARK: - Tips (what you can say)
 
 @MainActor
-final class SafariApp: SpatialApp {
-    let title = "Safari"
-    let size = CGSize(width: 560, height: 320)
+final class TipsApp: SpatialApp {
+    let title = "Tips"
+    let size = CGSize(width: 820, height: 500)
     var dirty = true
-    weak var spatial: Spatial?
-    private let favorites: [(String, String, String)] = [
-        ("Wikipedia", "https://en.m.wikipedia.org", "book.fill"),
-        ("Apple", "https://www.apple.com", "applelogo"),
-        ("Maps", "https://www.openstreetmap.org", "map.fill"),
-        ("News", "https://news.ycombinator.com", "newspaper.fill"),
-        ("YouTube", "https://m.youtube.com", "play.rectangle.fill"),
-        ("GitHub", "https://github.com", "chevron.left.forwardslash.chevron.right"),
-    ]
 
-    init(spatial: Spatial) {
-        self.spatial = spatial
-    }
+    private let columns: [(String, [String])] = [
+        ("Anywhere", [
+            "“Go home” · “Recenter”",
+            "“Open Photos / Files / Safari / Notes”",
+            "“Close” · “Close Photos” · “Close all”",
+            "“Night sky” · “Sunset” · “Lake” · “The Moon”",
+            "“More / less immersion” · “My room”",
+            "“Ultra wide” · “AR mode”",
+            "“Control Center” · “Stop listening”",
+        ]),
+        ("In a window", [
+            "“Next” · “Previous” · “Back” · “Scroll down”",
+            "“Open 3” (the numbers on photos and files)",
+            "“Open budget” (a file by its name)",
+            "“Play” · “Pause” · “Skip” · “Immerse”",
+            "“Search for pizza near me” · “Go to bbc.co.uk”",
+            "“Click sign in” (a link by its words)",
+            "“Take a note”, talk, then “done”",
+        ]),
+    ]
 
     func nodes() -> [UINode] {
         var list: [UINode] = [
-            Look.pill("search", "Search or enter website", CGRect(x: 30, y: 24, width: 500, height: 48)) { [weak self] in
-                self?.spatial?.sheet = .urlEntry
-            },
+            Look.label("title", "What you can do without touching", CGRect(x: 32, y: 22, width: 700, height: 40), size: 26, weight: .bold),
+            Look.label("hands", "Hands: point at a button and pinch, or touch it in the air. Pinch the bar under a window to move it. For the Crown and Control Center, hold your finger over them on screen and pinch. Pinch and drag the Crown up or down for immersion.",
+                       CGRect(x: 32, y: 66, width: 760, height: 60), size: 15, color: .white.opacity(0.75)),
         ]
-        for (i, fav) in favorites.enumerated() {
-            let frame = CGRect(x: 30 + CGFloat(i % 3) * 170, y: 96 + CGFloat(i / 3) * 104, width: 160, height: 92)
-            let url = URL(string: fav.1)!
-            list.append(UINode("fav\(i)", frame, radius: 20, action: { [weak self] in
-                self?.spatial?.sheet = .safari(url)
-            }) {
-                VStack(spacing: 8) {
-                    Image(systemName: fav.2).font(.system(size: 26, weight: .semibold)).foregroundStyle(.white)
-                    Text(fav.0).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.12)))
-            })
+        for (c, column) in columns.enumerated() {
+            let x = 32 + CGFloat(c) * 390
+            list.append(Look.label("h\(c)", "Say \(column.0.lowercased())", CGRect(x: x, y: 140, width: 370, height: 28), size: 19, weight: .semibold))
+            for (i, line) in column.1.enumerated() {
+                list.append(Look.label("l\(c)-\(i)", line, CGRect(x: x, y: 176 + CGFloat(i) * 42, width: 370, height: 34), size: 16, color: .white.opacity(0.9)))
+            }
         }
         return list
     }

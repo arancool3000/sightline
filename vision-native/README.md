@@ -17,6 +17,15 @@ A visionOS-style spatial computer for iPhone, built on:
 | Pinch the × next to the bar | Close the window |
 | Tap / drag on the screen | Always works too |
 
+### Touch-free
+
+After setup (the permission prompts, and picking any extra folders for Files), you never need to touch the screen:
+
+- **Voice** is always listening, on the iPhone where possible. Say "what can I say" to see the commands, for example "open photos", "go home", "recenter", "night sky", "search for …", "scroll down", "click …", "next", "open 3", "close", "stop listening".
+- **Dictation** replaces the keyboard. In Notes, pinch Dictate (or say "take a note"), talk, then say "done". Pinch a text box on a web page and say what to type.
+- **The Digital Crown and Control Center** can be pinched: hold your fingertip over them on screen and pinch. Pinch and drag the Crown for immersion.
+- **Safari** is a real browser inside a window: pinch links, or use the scroll buttons. Documents, PDFs, text, videos and music all open inside their windows too.
+
 System controls, as on Vision Pro:
 
 - **Digital Crown** (top right): tap for the Home View, hold to recenter everything in front of you, drag up or down to turn immersion in an environment. While you're inside a panorama, a tap leaves it.

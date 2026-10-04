@@ -16,6 +16,15 @@ enum EnvironmentKind: String, CaseIterable {
         }
     }
 
+    var spokenNames: [String] {
+        switch self {
+        case .nightSky: return ["night sky", "the night sky", "night", "stars", "starry night"]
+        case .sunset: return ["sunset", "sunset dunes", "dunes", "the desert", "desert"]
+        case .lake: return ["lake", "mountain lake", "the lake", "mountains", "the mountains"]
+        case .moon: return ["moon", "the moon"]
+        }
+    }
+
     var symbol: String {
         switch self {
         case .nightSky: return "moon.stars.fill"

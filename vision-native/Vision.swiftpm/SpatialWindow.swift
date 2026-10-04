@@ -14,14 +14,20 @@ struct UINode: Identifiable {
     let frame: CGRect
     let radius: CGFloat
     let action: (() -> Void)?
+    /// Like `action`, but told where inside the node it was pressed (e.g. a web page).
+    let onPoint: ((CGPoint) -> Void)?
     let view: AnyView
 
+    var isLive: Bool { action != nil || onPoint != nil }
+
     @MainActor
-    init<Content: View>(_ id: String, _ frame: CGRect, radius: CGFloat = 14, action: (() -> Void)? = nil, @ViewBuilder content: () -> Content) {
+    init<Content: View>(_ id: String, _ frame: CGRect, radius: CGFloat = 14, action: (() -> Void)? = nil,
+                        onPoint: ((CGPoint) -> Void)? = nil, @ViewBuilder content: () -> Content) {
         self.id = id
         self.frame = frame
         self.radius = radius
         self.action = action
+        self.onPoint = onPoint
         self.view = AnyView(content())
     }
 }
@@ -40,11 +46,20 @@ protocol SpatialApp: AnyObject {
     var glassRect: CGRect { get }
     /// False for content without glass, bar or close button (the Home View).
     var hasChrome: Bool { get }
+    /// An extra 3D entity on the window (e.g. a video), in window-local metres.
+    var attachment: Entity? { get }
+    /// A voice command for this window (already lowercased, no punctuation).
+    /// Return true if it was handled.
+    func handleVoice(_ words: String) -> Bool
+    func didClose()
 }
 
 extension SpatialApp {
     var glassRect: CGRect { CGRect(origin: .zero, size: size) }
     var hasChrome: Bool { true }
+    var attachment: Entity? { nil }
+    func handleVoice(_ words: String) -> Bool { false }
+    func didClose() {}
 }
 
 /// visionOS glass. A real blur of the room isn't possible on a texture, so
@@ -77,7 +92,7 @@ struct WindowCanvas: View {
                     .offset(x: glass.minX, y: glass.minY)
             }
             ForEach(nodes) { node in
-                let live = node.action != nil
+                let live = node.isLive
                 node.view
                     .frame(width: node.frame.width, height: node.frame.height)
                     .overlay {
@@ -162,6 +177,7 @@ final class SpatialWindow {
             root.addChild(bar)
             root.addChild(closeButton)
         }
+        if let attachment = app.attachment { root.addChild(attachment) }
         // Windows open with a small grow, like visionOS.
         root.scale = SIMD3<Float>(repeating: 0.86)
         updateBar()
@@ -243,7 +259,7 @@ final class SpatialWindow {
             if abs(x - glass.midX) < 110 { return .bar }
         }
         guard x >= 0, y >= 0, x <= size.width, y <= size.height else { return nil }
-        let node = nodes.last { $0.action != nil && $0.frame.insetBy(dx: -6, dy: -6).contains(CGPoint(x: x, y: y)) }
+        let node = nodes.last { $0.isLive && $0.frame.insetBy(dx: -6, dy: -6).contains(CGPoint(x: x, y: y)) }
         return .content(node?.id)
     }
 
@@ -259,9 +275,15 @@ final class SpatialWindow {
         return WindowHit(window: self, distance: t, point: p, region: r)
     }
 
-    func activate(_ id: String?) {
+    /// `point` is where it was pressed, in window points.
+    func activate(_ id: String?, at point: CGPoint? = nil) {
         guard let id, let node = nodes.first(where: { $0.id == id }) else { return }
-        node.action?()
+        if let onPoint = node.onPoint {
+            let p = point ?? CGPoint(x: node.frame.midX, y: node.frame.midY)
+            onPoint(CGPoint(x: p.x - node.frame.minX, y: p.y - node.frame.minY))
+        } else {
+            node.action?()
+        }
         app.dirty = true
     }
 

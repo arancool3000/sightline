@@ -31,6 +31,8 @@ let package = Package(
             capabilities: [
                 .camera(purposeString: "Vision shows your room and tracks your hands so you can touch windows in the air."),
                 .locationWhenInUse(purposeString: "Weather uses your location for the local forecast."),
+                .microphone(purposeString: "Vision listens for voice commands and dictation, so you never need to touch the screen."),
+                .speechRecognition(purposeString: "Your voice commands and dictation are turned into text, on this iPhone when possible."),
                 .photoLibrary(purposeString: "Photos shows your whole library floating in your room, and lets you stand inside your panoramas.")
             ],
             appCategory: .utilities
