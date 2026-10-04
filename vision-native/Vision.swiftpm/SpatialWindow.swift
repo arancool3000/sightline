@@ -250,7 +250,9 @@ final class SpatialWindow {
         return root.position + root.orientation.act(SIMD3(lx, ly, z))
     }
 
-    func region(x: CGFloat, y: CGFloat) -> WindowRegion? {
+    /// `sticky`: the node you're already on keeps you a bit beyond its edge,
+    /// and a near miss snaps to the closest button, so jitter doesn't flicker.
+    func region(x: CGFloat, y: CGFloat, sticky: String? = nil) -> WindowRegion? {
         let glass = app.glassRect
         let barY = glass.maxY + CGFloat(Self.barOffset / Self.metresPerPoint)
         if app.hasChrome, abs(y - barY) < 26 {
@@ -259,11 +261,23 @@ final class SpatialWindow {
             if abs(x - glass.midX) < 110 { return .bar }
         }
         guard x >= 0, y >= 0, x <= size.width, y <= size.height else { return nil }
-        let node = nodes.last { $0.isLive && $0.frame.insetBy(dx: -6, dy: -6).contains(CGPoint(x: x, y: y)) }
-        return .content(node?.id)
+        let p = CGPoint(x: x, y: y)
+        if let sticky, let held = nodes.first(where: { $0.id == sticky && $0.isLive }), held.frame.insetBy(dx: -18, dy: -18).contains(p) {
+            return .content(held.id)
+        }
+        if let node = nodes.last(where: { $0.isLive && $0.frame.insetBy(dx: -6, dy: -6).contains(p) }) {
+            return .content(node.id)
+        }
+        var best: (id: String, d: CGFloat)?
+        for node in nodes where node.isLive {
+            let f = node.frame
+            let d = hypot(max(f.minX - x, 0, x - f.maxX), max(f.minY - y, 0, y - f.maxY))
+            if d < 22, d < (best?.d ?? .infinity) { best = (node.id, d) }
+        }
+        return .content(best?.id)
     }
 
-    func hit(origin: SIMD3<Float>, direction: SIMD3<Float>) -> WindowHit? {
+    func hit(origin: SIMD3<Float>, direction: SIMD3<Float>, sticky: String? = nil) -> WindowHit? {
         let n = normal
         let denom = simd_dot(direction, n)
         guard abs(denom) > 1e-4 else { return nil }
@@ -271,7 +285,7 @@ final class SpatialWindow {
         guard t > 0 else { return nil }
         let p = origin + direction * t
         let l = local(p)
-        guard let r = region(x: l.x, y: l.y) else { return nil }
+        guard let r = region(x: l.x, y: l.y, sticky: sticky) else { return nil }
         return WindowHit(window: self, distance: t, point: p, region: r)
     }
 

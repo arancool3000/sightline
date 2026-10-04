@@ -17,9 +17,10 @@ struct CameraModel {
 /// One hand observation, in world space (metres).
 struct HandSample {
     var indexTip: SIMD3<Float>
-    var thumbTip: SIMD3<Float>
-    /// Thumb–index gap relative to hand size (2D), for phones without depth.
-    var pinchRatio: Float
+    /// Nil when the thumb is hidden (often behind the index finger mid-pinch).
+    var thumbTip: SIMD3<Float>?
+    /// Thumb–index gap relative to hand size (2D); nil when the thumb is hidden.
+    var pinchRatio: Float?
     /// True when the 3D positions come from LiDAR / people-depth, not a guess.
     var measuredDepth: Bool
     var time: TimeInterval
@@ -40,9 +41,13 @@ final class HandTracker: @unchecked Sendable {
     private(set) var fps: Double = 0
     private let request: VNDetectHumanHandPoseRequest = {
         let r = VNDetectHumanHandPoseRequest()
-        r.maximumHandCount = 1
+        // Two, so a second hand coming into view can't steal the cursor: we
+        // keep following the one nearest where the last one was.
+        r.maximumHandCount = 2
         return r
     }()
+    /// Last chosen index fingertip in the image (Vision's normalized space). Queue only.
+    private var lastTip2D: CGPoint?
 
     /// Latest result and a counter that changes with every processed frame.
     func take() -> (HandSample?, Int) {
@@ -81,8 +86,11 @@ final class HandTracker: @unchecked Sendable {
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
             do {
                 try handler.perform([self.request])
-                if let observation = self.request.results?.first {
+                if let observation = Self.pick(self.request.results ?? [], near: self.lastTip2D) {
                     sample = Self.makeSample(observation, depth: depth, camera: camera, time: time)
+                    self.lastTip2D = (try? observation.recognizedPoint(.indexTip))?.location
+                } else {
+                    self.lastTip2D = nil
                 }
             } catch {
                 sample = nil
@@ -97,11 +105,22 @@ final class HandTracker: @unchecked Sendable {
         }
     }
 
+    /// The hand to follow: nearest the previous fingertip, else the most confident.
+    private static func pick(_ observations: [VNHumanHandPoseObservation], near last: CGPoint?) -> VNHumanHandPoseObservation? {
+        let usable = observations.compactMap { obs -> (VNHumanHandPoseObservation, VNRecognizedPoint)? in
+            guard let tip = try? obs.recognizedPoint(.indexTip), tip.confidence > 0.3 else { return nil }
+            return (obs, tip)
+        }
+        if let last {
+            return usable.min { hypot($0.1.location.x - last.x, $0.1.location.y - last.y) < hypot($1.1.location.x - last.x, $1.1.location.y - last.y) }?.0
+        }
+        return usable.max { $0.1.confidence < $1.1.confidence }?.0
+    }
+
     private static func makeSample(_ obs: VNHumanHandPoseObservation, depth: CVPixelBuffer?, camera: CameraModel,
                                    time: TimeInterval) -> HandSample? {
         guard
             let tip = try? obs.recognizedPoint(.indexTip), tip.confidence > 0.3,
-            let thumb = try? obs.recognizedPoint(.thumbTip), thumb.confidence > 0.3,
             let wrist = try? obs.recognizedPoint(.wrist),
             let middle = try? obs.recognizedPoint(.middleMCP)
         else { return nil }
@@ -112,10 +131,10 @@ final class HandTracker: @unchecked Sendable {
         func pixel(_ p: VNRecognizedPoint) -> SIMD2<Float> {
             SIMD2(Float(p.location.x) * w, (1 - Float(p.location.y)) * h)
         }
+        let thumb = (try? obs.recognizedPoint(.thumbTip)).flatMap { $0.confidence > 0.3 ? $0 : nil }
         let tipPx = pixel(tip)
-        let thumbPx = pixel(thumb)
         let handSizePx = simd_distance(pixel(wrist), pixel(middle))
-        let pinchRatio = simd_distance(tipPx, thumbPx) / max(handSizePx, 1)
+        let pinchRatio = thumb.map { simd_distance(tipPx, pixel($0)) / max(handSizePx, 1) }
 
         let fx = camera.fx
         let fy = camera.fy
@@ -135,7 +154,6 @@ final class HandTracker: @unchecked Sendable {
             return estimated
         }
         let tipDepth = depthAt(tip)
-        let thumbDepth = depthAt(thumb)
 
         func world(_ px: SIMD2<Float>, _ d: Float) -> SIMD3<Float> {
             // ARKit camera space: x right, y up, looking down -z.
@@ -143,7 +161,8 @@ final class HandTracker: @unchecked Sendable {
             let p = camera.transform * c
             return SIMD3(p.x, p.y, p.z)
         }
-        return HandSample(indexTip: world(tipPx, tipDepth), thumbTip: world(thumbPx, thumbDepth),
+        let thumbTip = thumb.map { world(pixel($0), depthAt($0)) }
+        return HandSample(indexTip: world(tipPx, tipDepth), thumbTip: thumbTip,
                           pinchRatio: pinchRatio, measuredDepth: measured, time: time)
     }
 
@@ -173,6 +192,61 @@ final class HandTracker: @unchecked Sendable {
         guard values.count >= 4 else { return nil }
         values.sort()
         return values[values.count / 4]
+    }
+}
+
+/// Makes up for glitchy detections before anything acts on them:
+/// - drops a fingertip that jumps impossibly far in one frame,
+/// - pinch needs the same answer on two detections in a row to start or end,
+///   with separate start/stop thresholds, and a hidden thumb keeps the
+///   current state instead of letting go,
+/// - remembers recent aim, because closing a pinch drags the fingertip down.
+struct HandStabilizer {
+    private(set) var pinched = false
+    private var flips = 0
+    private var last: HandSample?
+    private var rejected = 0
+
+    /// False if the sample was thrown away as a glitch.
+    mutating func accept(_ s: HandSample) -> Bool {
+        if let last, s.time > last.time, s.time - last.time < 0.15 {
+            let speed = simd_distance(s.indexTip, last.indexTip) / Float(s.time - last.time)
+            // Hands don't move 3 m/s while pointing; give up after a few in
+            // a row in case the hand really did move.
+            if speed > 3, rejected < 3 {
+                rejected += 1
+                return false
+            }
+        }
+        rejected = 0
+        last = s
+        var raw = pinched
+        if let r = s.pinchRatio {
+            if pinched {
+                raw = r < 0.55
+            } else {
+                var start = r < 0.3
+                if s.measuredDepth, let thumb = s.thumbTip { start = start && simd_distance(thumb, s.indexTip) < 0.06 }
+                raw = start
+            }
+        }
+        if raw != pinched {
+            flips += 1
+            if flips >= 2 {
+                pinched = raw
+                flips = 0
+            }
+        } else {
+            flips = 0
+        }
+        return true
+    }
+
+    mutating func reset() {
+        pinched = false
+        flips = 0
+        last = nil
+        rejected = 0
     }
 }
 

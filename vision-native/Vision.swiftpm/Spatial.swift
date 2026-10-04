@@ -138,8 +138,14 @@ final class Spatial: NSObject, ObservableObject {
     private lazy var filesApp = FilesApp(spatial: self)
 
     // Hand state
-    private var tipFilter = OneEuro3(minCutoff: 1.2, beta: 4)
-    private var thumbFilter = OneEuro3(minCutoff: 1.2, beta: 4)
+    // Smoother when still (lower cutoff) than before: detections are noisy.
+    private var tipFilter = OneEuro3(minCutoff: 0.8, beta: 3)
+    private var thumbFilter = OneEuro3(minCutoff: 0.8, beta: 3)
+    private var stabilizer = HandStabilizer()
+    /// Recent filtered fingertips, to aim with where you were *before* a pinch.
+    private var aimHistory: [(time: TimeInterval, tip: SIMD3<Float>)] = []
+    /// Depth to the glass, smoothed: LiDAR at a fingertip edge is jumpy.
+    private var pokeDepth: Float?
     private var sample: HandSample?
     private var lastSequence = -1
     private var handLostAt: TimeInterval = 0
@@ -148,7 +154,7 @@ final class Spatial: NSObject, ObservableObject {
 
     enum Interaction {
         case none
-        case pressing(SpatialWindow, String?, CGPoint)
+        case pressing(SpatialWindow, String?, CGPoint, start: TimeInterval)
         case poking(SpatialWindow, String?, CGPoint)
         case grabbing(SpatialWindow, start: SIMD3<Float>, from: SIMD3<Float>, gain: Float)
         case touchDragging(SpatialWindow, distance: Float, offset: SIMD3<Float>)
@@ -317,29 +323,29 @@ final class Spatial: NSObject, ObservableObject {
         if sequence != lastSequence {
             lastSequence = sequence
             if let latest {
-                sample = latest
-                handLostAt = 0
+                // A rejected glitch is ignored, not treated as a lost hand.
+                if stabilizer.accept(latest) {
+                    sample = latest
+                    handLostAt = 0
+                }
             } else if handLostAt == 0 {
                 handLostAt = now
             }
         }
-        guard handsOn, let s = sample, handLostAt == 0 || now - handLostAt < 0.25 else {
+        // Ride out short dropouts (a pinch often hides fingers for a moment).
+        guard handsOn, let s = sample, handLostAt == 0 || now - handLostAt < 0.4 else {
             handGone()
             return
         }
         // Filter at display rate: smooth glide between ~30 Hz detections.
         let tip = tipFilter.filter(s.indexTip, dt: dt)
-        let thumb = thumbFilter.filter(s.thumbTip, dt: dt)
+        let thumb = s.thumbTip.map { thumbFilter.filter($0, dt: dt) } ?? tip
         let cam = head.translation
         let pinchPoint = (tip + thumb) / 2
+        let isPinch = stabilizer.pinched
 
-        let gap = simd_distance(s.indexTip, s.thumbTip)
-        let isPinch: Bool
-        if s.measuredDepth {
-            isPinch = pinching ? gap < 0.04 : gap < 0.022
-        } else {
-            isPinch = pinching ? s.pinchRatio < 0.5 : s.pinchRatio < 0.33
-        }
+        aimHistory.append((now, tip))
+        if aimHistory.count > 40 { aimHistory.removeFirst(aimHistory.count - 40) }
 
         // 1) Carrying a window by its bar.
         if case .grabbing(let w, let start, let from, let gain) = interaction {
@@ -393,10 +399,14 @@ final class Spatial: NSObject, ObservableObject {
         }
         setHandPoint(nil, hover: nil)
 
-        // 2) Direct touch: your fingertip at a window's glass.
-        if let near = nearestWindow(to: tip) {
-            let (w, l) = near
-            let region = w.region(x: l.x, y: l.y)
+        // 2) Direct touch (only with real LiDAR depth: guessed depth is too
+        //    rough to tell touching from hovering).
+        if s.measuredDepth, let near = nearestWindow(to: tip) {
+            let (w, rawL) = near
+            let z = (pokeDepth ?? rawL.z) * 0.6 + rawL.z * 0.4
+            pokeDepth = z
+            let l = (x: rawL.x, y: rawL.y, z: z)
+            let region = w.region(x: l.x, y: l.y, sticky: w.hovered)
             var id: String?
             if case .content(let nodeID)? = region { id = nodeID }
             clearHover(except: w)
@@ -431,9 +441,12 @@ final class Spatial: NSObject, ObservableObject {
             }
             pinching = isPinch
             return
-        } else if case .poking(let pw, _, _) = interaction {
-            pw.pressed = nil
-            interaction = .none
+        } else {
+            pokeDepth = nil
+            if case .poking(let pw, _, _) = interaction {
+                pw.pressed = nil
+                interaction = .none
+            }
         }
 
         // 3) At a distance: aim along the line from your eye through your
@@ -449,7 +462,11 @@ final class Spatial: NSObject, ObservableObject {
 
         if isPinch && !pinching {
             pinching = true
-            guard let hit else { return }
+            // Closing a pinch pulls the fingertip down, so press what you
+            // were pointing at a moment ago.
+            let before = aimHistory.last(where: { now - $0.time >= 0.2 })?.tip ?? tip
+            guard let hit = hitWindows(origin: cam, direction: simd_normalize(before - cam)) ?? hit else { return }
+            updateHover(hit)
             switch hit.region {
             case .bar:
                 let gain = max(1, simd_distance(cam, hit.window.position) / max(0.15, simd_distance(cam, pinchPoint)))
@@ -461,12 +478,16 @@ final class Spatial: NSObject, ObservableObject {
             case .content(let id):
                 hit.window.pressed = id
                 let l = hit.window.local(hit.point)
-                interaction = .pressing(hit.window, id, CGPoint(x: l.x, y: l.y))
+                interaction = .pressing(hit.window, id, CGPoint(x: l.x, y: l.y), start: now)
             }
         } else if !isPinch && pinching {
             pinching = false
-            if case .pressing(let w, let id, let point) = interaction {
-                if let hit, hit.window === w, case .content(let hitID) = hit.region, hitID == id {
+            if case .pressing(let w, let id, let point, let start) = interaction {
+                // A quick pinch counts even if tracking wobbled off the
+                // button; a slow one must end on it.
+                var onIt = false
+                if let hit, hit.window === w, case .content(let hitID) = hit.region, hitID == id { onIt = true }
+                if onIt || now - start < 0.7 {
                     focused = w
                     w.activate(id, at: point)
                 }
@@ -483,7 +504,7 @@ final class Spatial: NSObject, ObservableObject {
         case .grabbing(let w, _, _, _):
             w.barHighlighted = false
             snapToSurface(w)
-        case .pressing(let w, _, _), .poking(let w, _, _):
+        case .pressing(let w, _, _, _), .poking(let w, _, _):
             w.pressed = nil
         default:
             break
@@ -492,6 +513,9 @@ final class Spatial: NSObject, ObservableObject {
         pinching = false
         tipFilter.reset()
         thumbFilter.reset()
+        stabilizer.reset()
+        aimHistory.removeAll()
+        pokeDepth = nil
         clearHover(except: nil)
     }
 
@@ -507,8 +531,12 @@ final class Spatial: NSObject, ObservableObject {
 
     /// The smallest on-screen control under a point (with a little slack).
     private func overlayTarget(at p: CGPoint) -> (id: String, target: HandTarget)? {
+        let all = handTargets.all()
+        if let current = handHover, let t = all[current], t.frame.insetBy(dx: -24, dy: -24).contains(p) {
+            return (current, t)
+        }
         var best: (id: String, target: HandTarget)?
-        for (id, t) in handTargets.all() where t.frame.insetBy(dx: -10, dy: -10).contains(p) {
+        for (id, t) in all where t.frame.insetBy(dx: -10, dy: -10).contains(p) {
             if best == nil || t.frame.width * t.frame.height < best!.target.frame.width * best!.target.frame.height {
                 best = (id, t)
             }
@@ -572,7 +600,7 @@ final class Spatial: NSObject, ObservableObject {
     private func hitWindows(origin: SIMD3<Float>, direction: SIMD3<Float>) -> WindowHit? {
         var best: WindowHit?
         for w in allWindows {
-            if let h = w.hit(origin: origin, direction: direction), best == nil || h.distance < best!.distance {
+            if let h = w.hit(origin: origin, direction: direction, sticky: w.hovered), best == nil || h.distance < best!.distance {
                 best = h
             }
         }
@@ -942,7 +970,7 @@ final class Spatial: NSObject, ObservableObject {
         w.root.removeFromParent()
         windows.removeAll { $0 === w }
         if focused === w { focused = windows.last }
-        if case .pressing(let iw, _, _) = interaction, iw === w { interaction = .none }
+        if case .pressing(let iw, _, _, _) = interaction, iw === w { interaction = .none }
         if case .poking(let iw, _, _) = interaction, iw === w { interaction = .none }
         if case .grabbing(let iw, _, _, _) = interaction, iw === w { interaction = .none }
     }
