@@ -6,33 +6,69 @@ import simd
 import QuartzCore
 
 enum AppKind {
-    case clock, calculator, notes, photos, weather, safari
+    case clock, calculator, notes, photos, weather, safari, files
+}
+
+enum CameraMode: String {
+    /// The main camera with ARKit: windows stay in your room, LiDAR, real hand depth.
+    case ar
+    /// The ultra wide camera with the gyroscope: the widest view, windows around you.
+    case ultraWide
 }
 
 /// Runs the AR session, owns the windows in your room and turns your hands
 /// (and touches) into interactions.
 @MainActor
 final class Spatial: NSObject, ObservableObject {
-    @Published var status = "Starting…"
+    /// Only set when something needs your attention (e.g. "Slow down").
+    @Published var status = ""
+    /// Everything about tracking, for Control Center.
+    @Published var detail = "Starting…"
     @Published var toastText: String?
     @Published var sheet: Sheet?
-    @Published var showPhotoPicker = false
     @Published var handsOn = true {
-        didSet { if !handsOn { handGone() } }
+        didSet {
+            if !handsOn { handGone() }
+            ultra.setHandsEnabled(handsOn)
+        }
     }
+    @Published private(set) var cameraMode: CameraMode = .ar
+    @Published private(set) var meshVisible = false
+    @Published private(set) var environment: EnvironmentKind?
+    @Published private(set) var immersion: Float = 0
+    @Published private(set) var panoramaShown = false
 
     let arView: ARView
+    let ultra = UltraWideCamera()
+    let previewView: CameraPreviewView
     private let anchor = AnchorEntity(world: .zero)
     private let hands = HandTracker()
     private let cursor: ModelEntity
+    private let arConfig = ARWorldTrackingConfiguration()
+    private let coaching = ARCoachingOverlayView()
     private(set) var windows: [SpatialWindow] = []
     private var home: SpatialWindow?
     private var homeShown = false
     private var updateSubscription: Cancellable?
     private(set) var hasLiDAR = false
-    private var meshVisible = false
     private var statusTime: TimeInterval = 0
     private var toastTask: Task<Void, Never>?
+    private static let cameraModeKey = "vision.cameraMode"
+
+    // Ultra Wide: a virtual camera turned by the gyroscope.
+    private let headAnchor = AnchorEntity(world: .zero)
+    private let headCamera = PerspectiveCamera()
+    private var verticalFOV: Float = 1.2
+    private var previewOrientation: UIInterfaceOrientation = .unknown
+
+    // Environments and panoramas.
+    private let environmentEntity = ModelEntity()
+    private var environmentMaterial: UnlitMaterial?
+    private var environmentTextures: [EnvironmentKind: TextureResource] = [:]
+    private var lastEnvironment: EnvironmentKind = .nightSky
+    private var environmentYaw: Float = 0
+    private var builtArc: Float = -1
+    private let panoramaEntity = ModelEntity()
 
     // Apps keep their state while their window is closed.
     private lazy var clockApp = ClockApp()
@@ -42,6 +78,7 @@ final class Spatial: NSObject, ObservableObject {
     private lazy var weatherApp = WeatherApp()
     private lazy var safariApp = SafariApp(spatial: self)
     private lazy var homeApp = HomeApp(spatial: self)
+    private lazy var filesApp = FilesApp(spatial: self)
 
     // Hand state
     private var tipFilter = OneEuro3(minCutoff: 1.2, beta: 4)
@@ -63,6 +100,7 @@ final class Spatial: NSObject, ObservableObject {
     override init() {
         arView = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         cursor = ModelEntity(mesh: .generateSphere(radius: 0.0045), materials: [UnlitMaterial(color: .white)])
+        previewView = CameraPreviewView(session: ultra.session)
         super.init()
         configure()
     }
@@ -70,7 +108,7 @@ final class Spatial: NSObject, ObservableObject {
     // MARK: - Setup
 
     private func configure() {
-        let config = ARWorldTrackingConfiguration()
+        let config = arConfig
         config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = .automatic
 
@@ -94,7 +132,6 @@ final class Spatial: NSObject, ObservableObject {
         config.frameSemantics = semantics
         arView.session.run(config)
 
-        let coaching = ARCoachingOverlayView()
         coaching.session = arView.session
         coaching.goal = .tracking
         coaching.activatesAutomatically = true
@@ -104,6 +141,19 @@ final class Spatial: NSObject, ObservableObject {
         arView.scene.addAnchor(anchor)
         anchor.addChild(cursor)
         cursor.isEnabled = false
+        // Transparent when not in AR, so the ultra wide camera shows through.
+        arView.backgroundColor = .clear
+        headAnchor.addChild(headCamera)
+
+        let hands = self.hands
+        ultra.onFrame = { [weak ultra] buffer, time in
+            guard let ultra else { return }
+            hands.process(pixelBuffer: buffer, depth: nil, camera: ultra.cameraModel(for: buffer), time: time)
+        }
+        if UserDefaults.standard.string(forKey: Self.cameraModeKey) == CameraMode.ultraWide.rawValue, ultra.isAvailable {
+            cameraMode = .ultraWide
+            applyCameraMode()
+        }
 
         arView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
@@ -129,11 +179,18 @@ final class Spatial: NSObject, ObservableObject {
     private func tick(dt rawDt: Float) {
         let dt = max(1.0 / 240, min(rawDt, 0.1))
         let now = CACurrentMediaTime()
-        if let frame = arView.session.currentFrame {
-            if handsOn { hands.process(frame) }
-            updateStatus(frame, now: now)
+        switch cameraMode {
+        case .ar:
+            if let frame = arView.session.currentFrame {
+                if handsOn { hands.process(frame) }
+                updateStatus(frame, now: now)
+            }
+        case .ultraWide:
+            updateHeadCamera()
+            updateUltraStatus(now: now)
         }
         updateHand(dt: dt, now: now)
+        if environmentEntity.parent != nil { environmentEntity.position = head.translation }
         let date = Date()
         for w in allWindows {
             w.animate(dt: dt)
@@ -151,28 +208,40 @@ final class Spatial: NSObject, ObservableObject {
     private func updateStatus(_ frame: ARFrame, now: TimeInterval) {
         guard now - statusTime > 0.5 else { return }
         statusTime = now
-        var parts: [String] = []
+        var problem = ""
         switch frame.camera.trackingState {
         case .normal:
-            parts.append("Tracking")
+            break
         case .notAvailable:
-            parts.append("No tracking")
+            problem = "No tracking"
         case .limited(let reason):
             switch reason {
-            case .initializing: parts.append("Starting…")
-            case .excessiveMotion: parts.append("Slow down")
-            case .insufficientFeatures: parts.append("Point at more detail")
-            case .relocalizing: parts.append("Relocalizing")
-            @unknown default: parts.append("Limited")
+            case .initializing: problem = "Starting…"
+            case .excessiveMotion: problem = "Slow down"
+            case .insufficientFeatures: problem = "Point at more detail"
+            case .relocalizing: problem = "Relocalizing"
+            @unknown default: problem = "Limited tracking"
             }
         }
-        parts.append(hasLiDAR ? "LiDAR" : "No LiDAR")
+        publishStatus(problem: problem, parts: [problem.isEmpty ? "Tracking" : problem, hasLiDAR ? "LiDAR" : "No LiDAR"])
+    }
+
+    private func updateUltraStatus(now: TimeInterval) {
+        guard now - statusTime > 0.5 else { return }
+        statusTime = now
+        let ready = ultra.attitude() != nil
+        publishStatus(problem: ready ? "" : "Starting camera…", parts: [ultra.isUltraWide ? "Ultra Wide" : "Wide", "Gyro"])
+    }
+
+    private func publishStatus(problem: String, parts: [String]) {
+        var parts = parts
         if handsOn {
             let seen = handLostAt == 0 && sample != nil
-            parts.append(seen ? String(format: "Hand · %.0f fps", hands.fps) : "Show your hand")
+            parts.append(seen ? String(format: "Hand · %.0f fps", hands.fps) : "No hand in view")
         }
         let text = parts.joined(separator: " · ")
-        if text != status { status = text }
+        if text != detail { detail = text }
+        if problem != status { status = problem }
     }
 
     // MARK: - Hands
@@ -195,7 +264,7 @@ final class Spatial: NSObject, ObservableObject {
         // Filter at display rate: smooth glide between ~30 Hz detections.
         let tip = tipFilter.filter(s.indexTip, dt: dt)
         let thumb = thumbFilter.filter(s.thumbTip, dt: dt)
-        let cam = arView.cameraTransform.translation
+        let cam = head.translation
         let pinchPoint = (tip + thumb) / 2
 
         let gap = simd_distance(s.indexTip, s.thumbTip)
@@ -365,7 +434,7 @@ final class Spatial: NSObject, ObservableObject {
 
     @objc private func handleTap(_ g: UITapGestureRecognizer) {
         let p = g.location(in: arView)
-        guard let ray = arView.ray(through: p), let hit = hitWindows(origin: ray.origin, direction: ray.direction) else { return }
+        guard let ray = screenRay(p), let hit = hitWindows(origin: ray.origin, direction: ray.direction) else { return }
         switch hit.region {
         case .close: close(hit.window)
         case .content(let id): hit.window.activate(id)
@@ -374,8 +443,8 @@ final class Spatial: NSObject, ObservableObject {
     }
 
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
-        guard let ray = arView.ray(through: g.location(in: arView)) else { return }
-        let cam = arView.cameraTransform.translation
+        guard let ray = screenRay(g.location(in: arView)) else { return }
+        let cam = head.translation
         switch g.state {
         case .began:
             if let hit = hitWindows(origin: ray.origin, direction: ray.direction), hit.region == .bar {
@@ -399,6 +468,221 @@ final class Spatial: NSObject, ObservableObject {
         }
     }
 
+    /// The ray from your eye through a point on the screen.
+    private func screenRay(_ p: CGPoint) -> (origin: SIMD3<Float>, direction: SIMD3<Float>)? {
+        if cameraMode == .ar { return arView.ray(through: p) }
+        let size = arView.bounds.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let tanV = tan(verticalFOV / 2)
+        let x = (Float(p.x / size.width) * 2 - 1) * tanV * Float(size.width / size.height)
+        let y = (1 - Float(p.y / size.height) * 2) * tanV
+        return (headCamera.position, simd_normalize(headCamera.orientation.act(SIMD3<Float>(x, y, -1))))
+    }
+
+    // MARK: - Camera modes
+
+    /// Where your eye is: ARKit's camera, or the gyro camera in Ultra Wide.
+    private var head: Transform {
+        switch cameraMode {
+        case .ar: return arView.cameraTransform
+        case .ultraWide: return Transform(scale: .one, rotation: headCamera.orientation, translation: headCamera.position)
+        }
+    }
+
+    private var headYaw: Float {
+        let c2 = head.matrix.columns.2
+        return atan2(c2.x, c2.z)
+    }
+
+    func setCameraMode(_ mode: CameraMode) {
+        guard mode != cameraMode else { return }
+        guard mode == .ar || ultra.isAvailable else {
+            toast("No ultra wide camera on this iPhone")
+            return
+        }
+        cameraMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.cameraModeKey)
+        applyCameraMode()
+        toast(mode == .ultraWide ? "Ultra Wide: windows float around you" : "AR: windows stay in your room")
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            self.recenter(quiet: true)
+        }
+    }
+
+    private func applyCameraMode() {
+        handGone()
+        switch cameraMode {
+        case .ar:
+            ultra.stop()
+            if headAnchor.scene != nil { arView.scene.removeAnchor(headAnchor) }
+            arView.cameraMode = .ar
+            arView.environment.background = .cameraFeed()
+            coaching.activatesAutomatically = true
+            arView.session.run(arConfig, options: [.resetTracking, .removeExistingAnchors])
+        case .ultraWide:
+            arView.session.pause()
+            coaching.activatesAutomatically = false
+            coaching.setActive(false, animated: false)
+            if meshVisible { toggleMesh() }
+            arView.cameraMode = .nonAR
+            arView.environment.background = .color(.clear)
+            if headAnchor.scene == nil { arView.scene.addAnchor(headAnchor) }
+            headCamera.position = .zero
+            ultra.setHandsEnabled(handsOn)
+            ultra.start()
+        }
+        updateOcclusion()
+    }
+
+    private func updateHeadCamera() {
+        guard let attitude = ultra.attitude() else { return }
+        let orientation = arView.window?.windowScene?.interfaceOrientation ?? .landscapeRight
+        headCamera.orientation = attitude * UltraWideCamera.screenRotation(orientation)
+        ultra.setSensorOrientation(attitude * UltraWideCamera.screenRotation(.landscapeRight))
+        let size = arView.bounds.size
+        if size.width > 0, size.height > 0 {
+            // The preview fills the screen, so match the visible part of the lens.
+            let tanH = tan(ultra.horizontalFOV * .pi / 360)
+            let tanV = tanH / max(Float(size.width / size.height), ultra.videoAspect)
+            verticalFOV = 2 * atan(tanV)
+            headCamera.camera.fieldOfViewInDegrees = verticalFOV * 180 / .pi
+        }
+        if orientation != previewOrientation {
+            previewOrientation = orientation
+            previewView.setRotation(for: orientation)
+        }
+    }
+
+    // MARK: - Environments
+
+    func setEnvironment(_ kind: EnvironmentKind?) {
+        if let kind {
+            applyEnvironment(kind)
+            immersion = 1
+        } else {
+            environment = nil
+            immersion = 0
+        }
+        refreshEnvironment()
+    }
+
+    /// The Digital Crown: 0 is your room, 1 is fully immersed.
+    func setImmersion(_ value: Float) {
+        let v = max(0, min(1, value))
+        if v > 0, environment == nil { applyEnvironment(lastEnvironment) }
+        immersion = v
+        refreshEnvironment()
+    }
+
+    private func applyEnvironment(_ kind: EnvironmentKind) {
+        if environmentTextures[kind] == nil, let image = kind.render(),
+           let texture = try? TextureResource.generate(from: image, options: .init(semantic: .color)) {
+            environmentTextures[kind] = texture
+        }
+        guard let texture = environmentTextures[kind] else {
+            toast("Couldn't draw \(kind.title)")
+            return
+        }
+        var material = UnlitMaterial()
+        material.color = .init(tint: .white, texture: .init(texture))
+        environmentMaterial = material
+        environment = kind
+        lastEnvironment = kind
+        environmentYaw = headYaw
+        builtArc = -1
+    }
+
+    /// Like visionOS, the environment opens up from in front of you and
+    /// wraps all the way round as immersion goes up.
+    private func refreshEnvironment() {
+        let visible = environment != nil && immersion > 0.001
+        if visible, let material = environmentMaterial {
+            let arc = max(0.3, immersion * 2 * .pi)
+            if abs(arc - builtArc) > 0.02, let mesh = Meshes.sphereSegment(radius: 20, arc: arc) {
+                environmentEntity.model = ModelComponent(mesh: mesh, materials: [material])
+                builtArc = arc
+            }
+            environmentEntity.orientation = simd_quatf(angle: environmentYaw, axis: SIMD3<Float>(0, 1, 0))
+            environmentEntity.position = head.translation
+            if environmentEntity.parent == nil { anchor.addChild(environmentEntity) }
+        } else {
+            environmentEntity.removeFromParent()
+        }
+        updateOcclusion()
+    }
+
+    func showEnvironments() {
+        if !homeShown { showHome() }
+        homeApp.show(.environments)
+    }
+
+    // MARK: - Panoramas
+
+    /// Wraps a panorama around you on a curved wall, centred where you look.
+    func showPanorama(_ image: UIImage) {
+        guard let cg = image.cgImage,
+              let texture = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) else {
+            toast("Couldn't open that panorama")
+            return
+        }
+        let aspect = Float(image.size.width / max(image.size.height, 1))
+        let verticalAngle: Float = 1.0
+        let radius: Float = 2.6
+        guard let mesh = Meshes.cylinderSegment(radius: radius, height: 2 * radius * tan(verticalAngle / 2),
+                                                arc: min(2 * .pi, aspect * verticalAngle)) else { return }
+        var material = UnlitMaterial()
+        material.color = .init(tint: .white, texture: .init(texture))
+        panoramaEntity.model = ModelComponent(mesh: mesh, materials: [material])
+        panoramaEntity.position = head.translation
+        panoramaEntity.orientation = simd_quatf(angle: headYaw, axis: SIMD3<Float>(0, 1, 0))
+        if panoramaEntity.parent == nil { anchor.addChild(panoramaEntity) }
+        panoramaShown = true
+        updateOcclusion()
+        toast("Look around. Press the Crown to leave.")
+    }
+
+    func hidePanorama() {
+        panoramaEntity.removeFromParent()
+        panoramaShown = false
+        photosApp.dirty = true
+        updateOcclusion()
+    }
+
+    /// LiDAR occlusion would let real walls poke through environments and panoramas.
+    private func updateOcclusion() {
+        guard hasLiDAR, cameraMode == .ar else { return }
+        if environmentEntity.parent != nil || panoramaShown {
+            arView.environment.sceneUnderstanding.options.remove(.occlusion)
+        } else {
+            arView.environment.sceneUnderstanding.options.insert(.occlusion)
+        }
+    }
+
+    // MARK: - Digital Crown
+
+    func crownPressed() {
+        if panoramaShown {
+            hidePanorama()
+        } else {
+            toggleHome()
+        }
+    }
+
+    /// Long-press the Crown: bring everything back in front of you.
+    func recenter(quiet: Bool = false) {
+        bringWindowsHere(quiet: true)
+        if environment != nil {
+            environmentYaw = headYaw
+            refreshEnvironment()
+        }
+        if panoramaShown {
+            panoramaEntity.position = head.translation
+            panoramaEntity.orientation = simd_quatf(angle: headYaw, axis: SIMD3<Float>(0, 1, 0))
+        }
+        if !quiet { toast("Recentered") }
+    }
+
     // MARK: - Placement
 
     private func facing(_ position: SIMD3<Float>, _ cam: SIMD3<Float>) -> simd_quatf {
@@ -408,7 +692,7 @@ final class Spatial: NSObject, ObservableObject {
 
     /// Put a window in front of you, rotated `yawOffset` to the side.
     private func place(_ w: SpatialWindow, yawOffset: Float, distance: Float = 0.55) {
-        let t = arView.cameraTransform
+        let t = head
         let cam = t.translation
         let c2 = t.matrix.columns.2
         var forward = -SIMD3<Float>(c2.x, c2.y, c2.z)
@@ -431,6 +715,9 @@ final class Spatial: NSObject, ObservableObject {
         case .photos: app = photosApp
         case .weather: app = weatherApp
         case .safari: app = safariApp
+        case .files:
+            filesApp.refresh()
+            app = filesApp
         }
         if let existing = windows.first(where: { $0.app === app }) {
             place(existing, yawOffset: 0)
@@ -476,17 +763,18 @@ final class Spatial: NSObject, ObservableObject {
         homeShown = false
     }
 
-    func bringWindowsHere() {
+    func bringWindowsHere(quiet: Bool = false) {
         for (i, w) in windows.enumerated() {
             place(w, yawOffset: Self.offsets[min(i, Self.offsets.count - 1)])
         }
         if homeShown, let home { place(home, yawOffset: 0, distance: 0.6) }
-        toast("Windows moved in front of you")
+        if !quiet { toast("Windows moved in front of you") }
     }
 
     /// After you let go of a window near a wall or table, stick it there
     /// (LiDAR finds the surface).
     private func snapToSurface(_ w: SpatialWindow) {
+        guard cameraMode == .ar else { return }
         let n = w.targetOrientation.act(SIMD3<Float>(0, 0, 1))
         let query = ARRaycastQuery(origin: w.targetPosition + n * 0.05, direction: -n, allowing: .estimatedPlane, alignment: .any)
         guard let result = arView.session.raycast(query).first else { return }
@@ -510,6 +798,10 @@ final class Spatial: NSObject, ObservableObject {
     }
 
     func toggleMesh() {
+        guard cameraMode == .ar else {
+            toast("The LiDAR mesh needs AR mode")
+            return
+        }
         meshVisible.toggle()
         if meshVisible {
             arView.debugOptions.insert(.showSceneUnderstanding)
@@ -530,9 +822,9 @@ final class Spatial: NSObject, ObservableObject {
         }
     }
 
-    func addPhotos(_ images: [UIImage]) {
-        photosApp.add(images)
-        open(.photos)
+    func addFolder(_ url: URL) {
+        filesApp.addLocation(url)
+        open(.files)
     }
 
     func noteText(_ id: UUID) -> String { notesApp.text(id) }

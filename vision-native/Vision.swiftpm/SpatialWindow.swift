@@ -35,30 +35,59 @@ protocol SpatialApp: AnyObject {
     func nodes() -> [UINode]
     /// Called every frame (e.g. a clock sets `dirty` once a second).
     func tick(_ now: Date)
+    /// The part of the window drawn as glass. Anything outside it (like a
+    /// tab bar ornament) floats beside the glass.
+    var glassRect: CGRect { get }
+    /// False for content without glass, bar or close button (the Home View).
+    var hasChrome: Bool { get }
+}
+
+extension SpatialApp {
+    var glassRect: CGRect { CGRect(origin: .zero, size: size) }
+    var hasChrome: Bool { true }
+}
+
+/// visionOS glass. A real blur of the room isn't possible on a texture, so
+/// this is a translucent tint with the bright top edge visionOS has.
+struct Glass: View {
+    var cornerRadius: CGFloat = 40
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            shape.fill(LinearGradient(colors: [Color(white: 0.27).opacity(0.72), Color(white: 0.17).opacity(0.8)], startPoint: .top, endPoint: .bottom))
+            shape.fill(LinearGradient(colors: [Color.white.opacity(0.1), .clear], startPoint: .top, endPoint: .center))
+            shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(0.45), Color.white.opacity(0.07), Color.white.opacity(0.2)], startPoint: .top, endPoint: .bottom), lineWidth: 1.4)
+        }
+    }
 }
 
 struct WindowCanvas: View {
     let size: CGSize
+    let glass: CGRect?
     let nodes: [UINode]
     let hovered: String?
     let pressed: String?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(LinearGradient(colors: [Color(white: 0.22).opacity(0.9), Color(white: 0.12).opacity(0.9)], startPoint: .top, endPoint: .bottom))
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .strokeBorder(LinearGradient(colors: [Color.white.opacity(0.45), Color.white.opacity(0.06)], startPoint: .top, endPoint: .bottom), lineWidth: 1.5)
+            if let glass {
+                Glass()
+                    .frame(width: glass.width, height: glass.height)
+                    .offset(x: glass.minX, y: glass.minY)
+            }
             ForEach(nodes) { node in
+                let live = node.action != nil
                 node.view
                     .frame(width: node.frame.width, height: node.frame.height)
                     .overlay {
-                        if node.action != nil && (hovered == node.id || pressed == node.id) {
+                        if live && (hovered == node.id || pressed == node.id) {
                             RoundedRectangle(cornerRadius: node.radius, style: .continuous)
-                                .fill(Color.white.opacity(pressed == node.id ? 0.28 : 0.16))
+                                .fill(Color.white.opacity(pressed == node.id ? 0.26 : 0.13))
                         }
                     }
-                    .scaleEffect(pressed == node.id ? 0.95 : 1)
+                    // visionOS lifts what you look at, and presses it in.
+                    .scaleEffect(pressed == node.id ? 0.95 : (live && hovered == node.id ? 1.05 : 1))
                     .offset(x: node.frame.minX, y: node.frame.minY)
             }
         }
@@ -122,11 +151,19 @@ final class SpatialWindow {
         panel = ModelEntity(mesh: .generatePlane(width: w, height: h, cornerRadius: 0.02), materials: [UnlitMaterial(color: .black)])
         bar = ModelEntity(mesh: .generatePlane(width: 0.11, height: 0.012, cornerRadius: 0.006), materials: [UnlitMaterial(color: .white)])
         closeButton = ModelEntity(mesh: .generatePlane(width: 0.022, height: 0.022, cornerRadius: 0.011), materials: [UnlitMaterial(color: .gray)])
-        bar.position = SIMD3(0, -(h / 2 + Self.barOffset), 0.001)
-        closeButton.position = SIMD3(Self.closeOffsetX, -(h / 2 + Self.barOffset), 0.001)
+        // The bar and close button sit under the glass, not under ornaments.
+        let glass = app.glassRect
+        let gx = Float(glass.midX - app.size.width / 2) * Self.metresPerPoint
+        let gy = Float(app.size.height / 2 - glass.maxY) * Self.metresPerPoint
+        bar.position = SIMD3(gx, gy - Self.barOffset, 0.001)
+        closeButton.position = SIMD3(gx + Self.closeOffsetX, gy - Self.barOffset, 0.001)
         root.addChild(panel)
-        root.addChild(bar)
-        root.addChild(closeButton)
+        if app.hasChrome {
+            root.addChild(bar)
+            root.addChild(closeButton)
+        }
+        // Windows open with a small grow, like visionOS.
+        root.scale = SIMD3<Float>(repeating: 0.86)
         updateBar()
         if let tex = Self.closeTexture {
             var m = UnlitMaterial()
@@ -145,7 +182,7 @@ final class SpatialWindow {
     /// Re-render the SwiftUI content into the panel's texture.
     func redraw() {
         nodes = app.nodes()
-        let canvas = WindowCanvas(size: size, nodes: nodes, hovered: hovered, pressed: pressed)
+        let canvas = WindowCanvas(size: size, glass: app.hasChrome ? app.glassRect : nil, nodes: nodes, hovered: hovered, pressed: pressed)
         let renderer = ImageRenderer(content: canvas)
         renderer.scale = 2
         guard let image = renderer.cgImage else { return }
@@ -172,6 +209,7 @@ final class SpatialWindow {
         let k = 1 - exp(-dt * 16)
         root.position += (targetPosition - root.position) * k
         root.orientation = simd_slerp(root.orientation, targetOrientation, k)
+        root.scale += (SIMD3<Float>(repeating: 1) - root.scale) * (1 - exp(-dt * 9))
     }
 
     func snapToTarget() {
@@ -197,11 +235,12 @@ final class SpatialWindow {
     }
 
     func region(x: CGFloat, y: CGFloat) -> WindowRegion? {
-        let barY = size.height + CGFloat(Self.barOffset / Self.metresPerPoint)
-        if abs(y - barY) < 26 {
-            let closeX = size.width / 2 + CGFloat(Self.closeOffsetX / Self.metresPerPoint)
+        let glass = app.glassRect
+        let barY = glass.maxY + CGFloat(Self.barOffset / Self.metresPerPoint)
+        if app.hasChrome, abs(y - barY) < 26 {
+            let closeX = glass.midX + CGFloat(Self.closeOffsetX / Self.metresPerPoint)
             if abs(x - closeX) < 26 { return .close }
-            if abs(x - size.width / 2) < 110 { return .bar }
+            if abs(x - glass.midX) < 110 { return .bar }
         }
         guard x >= 0, y >= 0, x <= size.width, y <= size.height else { return nil }
         let node = nodes.last { $0.action != nil && $0.frame.insetBy(dx: -6, dy: -6).contains(CGPoint(x: x, y: y)) }
@@ -277,6 +316,30 @@ enum Look {
         }
     }
 
+    /// A visionOS tab bar ornament: a vertical glass capsule of symbols.
+    static func ornament(_ prefix: String, symbols: [String], selected: Int, x: CGFloat, centerY: CGFloat,
+                         select: @escaping (Int) -> Void) -> [UINode] {
+        let height = CGFloat(symbols.count) * 58 + 12
+        let top = centerY - height / 2
+        var list: [UINode] = [
+            UINode("\(prefix)-bg", CGRect(x: x, y: top, width: 66, height: height), radius: 33) {
+                Capsule().fill(Color(white: 0.2).opacity(0.78))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.28), lineWidth: 1))
+            },
+        ]
+        for (i, symbol) in symbols.enumerated() {
+            let on = i == selected
+            list.append(UINode("\(prefix)\(i)", CGRect(x: x + 7, y: top + 9 + CGFloat(i) * 58, width: 52, height: 52), radius: 26, action: { select(i) }) {
+                Image(systemName: symbol)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(on ? Color.black : Color.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Circle().fill(on ? Color.white : Color.clear))
+            })
+        }
+        return list
+    }
+
     static func appIcon(_ id: String, symbol: String, colors: [Color], title: String, at origin: CGPoint, action: @escaping () -> Void) -> UINode {
         UINode(id, CGRect(x: origin.x, y: origin.y, width: 92, height: 118), radius: 46, action: action) {
             VStack(spacing: 8) {
@@ -288,6 +351,7 @@ enum Look {
                 .frame(width: 84, height: 84)
                 .shadow(color: .black.opacity(0.35), radius: 6, y: 4)
                 Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(.white).lineLimit(1)
+                    .shadow(color: .black.opacity(0.7), radius: 3, y: 1)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }

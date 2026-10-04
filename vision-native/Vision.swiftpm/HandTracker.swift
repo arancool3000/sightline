@@ -3,6 +3,17 @@ import Vision
 import simd
 import QuartzCore
 
+/// Pinhole model of the camera a frame came from: intrinsics in pixels and
+/// the camera's pose in the world (ARKit's, or the motion sensors' in Ultra Wide).
+struct CameraModel {
+    var fx: Float
+    var fy: Float
+    var cx: Float
+    var cy: Float
+    var resolution: CGSize
+    var transform: simd_float4x4
+}
+
 /// One hand observation, in world space (metres).
 struct HandSample {
     var indexTip: SIMD3<Float>
@@ -43,22 +54,25 @@ final class HandTracker: @unchecked Sendable {
     /// Call every frame from the main thread; frames arriving while the
     /// previous one is still being processed are skipped.
     func process(_ frame: ARFrame) {
+        // Copy what we need: holding on to ARFrames stalls ARKit.
+        let intrinsics = frame.camera.intrinsics
+        let camera = CameraModel(fx: intrinsics[0][0], fy: intrinsics[1][1], cx: intrinsics[2][0], cy: intrinsics[2][1],
+                                 resolution: frame.camera.imageResolution, transform: frame.camera.transform)
+        let depth = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap ?? frame.estimatedDepthData
+        process(pixelBuffer: frame.capturedImage, depth: depth, camera: camera, time: frame.timestamp)
+    }
+
+    /// Any camera: the image in the sensor's native orientation, optional
+    /// metric depth, and where the camera was. Safe to call from any thread.
+    func process(pixelBuffer: CVPixelBuffer, depth: CVPixelBuffer?, camera: CameraModel, time: TimeInterval) {
         lock.lock()
-        if busy || frame.timestamp == lastFrameTime {
+        if busy || time == lastFrameTime {
             lock.unlock()
             return
         }
         busy = true
-        lastFrameTime = frame.timestamp
+        lastFrameTime = time
         lock.unlock()
-
-        // Copy what we need: holding on to ARFrames stalls ARKit.
-        let pixelBuffer = frame.capturedImage
-        let depth = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap ?? frame.estimatedDepthData
-        let intrinsics = frame.camera.intrinsics
-        let cameraTransform = frame.camera.transform
-        let resolution = frame.camera.imageResolution
-        let time = frame.timestamp
 
         queue.async { [weak self] in
             guard let self else { return }
@@ -68,8 +82,7 @@ final class HandTracker: @unchecked Sendable {
             do {
                 try handler.perform([self.request])
                 if let observation = self.request.results?.first {
-                    sample = Self.makeSample(observation, depth: depth, intrinsics: intrinsics,
-                                             cameraTransform: cameraTransform, resolution: resolution, time: time)
+                    sample = Self.makeSample(observation, depth: depth, camera: camera, time: time)
                 }
             } catch {
                 sample = nil
@@ -84,8 +97,8 @@ final class HandTracker: @unchecked Sendable {
         }
     }
 
-    private static func makeSample(_ obs: VNHumanHandPoseObservation, depth: CVPixelBuffer?, intrinsics: simd_float3x3,
-                                   cameraTransform: simd_float4x4, resolution: CGSize, time: TimeInterval) -> HandSample? {
+    private static func makeSample(_ obs: VNHumanHandPoseObservation, depth: CVPixelBuffer?, camera: CameraModel,
+                                   time: TimeInterval) -> HandSample? {
         guard
             let tip = try? obs.recognizedPoint(.indexTip), tip.confidence > 0.3,
             let thumb = try? obs.recognizedPoint(.thumbTip), thumb.confidence > 0.3,
@@ -93,8 +106,8 @@ final class HandTracker: @unchecked Sendable {
             let middle = try? obs.recognizedPoint(.middleMCP)
         else { return nil }
 
-        let w = Float(resolution.width)
-        let h = Float(resolution.height)
+        let w = Float(camera.resolution.width)
+        let h = Float(camera.resolution.height)
         // Vision: normalized, origin bottom-left. Image pixels: origin top-left.
         func pixel(_ p: VNRecognizedPoint) -> SIMD2<Float> {
             SIMD2(Float(p.location.x) * w, (1 - Float(p.location.y)) * h)
@@ -104,10 +117,10 @@ final class HandTracker: @unchecked Sendable {
         let handSizePx = simd_distance(pixel(wrist), pixel(middle))
         let pinchRatio = simd_distance(tipPx, thumbPx) / max(handSizePx, 1)
 
-        let fx = intrinsics[0][0]
-        let fy = intrinsics[1][1]
-        let cx = intrinsics[2][0]
-        let cy = intrinsics[2][1]
+        let fx = camera.fx
+        let fy = camera.fy
+        let cx = camera.cx
+        let cy = camera.cy
 
         // Distance to each fingertip: LiDAR depth where available, otherwise
         // from the hand's apparent size (wrist→knuckle ≈ 9 cm).
@@ -127,7 +140,7 @@ final class HandTracker: @unchecked Sendable {
         func world(_ px: SIMD2<Float>, _ d: Float) -> SIMD3<Float> {
             // ARKit camera space: x right, y up, looking down -z.
             let c = SIMD4<Float>((px.x - cx) * d / fx, -(px.y - cy) * d / fy, -d, 1)
-            let p = cameraTransform * c
+            let p = camera.transform * c
             return SIMD3(p.x, p.y, p.z)
         }
         return HandSample(indexTip: world(tipPx, tipDepth), thumbTip: world(thumbPx, thumbDepth),

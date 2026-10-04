@@ -30,7 +30,8 @@ let package = Package(
             ],
             capabilities: [
                 .camera(purposeString: "Vision shows your room and tracks your hands so you can touch windows in the air."),
-                .locationWhenInUse(purposeString: "Weather uses your location for the local forecast.")
+                .locationWhenInUse(purposeString: "Weather uses your location for the local forecast."),
+                .photoLibrary(purposeString: "Photos shows your whole library floating in your room, and lets you stand inside your panoramas.")
             ],
             appCategory: .utilities
         )

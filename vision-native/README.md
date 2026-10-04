@@ -17,13 +17,16 @@ A visionOS-style spatial computer for iPhone, built on:
 | Pinch the × next to the bar | Close the window |
 | Tap / drag on the screen | Always works too |
 
-The buttons on the right of the screen are, from top to bottom:
+System controls, as on Vision Pro:
 
-- **Home**
-- **Bring windows in front of me**
-- **Hand tracking on/off**
+- **Digital Crown** (top right): tap for the Home View, hold to recenter everything in front of you, drag up or down to turn immersion in an environment. While you're inside a panorama, a tap leaves it.
+- **Control Center** (the chevron at the top): time and battery, Home, Recenter, Hands, **Ultra Wide**, LiDAR Mesh, Environments, and an immersion slider.
 
-On the Home View, **LiDAR Mesh** shows what the scanner sees.
+Apps on the Home View: Safari, Photos, Files, Notes, Weather, Clock and Calculator. The tab bar on the left of the Home View switches to **Environments** (Night Sky, Sunset Dunes, Mountain Lake, The Moon).
+
+- **Photos** shows your whole library (choose *Allow Full Access*), with tabs for Library, Favorites, Panoramas and Videos. Open a panorama and tap **Immerse** to stand inside it.
+- **Files** shows Vision's own folder (also in the Files app under On My iPhone ▸ Vision). Tap **+ Add Folder** to add iCloud Drive or any other folder. Access is remembered.
+- **Ultra Wide** (Control Center) uses the 0.5× camera for the widest view. ARKit can only track the room with the main camera, so in this mode the gyroscope turns your view and windows float around you instead of staying pinned to the room. The setting is remembered.
 
 Best on an iPhone with LiDAR (12 Pro / 13 Pro / 14 Pro / 15 Pro / 16 Pro / 17 Pro). It still runs on other iPhones (iOS 17+), but without the mesh and with estimated hand depth.
 

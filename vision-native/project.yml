@@ -16,6 +16,8 @@ targets:
       - Vision.swiftpm/SpatialWindow.swift
       - Vision.swiftpm/HandTracker.swift
       - Vision.swiftpm/Apps.swift
+      - Vision.swiftpm/Environments.swift
+      - Vision.swiftpm/UltraWideCamera.swift
       - Vision.swiftpm/Assets.xcassets
     info:
       path: build/Info.plist
@@ -32,7 +34,10 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
         NSCameraUsageDescription: Vision shows your room and tracks your hands so you can touch windows in the air.
         NSLocationWhenInUseUsageDescription: Weather uses your location for the local forecast.
-        NSPhotoLibraryUsageDescription: Add photos to float them in your room.
+        NSPhotoLibraryUsageDescription: Photos shows your whole library floating in your room, and lets you stand inside your panoramas.
+        # Vision's own folder shows up in the Files app (On My iPhone ▸ Vision).
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.arankeyhan.vision
