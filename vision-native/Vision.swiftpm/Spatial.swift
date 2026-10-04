@@ -833,7 +833,7 @@ final class Spatial: NSObject, ObservableObject {
     }
 
     @available(iOS 17.2, *)
-    private func hardwareButton(_ phase: AVCaptureEvent.Phase, primary: Bool) {
+    private func hardwareButton(_ phase: AVCaptureEventPhase, primary: Bool) {
         switch phase {
         case .began:
             buttonHeld = false
