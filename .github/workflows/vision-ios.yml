@@ -100,8 +100,8 @@ jobs:
           for p in camera microphone speech-recognition location photos; do
             xcrun simctl privacy "$UDID" grant "$p" com.arankeyhan.vision 2>/dev/null || true
           done
-          # Run for 25 s, capturing the app's stdout.
-          perl -e 'alarm shift; exec @ARGV' 25 \
+          # Run for 50 s, capturing the app's stdout.
+          perl -e 'alarm shift; exec @ARGV' 50 \
             xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.arankeyhan.vision -smoketest \
             > build/launch.log 2>&1 || true
           xcrun simctl io "$UDID" screenshot build/screenshot.png || true
@@ -111,11 +111,11 @@ jobs:
           alive=$(grep -c '\[Vision\] alive' build/launch.log || true)
           echo "heartbeats: $alive"
           if grep -q '\[Vision\] FREEZE' build/launch.log; then
-            echo "::error::Main thread froze: $(grep '\[Vision\] FREEZE' build/launch.log | head -1)"
+            grep "\[Vision\] FREEZE" build/launch.log | head -3 | sed "s/^/::error::/"; grep "\[Vision\] recovered" build/launch.log || true
             exit 1
           fi
           grep -q 'smoke test opened' build/launch.log || { echo "::error::Smoke test never finished"; tail -40 build/launch.log; exit 1; }
-          [ "$alive" -ge 15 ] || { echo "::error::Only $alive heartbeats in 25 s: the app stalled or quit"; tail -40 build/launch.log; exit 1; }
+          [ "$alive" -ge 35 ] || { echo "::error::Only $alive heartbeats in 50 s: the app stalled or quit"; tail -40 build/launch.log; exit 1; }
 
       - uses: actions/upload-artifact@v4
         if: always()

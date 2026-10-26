@@ -12,6 +12,7 @@ final class Diagnostics: @unchecked Sendable {
 
     private let lock = NSLock()
     private var step = "launch"
+    private var phase = "startup"
     private var lastPong = CACurrentMediaTime()
     private var stalledStep: String?
     private var stallStart: TimeInterval = 0
@@ -25,6 +26,14 @@ final class Diagnostics: @unchecked Sendable {
     func mark(_ s: String) {
         lock.lock()
         step = s
+        lock.unlock()
+    }
+
+    /// The bigger picture ("startup", "opening Photos"…), kept alongside the
+    /// step so a freeze between frames still says what was going on.
+    func setPhase(_ s: String) {
+        lock.lock()
+        phase = s
         lock.unlock()
     }
 
@@ -61,7 +70,7 @@ final class Diagnostics: @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.5)
             lock.lock()
             let silent = CACurrentMediaTime() - lastPong
-            let current = step
+            let current = "\(phase) / \(step)"
             lock.unlock()
             if silent > 2.5 {
                 if stalledStep == nil {

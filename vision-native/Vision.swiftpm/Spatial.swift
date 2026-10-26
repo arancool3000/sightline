@@ -241,7 +241,7 @@ final class Spatial: NSObject, ObservableObject {
         diagnostics.mark("camera button")
         voice.onCommand = { [weak self] text in self?.handleVoice(text) }
         installCameraButton()
-        voiceOn = !UserDefaults.standard.bool(forKey: Self.voiceKey) && !diagnostics.smokeTest
+        voiceOn = !UserDefaults.standard.bool(forKey: Self.voiceKey)
         diagnostics.mark("startup done")
 
         if let freeze = diagnostics.takeLastFreeze() {
@@ -254,11 +254,14 @@ final class Spatial: NSObject, ObservableObject {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             diagnostics.mark("show Home")
             if !homeShown { toggleHome() }
-            if diagnostics.smokeTest { await runSmokeTest() }
             try? await Task.sleep(nanoseconds: 800_000_000)
+            diagnostics.setPhase("starting voice")
             diagnostics.mark("start voice")
             if voiceOn { voice.start() }
-            diagnostics.mark("running")
+            diagnostics.setPhase("startup")
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            diagnostics.setPhase("running")
+            if diagnostics.smokeTest { await runSmokeTest() }
         }
     }
 
@@ -276,22 +279,26 @@ final class Spatial: NSObject, ObservableObject {
     /// CI: open every app and press some buttons, so the freeze test
     /// exercises the same drawing code as real use.
     private func runSmokeTest() async {
-        print("[Vision] smoke test start")
+        print("[Vision] smoke test start (startup survived)")
         for kind in AppKind.allCases {
-            diagnostics.mark("smoke open \(kind)")
+            diagnostics.setPhase("opened \(kind)")
+            print("[Vision] open \(kind)")
             open(kind)
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
         }
         for w in windows {
-            for node in w.nodes where node.action != nil {
-                diagnostics.mark("smoke press \(w.app.title) \(node.id)")
-                w.activate(node.id, at: CGPoint(x: node.frame.midX, y: node.frame.midY))
-                break
-            }
+            // The first button that doesn't open a system sheet.
+            guard let node = w.nodes.first(where: { $0.action != nil && !$0.id.lowercased().contains("folder") }) else { continue }
+            diagnostics.setPhase("pressed \(w.app.title) \(node.id)")
+            print("[Vision] press \(w.app.title) \(node.id)")
+            w.activate(node.id, at: CGPoint(x: node.frame.midX, y: node.frame.midY))
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
         }
+        diagnostics.setPhase("home and recenter")
         showHome()
         try? await Task.sleep(nanoseconds: 500_000_000)
         recenter(quiet: true)
+        diagnostics.setPhase("running")
         print("[Vision] smoke test opened \(windows.count) windows")
     }
 
