@@ -22,6 +22,7 @@ targets:
       - Vision.swiftpm/Media.swift
       - Vision.swiftpm/Browser.swift
       - Vision.swiftpm/Notes.swift
+      - Vision.swiftpm/Diagnostics.swift
       - Vision.swiftpm/Assets.xcassets
     info:
       path: build/Info.plist

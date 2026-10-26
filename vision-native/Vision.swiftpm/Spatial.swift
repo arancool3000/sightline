@@ -105,7 +105,13 @@ final class Spatial: NSObject, ObservableObject {
     private(set) var windows: [SpatialWindow] = []
     private var home: SpatialWindow?
     private var homeShown = false
-    private var updateSubscription: Cancellable?
+    /// Drives `tick`. Not RealityKit's scene-update event: making textures
+    /// inside RealityKit's own update can deadlock its renderer.
+    private var displayLink: CADisplayLink?
+    private var lastLinkTime: CFTimeInterval = 0
+    private var heartbeatTime: CFTimeInterval = 0
+    private var redrawCount = 0
+    private let diagnostics = Diagnostics.shared
     private(set) var hasLiDAR = false
     private var statusTime: TimeInterval = 0
     private var toastTask: Task<Void, Never>?
@@ -173,6 +179,8 @@ final class Spatial: NSObject, ObservableObject {
     // MARK: - Setup
 
     private func configure() {
+        diagnostics.start()
+        diagnostics.mark("start AR session")
         let config = arConfig
         config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = .automatic
@@ -225,25 +233,66 @@ final class Spatial: NSObject, ObservableObject {
         pan.maximumNumberOfTouches = 1
         arView.addGestureRecognizer(pan)
 
-        updateSubscription = arView.scene.subscribe(to: SceneEvents.Update.self) { [weak self] event in
-            let dt = Float(event.deltaTime)
-            MainActor.assumeIsolated {
-                self?.tick(dt: dt)
-            }
-        }
+        let link = CADisplayLink(target: self, selector: #selector(step(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        displayLink = link
 
+        diagnostics.mark("camera button")
         voice.onCommand = { [weak self] text in self?.handleVoice(text) }
         installCameraButton()
-        voiceOn = !UserDefaults.standard.bool(forKey: Self.voiceKey)
+        voiceOn = !UserDefaults.standard.bool(forKey: Self.voiceKey) && !diagnostics.smokeTest
+        diagnostics.mark("startup done")
+
+        if let freeze = diagnostics.takeLastFreeze() {
+            toast("Last time Vision froze at: \(freeze)", seconds: 8)
+        }
 
         // Show the Home View once tracking has had a moment to start, then
         // start listening (after the camera permission prompt, if any).
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
+            diagnostics.mark("show Home")
             if !homeShown { toggleHome() }
+            if diagnostics.smokeTest { await runSmokeTest() }
             try? await Task.sleep(nanoseconds: 800_000_000)
+            diagnostics.mark("start voice")
             if voiceOn { voice.start() }
+            diagnostics.mark("running")
         }
+    }
+
+    @objc private func step(_ link: CADisplayLink) {
+        let now = link.timestamp
+        let dt = lastLinkTime == 0 ? Float(1.0 / 60) : Float(now - lastLinkTime)
+        lastLinkTime = now
+        tick(dt: dt)
+        if diagnostics.smokeTest, now - heartbeatTime >= 1 {
+            heartbeatTime = now
+            print("[Vision] alive windows=\(allWindows.count) redraws=\(redrawCount)")
+        }
+    }
+
+    /// CI: open every app and press some buttons, so the freeze test
+    /// exercises the same drawing code as real use.
+    private func runSmokeTest() async {
+        print("[Vision] smoke test start")
+        for kind in AppKind.allCases {
+            diagnostics.mark("smoke open \(kind)")
+            open(kind)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        for w in windows {
+            for node in w.nodes where node.action != nil {
+                diagnostics.mark("smoke press \(w.app.title) \(node.id)")
+                w.activate(node.id, at: CGPoint(x: node.frame.midX, y: node.frame.midY))
+                break
+            }
+        }
+        showHome()
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        recenter(quiet: true)
+        print("[Vision] smoke test opened \(windows.count) windows")
     }
 
     // MARK: - Frame loop
@@ -251,6 +300,7 @@ final class Spatial: NSObject, ObservableObject {
     private func tick(dt rawDt: Float) {
         let dt = max(1.0 / 240, min(rawDt, 0.1))
         let now = CACurrentMediaTime()
+        diagnostics.mark("read camera frame")
         switch cameraMode {
         case .ar:
             if let frame = arView.session.currentFrame {
@@ -261,14 +311,20 @@ final class Spatial: NSObject, ObservableObject {
             updateHeadCamera()
             updateUltraStatus(now: now)
         }
+        diagnostics.mark("hand tracking")
         updateHand(dt: dt, now: now)
         if environmentEntity.parent != nil { environmentEntity.position = head.translation }
         let date = Date()
         for w in allWindows {
             w.animate(dt: dt)
             w.app.tick(date)
-            if w.needsRedraw || w.app.dirty { w.redraw() }
+            if w.needsRedraw || w.app.dirty {
+                diagnostics.mark("redraw \(w.app.title)")
+                w.redraw()
+                redrawCount += 1
+            }
         }
+        diagnostics.mark("idle")
     }
 
     private var allWindows: [SpatialWindow] {
@@ -1044,11 +1100,11 @@ final class Spatial: NSObject, ObservableObject {
 
     // MARK: - Bridges for apps and sheets
 
-    func toast(_ text: String) {
+    func toast(_ text: String, seconds: Double = 2) {
         toastText = text
         toastTask?.cancel()
         toastTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             if !Task.isCancelled { self?.toastText = nil }
         }
     }

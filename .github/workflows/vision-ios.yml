@@ -54,3 +54,75 @@ jobs:
           name: Vision-ipa
           path: vision-native/build/Vision.ipa
           if-no-files-found: error
+
+  # Launches the app in the iOS Simulator with -smoketest (opens every app
+  # and presses a button in each) and fails if the main thread stops
+  # answering. The Simulator has no camera, so AR itself isn't exercised.
+  freeze-test:
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: vision-native
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build for Simulator
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild -project Vision.xcodeproj -scheme Vision -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
+            CODE_SIGNING_ALLOWED=NO build > build/sim.log 2>&1 || { grep -E 'error:' build/sim.log | sort -u | head -60; exit 1; }
+
+      - name: Launch and watch for freezes
+        run: |
+          set -u
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          for runtime, devs in sorted(d.items(), reverse=True):
+              if "iOS" in runtime:
+                  for dev in devs:
+                      if dev["name"].startswith("iPhone"):
+                          print(dev["udid"]); sys.exit()
+          ')
+          echo "Simulator: $UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build/sim/Build/Products/Release-iphonesimulator/Vision.app
+          for p in camera microphone speech-recognition location photos; do
+            xcrun simctl privacy "$UDID" grant "$p" com.arankeyhan.vision 2>/dev/null || true
+          done
+          # Run for 25 s, capturing the app's stdout.
+          perl -e 'alarm shift; exec @ARGV' 25 \
+            xcrun simctl launch --console-pty --terminate-running-process "$UDID" com.arankeyhan.vision -smoketest \
+            > build/launch.log 2>&1 || true
+          xcrun simctl io "$UDID" screenshot build/screenshot.png || true
+          echo "----- app output -----"
+          grep '\[Vision\]' build/launch.log || true
+          echo "----------------------"
+          alive=$(grep -c '\[Vision\] alive' build/launch.log || true)
+          echo "heartbeats: $alive"
+          if grep -q '\[Vision\] FREEZE' build/launch.log; then
+            echo "::error::Main thread froze: $(grep '\[Vision\] FREEZE' build/launch.log | head -1)"
+            exit 1
+          fi
+          grep -q 'smoke test opened' build/launch.log || { echo "::error::Smoke test never finished"; tail -40 build/launch.log; exit 1; }
+          [ "$alive" -ge 15 ] || { echo "::error::Only $alive heartbeats in 25 s: the app stalled or quit"; tail -40 build/launch.log; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: freeze-test
+          path: |
+            vision-native/build/screenshot.png
+            vision-native/build/launch.log
+            vision-native/build/sim.log
+          if-no-files-found: ignore
